@@ -1,0 +1,24 @@
+# requirements.txt
+# Nifty Options Dashboard
+
+# Core
+streamlit>=1.35.0
+streamlit-autorefresh>=0.0.1
+
+# Kite Connect
+kiteconnect>=5.0.1
+
+# Data
+pandas>=2.2.0
+numpy>=1.26.0
+pyarrow>=15.0.0       # for parquet storage
+
+# Visualization
+plotly>=5.20.0
+
+# Utilities
+python-dotenv>=1.0.0  # local .env loading
+requests>=2.31.0
+matplotlib>=3.8.0     # required by pandas background_gradient
+
+pytz>=2024.1           # timezone handling for market-hours detection
