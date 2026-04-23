@@ -1,18 +1,124 @@
-# ui/components.py
+# ui/components.py — v5 (22 April 2026)
 # Shared Streamlit UI helpers used across all pages.
 # Import as: import ui.components as ui
-# v4.1 — metric_card now accepts direct hex border color OR named color
+#
+# ADDED: tooltip() — reusable ⓘ icon tooltip system
+#   Mobile: tap to open overlay. Desktop: hover 400ms.
+#   Three-line content template: what it means, good/bad, what to do.
+#   One build, used everywhere.
 
 import streamlit as st
 
+# ── Tooltip system ─────────────────────────────────────────────────────────────
+# Inject CSS/JS once per session using a flag in session_state
+_TOOLTIP_CSS_JS = """
+<style>
+.pd-tip-wrap { position: relative; display: inline-flex; align-items: center; }
+.pd-tip-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #dbeafe; color: #2563eb;
+  font-size: 9px; font-weight: 700; cursor: pointer;
+  margin-left: 4px; flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.pd-tip-box {
+  display: none; position: absolute; z-index: 9999;
+  bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #0f172a; color: #f1f5f9;
+  border-radius: 8px; padding: 10px 12px;
+  min-width: 220px; max-width: 300px;
+  font-size: 11px; line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  pointer-events: none;
+}
+.pd-tip-box::after {
+  content: ''; position: absolute; top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #0f172a;
+}
+.pd-tip-box .pd-tip-label {
+  font-size: 9px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: #94a3b8; margin-bottom: 4px;
+}
+.pd-tip-box .pd-tip-line { margin-bottom: 3px; }
+.pd-tip-box .pd-tip-line:last-child { margin-bottom: 0; color: #7dd3fc; }
+/* Show on hover (desktop) */
+@media (hover: hover) {
+  .pd-tip-wrap:hover .pd-tip-box { display: block; }
+}
+/* Show on tap (mobile) — toggled by JS */
+.pd-tip-box.pd-active { display: block; }
+</style>
+<script>
+(function() {
+  // Close any open tooltip when tapping elsewhere
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.pd-tip-wrap')) {
+      document.querySelectorAll('.pd-tip-box.pd-active')
+        .forEach(function(el) { el.classList.remove('pd-active'); });
+    }
+  });
+  // Toggle on tap of icon
+  document.addEventListener('click', function(e) {
+    var icon = e.target.closest('.pd-tip-icon');
+    if (icon) {
+      e.stopPropagation();
+      var box = icon.parentElement.querySelector('.pd-tip-box');
+      if (box) { box.classList.toggle('pd-active'); }
+    }
+  });
+})();
+</script>
+"""
 
-def metric_card(label: str, value: str, sub: str = "",
-                color: str = "default", border: str = "") -> None:
+
+def _ensure_tooltip_injected():
+    """Inject tooltip CSS/JS once per Streamlit session."""
+    if not st.session_state.get("_pd_tooltip_injected"):
+        st.components.v1.html(_TOOLTIP_CSS_JS, height=0, scrolling=False)
+        st.session_state["_pd_tooltip_injected"] = True
+
+
+def tooltip(term: str, line1: str, line2: str, line3: str) -> str:
     """
-    Styled metric card with large readable value.
-    color: 'green'|'red'|'amber'|'blue'|'default'
-    border: optional direct hex color override e.g. '#2563eb'
+    Returns HTML string with ⓘ icon and tooltip popup.
+    Locked three-line template:
+      line1: What this term means in plain English
+      line2: What a good vs bad value looks like for the IC
+      line3: What to do differently based on this reading
+
+    Usage: st.markdown(ui.tooltip("PCR", "Put/Call ratio...", "0.9-1.1 = ideal...", "Below 0.7 = widen CE..."), unsafe_allow_html=True)
+    Or wrap around a label: f"{label} {ui.tooltip(...)}"
     """
+    _ensure_tooltip_injected()
+    # Escape any quotes in content
+    def esc(s):
+        return s.replace('"', '&quot;').replace("'", "&#39;")
+
+    return (
+        f"<span class='pd-tip-wrap'>"
+        f"<span class='pd-tip-icon' title=''>ⓘ</span>"
+        f"<div class='pd-tip-box'>"
+        f"<div class='pd-tip-label'>{esc(term)}</div>"
+        f"<div class='pd-tip-line'>{esc(line1)}</div>"
+        f"<div class='pd-tip-line'>{esc(line2)}</div>"
+        f"<div class='pd-tip-line'>{esc(line3)}</div>"
+        f"</div>"
+        f"</span>"
+    )
+
+
+def metric_card_with_tip(label: str, value: str, sub: str = "",
+                          color: str = "default", border: str = "",
+                          tip_term: str = "", tip1: str = "",
+                          tip2: str = "", tip3: str = "") -> None:
+    """
+    metric_card with optional inline tooltip on the label.
+    If tip_term is provided, adds ⓘ icon after label.
+    """
+    tip_html = tooltip(tip_term, tip1, tip2, tip3) if tip_term else ""
     named = {
         "green":   ("#16a34a", "#f0fdf4"),
         "red":     ("#dc2626", "#fef2f2"),
@@ -21,7 +127,37 @@ def metric_card(label: str, value: str, sub: str = "",
         "default": ("#e2e6ef", "#f8f9fb"),
     }
     b_color, bg = named.get(color, named["default"])
-    if border:          # direct hex overrides named color
+    if border:
+        b_color = border
+        bg = "#f8f9fb"
+
+    st.markdown(
+        f"<div style='border-top:3px solid {b_color};background:{bg};"
+        f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
+        f"<div style='font-size:9px;color:#5a6b8a;text-transform:uppercase;"
+        f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
+        f"font-weight:600;display:flex;align-items:center;'>{label}{tip_html}</div>"
+        f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
+        f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
+        f"{'<div style=\"font-size:10px;color:#5a6b8a;font-family:monospace;margin-top:3px;\">' + sub + '</div>' if sub else ''}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ── Existing helpers (unchanged) ───────────────────────────────────────────────
+
+def metric_card(label: str, value: str, sub: str = "",
+                color: str = "default", border: str = "") -> None:
+    named = {
+        "green":   ("#16a34a", "#f0fdf4"),
+        "red":     ("#dc2626", "#fef2f2"),
+        "amber":   ("#d97706", "#fffbeb"),
+        "blue":    ("#2563eb", "#eff6ff"),
+        "default": ("#e2e6ef", "#f8f9fb"),
+    }
+    b_color, bg = named.get(color, named["default"])
+    if border:
         b_color = border
         bg = "#f8f9fb"
 
@@ -40,7 +176,6 @@ def metric_card(label: str, value: str, sub: str = "",
 
 
 def kill_switch_row(name: str, active: bool, detail: str = "") -> None:
-    """Single kill switch status row."""
     icon  = "🔴" if active else "✅"
     label = "ACTIVE" if active else "Clear"
     st.markdown(
@@ -50,7 +185,6 @@ def kill_switch_row(name: str, active: bool, detail: str = "") -> None:
 
 
 def alert_box(title: str, body: str, level: str = "info") -> None:
-    """Styled alert with consistent colors."""
     colors = {
         "danger":  ("#fef2f2", "#dc2626", "#fee2e2"),
         "warning": ("#fffbeb", "#d97706", "#fef3c7"),
@@ -70,7 +204,6 @@ def alert_box(title: str, body: str, level: str = "info") -> None:
 
 
 def expiry_banner(expiry, dte: int, role: str, mult: float) -> None:
-    """Dual-expiry banner for P10 / P10B."""
     is_far  = "trade" in role.lower()
     bg      = "#f0fdf4" if is_far else "#eff6ff"
     border  = "#16a34a" if is_far else "#2563eb"
@@ -96,7 +229,6 @@ def expiry_banner(expiry, dte: int, role: str, mult: float) -> None:
 
 
 def net_score_chip(score: float) -> str:
-    """Return HTML chip for net score with intensity-coded color."""
     s = int(round(score))
     styles = {
          6: ("background:#14532d;color:#fff;",    f"+{s}"),
@@ -121,7 +253,6 @@ def net_score_chip(score: float) -> str:
 
 
 def wall_dots(score: int, dominant_color: str = "#16a34a") -> str:
-    """Return HTML wall strength dot visualization."""
     filled = min(max(score, 0), 10)
     dots   = "".join([
         f"<div style='width:8px;height:8px;border-radius:2px;"
@@ -139,7 +270,6 @@ def wall_dots(score: int, dominant_color: str = "#16a34a") -> str:
 
 
 def section_header(title: str, subtitle: str = "") -> None:
-    """Consistent section header across all pages."""
     st.markdown(
         f"<div style='border-left:3px solid #2563eb;padding-left:10px;margin:16px 0 8px 0;'>"
         f"<div style='font-size:14px;font-weight:700;color:#0f1724;'>{title}</div>"
@@ -150,7 +280,6 @@ def section_header(title: str, subtitle: str = "") -> None:
 
 
 def simple_technical(simple: str, technical: str) -> None:
-    """Two-column display: plain English + technical detail side by side."""
     c1, c2 = st.columns([1, 1])
     with c1:
         st.markdown(
