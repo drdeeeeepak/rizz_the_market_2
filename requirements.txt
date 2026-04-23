@@ -22,3 +22,4 @@ requests>=2.31.0
 matplotlib>=3.8.0     # required by pandas background_gradient
 
 pytz>=2024.1           # timezone handling for market-hours detection
+scipy>=1.12.0
