@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 
 def _get_kite():
     """Return authenticated KiteConnect — works in both Streamlit and Actions."""
-    from kite_client import get_kite, get_kite_action
+    from data.kite_client import get_kite, get_kite_action
     return get_kite_action() if not _HAS_ST else get_kite()
 
 
