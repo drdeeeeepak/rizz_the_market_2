@@ -145,47 +145,8 @@ if data_ok and not nifty_df.empty:
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# A — POSITION INPUT
-# ══════════════════════════════════════════════════════════════════════════════
-st.subheader("📋 Position Input")
-st.caption("Enter your open IC legs here. Home page only — never on Pages 1-12.")
-
-with st.form("pos_form", clear_on_submit=False):
-    fc1, fc2, fc3 = st.columns(3)
-    with fc1:
-        struct       = st.selectbox("Structure", ["Standard IC","Single Spread","IC with Calendar","Ratio","Diagonal","Custom"])
-        entry_credit = st.number_input("Entry credit (pts)", value=0.0, step=0.5, min_value=0.0)
-        mtm_pnl      = st.number_input("Current MtM P&L (pts, +ve=profit)", value=0.0, step=0.5)
-    with fc2:
-        ce_short = st.number_input("CE Short strike", value=0, step=50, min_value=0)
-        ce_wing  = st.number_input("CE Long wing",    value=0, step=50, min_value=0)
-        ce_lots  = st.number_input("CE lots",         value=1, step=1,  min_value=0)
-        ce_exp   = st.text_input( "CE Expiry",        value=str(far_exp))
-    with fc3:
-        pe_short = st.number_input("PE Short strike", value=0, step=50, min_value=0)
-        pe_wing  = st.number_input("PE Long wing",    value=0, step=50, min_value=0)
-        pe_lots  = st.number_input("PE lots",         value=1, step=1,  min_value=0)
-        pe_exp   = st.text_input( "PE Expiry",        value=str(far_exp))
-    submitted = st.form_submit_button("🔍 Analyse Position", use_container_width=True)
-
-if submitted:
-    st.session_state.update({
-        "ce_short": int(ce_short), "ce_wing": int(ce_wing),
-        "pe_short": int(pe_short), "pe_wing": int(pe_wing),
-        "ce_lots":  int(ce_lots),  "pe_lots": int(pe_lots),
-        "ce_exp": ce_exp, "pe_exp": pe_exp,
-        "entry_credit": float(entry_credit), "mtm_pnl": float(mtm_pnl),
-        "structure": struct,
-    })
-
-pos     = {k: st.session_state.get(k, 0) for k in
-           ["ce_short","ce_wing","pe_short","pe_wing","ce_lots","pe_lots","entry_credit","mtm_pnl"]}
-has_pos = pos["ce_short"] > 0 or pos["pe_short"] > 0
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# B — MULTI-LENS INTEGRATED ASSESSMENT
+# A — MULTI-LENS INTEGRATED ASSESSMENT
+# (Position input moved to Page 14 — Position Tracker)
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("🔬 Multi-Lens Integrated Assessment")
 
@@ -369,47 +330,6 @@ with st.expander("📊 All Lens Distances — each lens speaks independently", e
         st.dataframe(df_lens.style.apply(hl_max, axis=1),
                      use_container_width=True, hide_index=True)
         st.caption("⭐ = most conservative (suggested). Green = PE driver. Red = CE driver.")
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# D — POSITION ANALYSIS (when strikes entered)
-# ══════════════════════════════════════════════════════════════════════════════
-if has_pos:
-    st.subheader("📍 Open Position Analysis")
-
-    ce_s = pos["ce_short"]; pe_s = pos["pe_short"]
-    ce_dist_live = ce_s - spot if ce_s > 0 else 0
-    pe_dist_live = spot - pe_s if pe_s > 0 else 0
-
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: ui.metric_card("CE BUFFER", f"{ce_dist_live:,.0f} pts",
-                              sub=f"Spot to CE short ({ce_s:,})",
-                              color="green" if ce_dist_live > 2*atr14 else "amber" if ce_dist_live > atr14 else "red")
-    with c2: ui.metric_card("PE BUFFER", f"{pe_dist_live:,.0f} pts",
-                              sub=f"PE short ({pe_s:,}) to spot",
-                              color="green" if pe_dist_live > 2*atr14 else "amber" if pe_dist_live > atr14 else "red")
-    with c3: ui.metric_card("CE vs 2×ATR", f"{ce_dist_live - 2*atr14:+,.0f} pts",
-                              sub=f"2×ATR = {2*atr14:.0f} pts",
-                              color="green" if ce_dist_live > 2*atr14 else "red")
-    with c4: ui.metric_card("PE vs 2×ATR", f"{pe_dist_live - 2*atr14:+,.0f} pts",
-                              sub=f"2×ATR = {2*atr14:.0f} pts",
-                              color="green" if pe_dist_live > 2*atr14 else "red")
-
-    mtm    = pos.get("mtm_pnl", 0)
-    credit = pos.get("entry_credit", 0)
-    if credit > 0:
-        pnl_pct = mtm / credit * 100 if credit else 0
-        st.info(f"Entry credit: {credit:.1f} pts · Current MtM: {mtm:+.1f} pts ({pnl_pct:+.0f}% of credit)")
-
-    if ce_dist_live < 2 * atr14:
-        if kills.get("RSI_ZONE_SKIP") or kills.get("K2"):
-            st.error(f"🔴 RSI_ZONE_SKIP + CE buffer < 2×ATR ({ce_dist_live:.0f} pts). EXIT CE leg.")
-        if kills.get("RSI_REGIME_FLIP") or kills.get("K1"):
-            st.error(f"🔴 RSI_REGIME_FLIP + CE buffer < 2×ATR. EXIT CE leg.")
-    if pe_dist_live < 2 * atr14:
-        if kills.get("RSI_ZONE_SKIP") or kills.get("K2"):
-            st.error(f"🔴 RSI_ZONE_SKIP + PE buffer < 2×ATR ({pe_dist_live:.0f} pts). EXIT PE leg.")
 
 st.divider()
 st.caption("Each lens speaks independently. Suggested strike = most conservative across all lenses. Lot size = 65.")
