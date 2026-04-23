@@ -310,11 +310,11 @@ def _build_lens_table(sig: dict, spot: float) -> None:
     breadth_lbl = sig.get("breadth_label", "ADEQUATE")
     const_pe_mod = sig.get("constituent_pe_mod", 0)   # pts from named signals
     BREADTH_PE_MULT = {
-        "BROAD_HEALTH": 2.00,
-        "ADEQUATE":     2.25,
-        "THINNING":     2.50,
-        "COLLAPSE":     3.00,
-    }
+    "BROAD_HEALTH": 1.50,
+    "ADEQUATE":     1.75,
+    "THINNING":     2.00,
+    "COLLAPSE":     2.50,
+}
     l3_pe_m = BREADTH_PE_MULT.get(breadth_lbl, 2.25)
     # Named signals (HEAVYWEIGHT_COLLAPSE etc) override upward
     if const_pe_mod >= 300:  l3_pe_m = max(l3_pe_m, 2.75)
