@@ -47,23 +47,11 @@ def _get_kite():
     """
     Return authenticated KiteConnect — works in both Streamlit and Actions.
 
-    Import strategy: kite_client.py lives in the repo ROOT.
-    live_fetcher.py lives in data/ subfolder on GitHub.
-    So from data/, the root is one level up → import without 'data.' prefix.
-    We try both import paths to be safe.
+    Both live_fetcher.py and kite_client.py live in the data/ package.
+    Use a relative import (.kite_client) which always works regardless of
+    how Python's sys.path is configured.
     """
-    try:
-        # GitHub repo: live_fetcher is in data/, kite_client is in root
-        # Python adds the root (where Home.py is) to sys.path automatically
-        from kite_client import get_kite, get_kite_action
-    except ImportError:
-        # Fallback: flat structure where both files are in same folder
-        import importlib, sys, os
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if root not in sys.path:
-            sys.path.insert(0, root)
-        from kite_client import get_kite, get_kite_action
-
+    from .kite_client import get_kite, get_kite_action
     return get_kite_action() if not _HAS_ST else get_kite()
 
 
