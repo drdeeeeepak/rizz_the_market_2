@@ -115,6 +115,48 @@ def get_nifty_spot() -> float:
         return 0.0
 
 
+# ─── Nifty futures price ─────────────────────────────────────────────────────
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_nifty_futures() -> float:
+    """
+    Live Nifty near-month futures price.
+    Used for futures premium/discount calculation on Page 10.
+
+    Kite symbol format for Nifty futures: "NFO:NIFTY{YY}{MON}FUT"
+    e.g. April 2026 → NFO:NIFTYAPR26FUT (Kite uses MMMYY format)
+
+    Returns futures LTP, or 0.0 if unavailable.
+    """
+    kite = _get_kite()
+    try:
+        # Build current month futures symbol
+        now = date.today()
+        month_str = now.strftime("%b").upper()   # JAN, FEB, MAR ...
+        year_str  = now.strftime("%y")           # 26
+        symbol    = f"NFO:NIFTY{month_str}{year_str}FUT"
+
+        quote = kite.quote([symbol])
+        if symbol in quote:
+            return float(quote[symbol]["last_price"])
+
+        # Fallback: try next month if near rollover
+        next_month = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+        nm_str  = next_month.strftime("%b").upper()
+        ny_str  = next_month.strftime("%y")
+        sym2    = f"NFO:NIFTY{nm_str}{ny_str}FUT"
+        quote2  = kite.quote([sym2])
+        if sym2 in quote2:
+            return float(quote2[sym2]["last_price"])
+
+        log.warning("Nifty futures not found. Tried: %s, %s", symbol, sym2)
+        return 0.0
+
+    except Exception as e:
+        log.error("Futures fetch failed: %s", e)
+        return 0.0
+
+
 # ─── NFO instruments master (the key to correct options symbols) ──────────────
 
 @st.cache_data(ttl=TTL_DAILY, show_spinner=False)
