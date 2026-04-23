@@ -1,18 +1,14 @@
-# analytics/ema.py — v6 (April 2026)
+# analytics/ema.py — v7 (22 April 2026)
 # New unified EMA framework — Pages 1+2
 #
-# Three independent components — no double counting:
-#   Component 1: Cluster Regime (7 regimes — RECOVERING added)
-#                Symmetric ATR-multiple base. No moat info encoded.
-#   Component 2: Moat Count (creates ALL asymmetry between PE and CE)
-#                Clustering rule (50pts), Degraded EMA8 rule (neg slope = 0.5)
-#   Component 3: Momentum Score (threatened leg only)
-#
-# Distance formula: (Base_mult + Moat_mult + Mom_mult) × ATR14 = distance pts
-# Each lens outputs its own standalone distance — aggregation in compute_signals
-#
-# Legacy P1 Duration Score retained for canary/kill switch logic only
-# Legacy P2 Stack Score retained for backward compat display
+# LOCKED CHANGES (per premiumdecay_locked_rules_22Apr2026_1600IST.docx):
+#   Component 1: Regime base multiples REDUCED — 1.5x / 1.75x / 2.0x
+#   Component 2: Moat adjustments — FIXED POINTS (not ATR multiples)
+#                Fortress -100, Strong +0, Adequate +100, Thin +200, Exposed +350
+#   Component 3: Momentum — FIXED POINTS (not ATR multiples)
+#                STRONG ±100, MODERATE ±50, TRANSITIONING ±75 both
+#   Hard cap: EMA lens total never exceeds 3.0× ATR14 per side
+#   All other logic (clustering, degraded EMA8, momentum score) unchanged
 
 import pandas as pd
 import numpy as np
@@ -36,24 +32,27 @@ from config import (
 FAST_CLUSTER      = [8, 16, 30]
 SLOW_CLUSTER      = [60, 120, 200]
 MOAT_SET          = [8, 16, 30, 60, 120, 200]
-MOAT_CLUSTER_DIST = 50    # pts — moats this close count as one
+MOAT_CLUSTER_DIST = 50      # pts — moats this close count as one
 ATR_WEEKLY_MULT   = 2.0
 ATR_BIWEEKLY_MULT = 3.0
 
-# ── Regime base ATR multiples (symmetric — moat count creates asymmetry) ──
-# Base = how structurally threatening / uncertain is the overall regime?
-# 2.0× = clean structure  |  2.25× = transitional  |  2.5× = deteriorating
+# ── LOCKED: New regime base ATR multiples ─────────────────────────────────
+# Reduced from 2.0x/2.25x/2.5x to 1.5x/1.75x/2.0x
+# Base is SYMMETRIC — moat count creates all asymmetry
 REGIME_BASE_MULT = {
-    "STRONG_BULL":     2.00,
-    "BULL_COMPRESSED": 2.00,
-    "INSIDE_BULL":     2.00,
-    "RECOVERING":      2.25,   # spot above fast, fast entirely below slow
-    "INSIDE_BEAR":     2.50,
-    "BEAR_COMPRESSED": 2.25,
-    "STRONG_BEAR":     2.50,
+    "STRONG_BULL":     1.50,
+    "BULL_COMPRESSED": 1.50,
+    "INSIDE_BULL":     1.50,
+    "RECOVERING":      1.75,   # spot above fast, fast entirely below slow
+    "INSIDE_BEAR":     2.00,
+    "BEAR_COMPRESSED": 1.75,
+    "STRONG_BEAR":     2.00,
 }
 
-# IC shape and size guidance per regime (for display only — not distance calc)
+# ── LOCKED: EMA lens hard cap ─────────────────────────────────────────────
+EMA_LENS_CAP_MULT = 3.0   # never output more than 3.0× ATR14 per side
+
+# IC shape and size guidance per regime (display only — not distance calc)
 REGIME_GUIDE = {
     "STRONG_BULL":     {"ratio": "1:2", "size": 1.00, "desc": "Full bullish stack. CE needs room — moats define asymmetry."},
     "BULL_COMPRESSED": {"ratio": "1:2", "size": 0.75, "desc": "Fast cluster penetrating slow. Mild upward pressure."},
@@ -64,37 +63,54 @@ REGIME_GUIDE = {
     "STRONG_BEAR":     {"ratio": "2:1", "size": 0.625,"desc": "Full bearish stack. PE exposed. CE has all EMAs as overhead resistance."},
 }
 
-# ── Moat count → ATR multiple adjustment ──────────────────────────────────
+# ── LOCKED: Moat adjustments — FIXED POINTS (not ATR multiples) ──────────
 # Applied independently per side. Creates all asymmetry.
-MOAT_MULT = {
-    "fortress": -0.25,   # 5-6 moats
-    "strong":    0.00,   # 3-4 moats
-    "adequate":  0.25,   # 2 moats
-    "thin":      0.50,   # 1 moat
-    "exposed":   0.75,   # 0 moats
+# Fortress=-100, Strong=0, Adequate=+100, Thin=+200, Exposed=+350
+MOAT_PTS = {
+    "fortress": -100,
+    "strong":      0,
+    "adequate":  +100,
+    "thin":      +200,
+    "exposed":   +350,
 }
 
-def moat_label_and_mult(count: float) -> tuple:
-    """Returns (label, atm_multiple) for a given (possibly fractional) moat count."""
-    if   count >= 5:  return "fortress", MOAT_MULT["fortress"]
-    elif count >= 3:  return "strong",   MOAT_MULT["strong"]
-    elif count >= 2:  return "adequate", MOAT_MULT["adequate"]
-    elif count >= 1:  return "thin",     MOAT_MULT["thin"]
-    else:             return "exposed",  MOAT_MULT["exposed"]
+def moat_label_and_pts(count: float) -> tuple:
+    """Returns (label, fixed_pts) for a given (possibly fractional) moat count."""
+    if   count >= 5:  return "fortress", MOAT_PTS["fortress"]
+    elif count >= 3:  return "strong",   MOAT_PTS["strong"]
+    elif count >= 2:  return "adequate", MOAT_PTS["adequate"]
+    elif count >= 1:  return "thin",     MOAT_PTS["thin"]
+    else:             return "exposed",  MOAT_PTS["exposed"]
 
-# ── Momentum → ATR multiple adjustment (threatened leg only) ─────────────
+# Keep old function name for backward compat — returns (label, pts_as_mult=0)
+def moat_label_and_mult(count: float) -> tuple:
+    label, pts = moat_label_and_pts(count)
+    return label, 0.0   # mult no longer used — kept for any legacy callers
+
+# ── LOCKED: Momentum adjustments — FIXED POINTS (threatened leg only) ────
+# STRONG ±100pts, MODERATE ±50pts, TRANSITIONING ±75pts both
 MOM_STRONG_UP_THRESH   = +15.0  # % ATR/day
 MOM_MODERATE_UP_THRESH =  +5.0
 MOM_MODERATE_DN_THRESH =  -5.0
 MOM_STRONG_DN_THRESH   = -15.0
 
+MOM_PTS = {
+    "STRONG_UP":     (   0, +100),   # (PE pts, CE pts)
+    "MODERATE_UP":   (   0,  +50),
+    "FLAT":          (   0,    0),
+    "MODERATE_DOWN": ( +50,    0),
+    "STRONG_DOWN":   (+100,    0),
+    "TRANSITIONING": ( +75,  +75),   # both uncertain
+}
+
+# ── Legacy MOM_MULTS kept for any callers that still reference it ─────────
 MOM_MULTS = {
-    "STRONG_UP":    (0.00, 0.50),   # (PE add, CE add)
+    "STRONG_UP":    (0.00, 0.50),
     "MODERATE_UP":  (0.00, 0.25),
     "FLAT":         (0.00, 0.00),
     "MODERATE_DOWN":(0.25, 0.00),
     "STRONG_DOWN":  (0.50, 0.00),
-    "TRANSITIONING":(0.25, 0.25),   # both sides uncertain
+    "TRANSITIONING":(0.25, 0.25),
 }
 
 
@@ -109,9 +125,9 @@ class EMAEngine(BaseStrategy):
 
     def signals(self, df: pd.DataFrame) -> dict:
         df  = self.compute(df.copy())
-        p1  = self._page1_signals(df)    # legacy — for canary/kill switches
-        p2  = self._page2_signals(df)    # legacy — for backward compat
-        cr  = self._cluster_regime_signals(df)  # new framework
+        p1  = self._page1_signals(df)
+        p2  = self._page2_signals(df)
+        cr  = self._cluster_regime_signals(df)
         return {**p1, **p2, **cr}
 
     # ══════════════════════════════════════════════════════════════════════
@@ -147,7 +163,6 @@ class EMAEngine(BaseStrategy):
         atr       = float(r.get("atr14", 200))
         hard_exit = (put_adj < P1_HARD_EXIT and ema3_lt_ema8)
 
-        # Legacy distances (kept for compute_signals legacy path — not primary)
         call_dist, put_dist, ratio = self._distances_from_skew(net_skew)
 
         return {
@@ -313,19 +328,6 @@ class EMAEngine(BaseStrategy):
     # ══════════════════════════════════════════════════════════════════════
 
     def _cluster_regime(self, r, spot: float) -> tuple:
-        """
-        Seven-regime classification.
-        Detection order matters — RECOVERING must be checked before fallback.
-
-        Regimes:
-          STRONG_BULL:     spot > fast > slow
-          BULL_COMPRESSED: spot > fast, fast inside slow
-          INSIDE_BULL:     fast > slow, spot inside fast
-          RECOVERING:      spot > fast, fast entirely below slow  ← NEW
-          INSIDE_BEAR:     fast < slow, spot inside fast
-          BEAR_COMPRESSED: spot < fast, fast inside slow
-          STRONG_BEAR:     spot < fast < slow
-        """
         fast = {p: float(r.get(f"ema{p}", spot)) for p in FAST_CLUSTER}
         slow = {p: float(r.get(f"ema{p}", spot)) for p in SLOW_CLUSTER}
 
@@ -340,7 +342,6 @@ class EMAEngine(BaseStrategy):
         fast_below_slow = fast_max < slow_min
         fast_in_slow    = not fast_above_slow and not fast_below_slow
 
-        # Detection in priority order — most specific first
         if spot_above_fast and fast_above_slow:
             regime = "STRONG_BULL"
         elif spot_below_fast and fast_below_slow:
@@ -350,18 +351,13 @@ class EMAEngine(BaseStrategy):
         elif spot_below_fast and fast_in_slow:
             regime = "BEAR_COMPRESSED"
         elif spot_above_fast and fast_below_slow:
-            regime = "RECOVERING"          # ← the missing regime — now explicit
+            regime = "RECOVERING"
         elif fast_above_slow and spot_in_fast:
             regime = "INSIDE_BULL"
         elif fast_below_slow and spot_in_fast:
             regime = "INSIDE_BEAR"
         else:
-            # True edge case: spot exactly at cluster boundary
-            # Classify conservatively by overall direction
-            if spot > (fast_min + fast_max) / 2:
-                regime = "INSIDE_BULL"
-            else:
-                regime = "INSIDE_BEAR"
+            regime = "INSIDE_BULL" if spot > (fast_min + fast_max) / 2 else "INSIDE_BEAR"
 
         base_mult = REGIME_BASE_MULT[regime]
         guide     = REGIME_GUIDE[regime]
@@ -373,13 +369,6 @@ class EMAEngine(BaseStrategy):
 
     def _count_moats_put(self, spot: float, ema_vals: dict, atr: float,
                           ema3_slope: float = 0.0) -> tuple:
-        """
-        Count EMAs protecting the put leg (below spot, within 3×ATR).
-        Rules:
-          - Clustering: moats within 50pts count as ONE
-          - Degraded: EMA8 with negative slope counts as 0.5 moat
-        Returns (effective_count, detail_list)
-        """
         biweekly_floor = spot - atr * ATR_BIWEEKLY_MULT
         candidates = []
         for p in MOAT_SET:
@@ -390,20 +379,16 @@ class EMAEngine(BaseStrategy):
         if not candidates:
             return 0.0, []
 
-        # Sort by value descending (closest to spot first)
         candidates.sort(key=lambda x: x[1], reverse=True)
 
-        # Apply clustering rule: moats within 50 pts merge
         merged = []
         for p, v in candidates:
             if merged and abs(v - merged[-1][1]) <= MOAT_CLUSTER_DIST:
-                # Merge — keep the label as combined, use the higher value
                 prev_p, prev_v = merged[-1]
                 merged[-1] = (f"{prev_p}+{p}", prev_v)
             else:
                 merged.append((p, v))
 
-        # Apply degraded moat rule: EMA8 with negative slope = 0.5
         effective_count = 0.0
         detail = []
         for label, v in merged:
@@ -418,11 +403,6 @@ class EMAEngine(BaseStrategy):
         return effective_count, detail
 
     def _count_moats_call(self, spot: float, ema_vals: dict, atr: float) -> tuple:
-        """
-        Count EMAs protecting the call leg (above spot, within 3×ATR).
-        Clustering rule applies. No degraded rule for call side.
-        Returns (effective_count, detail_list)
-        """
         biweekly_ceil = spot + atr * ATR_BIWEEKLY_MULT
         candidates = []
         for p in MOAT_SET:
@@ -433,10 +413,8 @@ class EMAEngine(BaseStrategy):
         if not candidates:
             return 0.0, []
 
-        # Sort ascending (closest to spot first)
         candidates.sort(key=lambda x: x[1])
 
-        # Clustering
         merged = []
         for p, v in candidates:
             if merged and abs(v - merged[-1][1]) <= MOAT_CLUSTER_DIST:
@@ -454,10 +432,6 @@ class EMAEngine(BaseStrategy):
     # ══════════════════════════════════════════════════════════════════════
 
     def _momentum_score(self, df: pd.DataFrame, atr: float) -> tuple:
-        """
-        Combined momentum from EMA3 and EMA8 slopes normalised by ATR14.
-        Returns (combined_score_pct, state, ema3_slope_pts, ema8_slope_pts)
-        """
         if len(df) < 4 or atr == 0:
             return 0.0, "FLAT", 0.0, 0.0
 
@@ -468,7 +442,6 @@ class EMAEngine(BaseStrategy):
         ema8_str = ema8_slope / atr * 100
         combined = ema3_str * 0.6 + ema8_str * 0.4
 
-        # Transitioning: EMA3 and EMA8 disagree on direction
         if (ema3_slope > 0) != (ema8_slope > 0):
             state = "TRANSITIONING"
         elif combined > MOM_STRONG_UP_THRESH:
@@ -486,6 +459,7 @@ class EMAEngine(BaseStrategy):
 
     # ══════════════════════════════════════════════════════════════════════
     # NEW FRAMEWORK — Assemble all three components
+    # LOCKED: Base (ATR mult × ATR14) + Moat pts + Momentum pts, capped at 3.0× ATR
     # ══════════════════════════════════════════════════════════════════════
 
     def _cluster_regime_signals(self, df: pd.DataFrame) -> dict:
@@ -496,6 +470,7 @@ class EMAEngine(BaseStrategy):
 
         # Component 1 — Cluster Regime
         regime, base_mult, guide = self._cluster_regime(r, spot)
+        base_pts = int(round(base_mult * atr / 50) * 50)
 
         # ATR danger zones
         weekly_zone   = atr * ATR_WEEKLY_MULT
@@ -509,34 +484,43 @@ class EMAEngine(BaseStrategy):
         put_moats,  put_moat_detail  = self._count_moats_put(spot, ema_vals, atr, ema3_slope)
         call_moats, call_moat_detail = self._count_moats_call(spot, ema_vals, atr)
 
-        # Moat labels and ATR multiples
-        put_moat_label,  put_moat_mult  = moat_label_and_mult(put_moats)
-        call_moat_label, call_moat_mult = moat_label_and_mult(call_moats)
+        # LOCKED: Moat labels and FIXED POINTS (not ATR multiples)
+        put_moat_label,  put_moat_pts  = moat_label_and_pts(put_moats)
+        call_moat_label, call_moat_pts = moat_label_and_pts(call_moats)
 
-        # Momentum ATR multiples
-        mom_pe_mult, mom_ce_mult = MOM_MULTS.get(mom_state, (0.0, 0.0))
+        # LOCKED: Momentum FIXED POINTS (not ATR multiples)
+        mom_pe_pts, mom_ce_pts = MOM_PTS.get(mom_state, (0, 0))
 
-        # Final ATR multiples per side
-        pe_total_mult = base_mult + put_moat_mult  + mom_pe_mult
-        ce_total_mult = base_mult + call_moat_mult + mom_ce_mult
+        # LOCKED: Final distance = base_pts + moat_pts + momentum_pts, capped at 3.0× ATR
+        cap_pts = int(round(EMA_LENS_CAP_MULT * atr / 50) * 50)
 
-        # Convert to points (round to nearest 50)
-        pe_dist_pts = int(round(pe_total_mult * atr / 50) * 50)
-        ce_dist_pts = int(round(ce_total_mult * atr / 50) * 50)
+        pe_raw_pts = base_pts + put_moat_pts  + mom_pe_pts
+        ce_raw_pts = base_pts + call_moat_pts + mom_ce_pts
 
-        # EMAs in weekly/biweekly danger zones (for ATR zone display)
+        pe_dist_pts = int(round(min(pe_raw_pts, cap_pts) / 50) * 50)
+        ce_dist_pts = int(round(min(ce_raw_pts, cap_pts) / 50) * 50)
+
+        # For display — keep ATR multiples for breakdown table
+        pe_total_mult = pe_dist_pts / atr if atr > 0 else base_mult
+        ce_total_mult = ce_dist_pts / atr if atr > 0 else base_mult
+
+        # EMAs in weekly/biweekly danger zones
         put_danger_emas    = [p for p in MOAT_SET if 0 < (spot - ema_vals[p]) <= weekly_zone]
         call_danger_emas   = [p for p in MOAT_SET if 0 < (ema_vals[p] - spot) <= weekly_zone]
         put_relevant_emas  = [p for p in MOAT_SET if weekly_zone < (spot - ema_vals[p]) <= biweekly_zone]
         call_relevant_emas = [p for p in MOAT_SET if weekly_zone < (ema_vals[p] - spot) <= biweekly_zone]
 
-        # Hard skip: INSIDE_BEAR + 0 put moats + Strong Down
+        # Hard skip
         hard_skip = (regime == "INSIDE_BEAR" and put_moats == 0 and mom_state == "STRONG_DOWN")
+
+        # EMA structural quality score for master score
+        ema_master_score = self._ema_master_score(regime, put_moat_label, call_moat_label)
 
         return {
             # ── Regime ──────────────────────────────────────────────────
             "cr_regime":       regime,
             "cr_base_mult":    base_mult,
+            "cr_base_pts":     base_pts,
             "cr_ic_shape":     guide["ratio"],
             "cr_size":         guide["size"],
             "cr_regime_desc":  guide["desc"],
@@ -553,8 +537,11 @@ class EMAEngine(BaseStrategy):
             "cr_call_moats":       call_moats,
             "cr_put_moat_label":   put_moat_label,
             "cr_call_moat_label":  call_moat_label,
-            "cr_put_moat_mult":    put_moat_mult,
-            "cr_call_moat_mult":   call_moat_mult,
+            "cr_put_moat_pts":     put_moat_pts,
+            "cr_call_moat_pts":    call_moat_pts,
+            # Legacy compat — pages reading cr_put_moat_mult etc get 0
+            "cr_put_moat_mult":    0.0,
+            "cr_call_moat_mult":   0.0,
             "cr_put_moat_detail":  put_moat_detail,
             "cr_call_moat_detail": call_moat_detail,
             # ── Momentum ─────────────────────────────────────────────────
@@ -562,22 +549,59 @@ class EMAEngine(BaseStrategy):
             "cr_mom_state":    mom_state,
             "cr_mom_ema3_slope": ema3_slope,
             "cr_mom_ema8_slope": ema8_slope,
-            "cr_mom_pe_mult":  mom_pe_mult,
-            "cr_mom_ce_mult":  mom_ce_mult,
-            # ── Final EMA lens distances ──────────────────────────────────
+            "cr_mom_pe_pts":   mom_pe_pts,
+            "cr_mom_ce_pts":   mom_ce_pts,
+            # Legacy
+            "cr_mom_pe_mult":  0.0,
+            "cr_mom_ce_mult":  0.0,
+            # ── Final EMA lens distances (LOCKED: fixed pts formula) ──────
             "cr_pe_total_mult":    round(pe_total_mult, 2),
             "cr_ce_total_mult":    round(ce_total_mult, 2),
             "cr_pe_dist_pts":      pe_dist_pts,
             "cr_ce_dist_pts":      ce_dist_pts,
-            # Legacy aliases kept for compute_signals compat
+            "cr_cap_applied_pe":   pe_raw_pts > cap_pts,
+            "cr_cap_applied_ce":   ce_raw_pts > cap_pts,
+            # Legacy aliases
             "cr_final_put_dist":   pe_dist_pts,
             "cr_final_call_dist":  ce_dist_pts,
-            "cr_base_put":         int(round(base_mult * atr / 50) * 50),
-            "cr_base_call":        int(round(base_mult * atr / 50) * 50),
+            "cr_base_put":         base_pts,
+            "cr_base_call":        base_pts,
             # ── Flags ─────────────────────────────────────────────────────
             "cr_hard_skip":        hard_skip,
             "cr_ema_vals":         {p: round(v, 0) for p, v in ema_vals.items()},
+            # ── Master score structural quality ───────────────────────────
+            "cr_ema_master_score": ema_master_score,
         }
+
+    def _ema_master_score(self, regime: str, put_label: str, call_label: str) -> int:
+        """
+        EMA structural quality score for Home master score.
+        Locked bands per premiumdecay_locked_rules_22Apr2026_1600IST.docx Section 1.5
+        """
+        bull_regimes = {"STRONG_BULL", "BULL_COMPRESSED"}
+        bear_regimes = {"INSIDE_BEAR", "BEAR_COMPRESSED", "STRONG_BEAR"}
+        transitional = {"RECOVERING", "INSIDE_BULL"}
+
+        fortress_strong = {"fortress", "strong"}
+
+        if regime in bear_regimes:
+            return 0
+
+        if regime in transitional:
+            return 2
+
+        # Bullish regimes
+        if regime in bull_regimes:
+            if put_label in fortress_strong and call_label in fortress_strong:
+                return 5
+            if put_label == "adequate" and call_label == "adequate":
+                return 4
+            # Mixed — one side thin
+            if "thin" in (put_label, call_label) or "exposed" in (put_label, call_label):
+                return 3
+            return 4
+
+        return 2   # fallback
 
     # ── Used by constituent_ema.py ────────────────────────────────────────
     def stock_cluster_signals(self, df: pd.DataFrame, symbol: str) -> dict:
