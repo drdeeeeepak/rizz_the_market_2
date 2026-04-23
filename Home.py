@@ -1,5 +1,12 @@
-# Home.py — premiumdecay v5
+# Home.py — premiumdecay v6 (22 April 2026)
 # Position Manager · Multi-Lens Integrated Assessment · Final Strike Suggestion
+#
+# LOCKED CHANGES vs v5:
+#   - _mode(): Tuesday EOD = PRIMARY_ENTRY, Wednesday = SECONDARY_ENTRY
+#   - Master score collapsible explanation section added
+#   - _lens_scores now shows correct labels (EMA structure, Options Chain, Dow Theory)
+#   - sig["vix"] key now available for correct VIX display
+
 import streamlit as st
 import datetime, pytz, json
 import pandas as pd
@@ -7,27 +14,44 @@ from pathlib import Path
 
 st.set_page_config(page_title="premiumdecay · Home", layout="wide", page_icon="📊")
 
-# ── Mode detection ────────────────────────────────────────────────────────────
+# ── Mode detection — LOCKED entry day logic ───────────────────────────────────
 def _ist():
     return datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
 
 def _mode():
-    n = _ist(); wd = n.weekday(); t = n.hour * 60 + n.minute
-    if wd >= 5:             return "PLANNING"
-    if 555 <= t <= 930:     return "PRE_MARKET"
-    if 555 <= t <= 930:     return "PRE_MARKET"
-    if 9*60+15 <= t <= 15*60+30: return "LIVE"
-    if 15*60+30 < t <= 18*60:   return "TRANSITION"
+    n  = _ist()
+    wd = n.weekday()   # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    t  = n.hour * 60 + n.minute
+
+    if wd >= 5:
+        return "PLANNING"
+
+    # LOCKED: Tuesday 14:30–15:30 IST = PRIMARY IC entry window
+    if wd == 1 and 14*60+30 <= t <= 15*60+30:
+        return "ENTRY_PRIMARY"
+
+    # LOCKED: Wednesday market hours = SECONDARY entry (not prohibited)
+    if wd == 2 and 9*60+15 <= t <= 15*60+30:
+        return "ENTRY_SECONDARY"
+
+    if t < 9*60+15:
+        return "PRE_MARKET"
+    if 9*60+15 <= t <= 15*60+30:
+        return "LIVE"
+    if 15*60+30 < t <= 18*60:
+        return "TRANSITION"
     return "PLANNING"
 
 MODE = _mode()
 _ML = {
-    "LIVE":       ("🟢", "LIVE",                     "#16a34a"),
-    "TRANSITION": ("🟡", "TRANSITION · EOD computing","#d97706"),
-    "PRE_MARKET": ("🌅", "PRE-MARKET · Gap check",   "#7c3aed"),
-    "PLANNING":   ("🌙", "PLANNING MODE",             "#2563eb"),
+    "LIVE":            ("🟢", "LIVE",                          "#16a34a"),
+    "TRANSITION":      ("🟡", "TRANSITION · EOD computing",    "#d97706"),
+    "PRE_MARKET":      ("🌅", "PRE-MARKET · Gap check",        "#7c3aed"),
+    "PLANNING":        ("🌙", "PLANNING MODE",                  "#2563eb"),
+    "ENTRY_PRIMARY":   ("🎯", "TUESDAY EOD — PRIMARY ENTRY",   "#dc2626"),
+    "ENTRY_SECONDARY": ("🎯", "WEDNESDAY — SECONDARY ENTRY",   "#d97706"),
 }
-icon, mode_txt, mode_col = _ML.get(MODE, ("⚪","—","#94a3b8"))
+icon, mode_txt, mode_col = _ML.get(MODE, ("⚪", "—", "#94a3b8"))
 
 st.markdown(
     f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:4px;'>"
@@ -36,6 +60,12 @@ st.markdown(
     f"font-size:12px;font-weight:600;'>{icon} {mode_txt}</span></div>",
     unsafe_allow_html=True)
 st.caption("Asymmetric Iron Condor · Nifty 50 · Biweekly Tuesday · 5% OTM · 7-day hold · EOD only")
+
+# Entry mode banners
+if MODE == "ENTRY_PRIMARY":
+    st.success("🎯 **TUESDAY EOD — PRIMARY ENTRY WINDOW** · This is the ideal IC entry time. Near expiry closing. Far expiry beginning.")
+elif MODE == "ENTRY_SECONDARY":
+    st.info("🎯 **WEDNESDAY — SECONDARY ENTRY** · Valid entry if Tuesday was missed. Not prohibited.")
 
 # ── Data load ─────────────────────────────────────────────────────────────────
 from data.live_fetcher import (
@@ -78,13 +108,26 @@ atr14    = sig.get("atr14", 200)
 
 cols = st.columns(8)
 with cols[0]: ui.metric_card("NIFTY SPOT",  f"{spot:,.0f}",              color="blue")
-with cols[1]: ui.metric_card("INDIA VIX",   f"{vix_live:.1f}",           color="red" if vix_live > 20 else "amber" if vix_live > 16 else "green")
+with cols[1]: ui.metric_card("INDIA VIX",   f"{sig.get('vix', vix_live):.1f}",
+                               color="red" if vix_live > 20 else "amber" if vix_live > 16 else "green")
 with cols[2]: ui.metric_card("ATR14",       f"{atr14:.0f} pts")
 with cols[3]: ui.metric_card("NEAR DTE",    f"{near_dte}d",              sub=str(near_exp), color="red" if near_dte <= 2 else "default")
 with cols[4]: ui.metric_card("FAR DTE",     f"{far_dte}d",               sub=str(far_exp),  color="green")
 with cols[5]: ui.metric_card("NET SKEW",    f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0) > 0 else "amber")
 with cols[6]: ui.metric_card("REGIME",      sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
 with cols[7]: ui.metric_card("SIZE MULT",   f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0) >= 1.0 else "red")
+
+# Dow breach alerts
+if sig.get("put_breach_active"):
+    st.error(f"🔴 PUT BREACH ACTIVE — Spot closed below put breach level {sig.get('put_breach_level',0):,.0f}. Structural support broken.")
+if sig.get("call_breach_active"):
+    st.error(f"🔴 CALL BREACH ACTIVE — Spot closed above call breach level {sig.get('call_breach_level',0):,.0f}. Structural resistance broken.")
+if sig.get("pe_proximity_warning"):
+    st.warning(f"⚠️ PE PROXIMITY — Spot within 1/3 ATR of recent pivot low {sig.get('recent_pivot_low',0):,.0f}. Structural support being tested.")
+if sig.get("ce_proximity_warning"):
+    st.warning(f"⚠️ CE PROXIMITY — Spot within 1/3 ATR of recent pivot high {sig.get('recent_pivot_high',0):,.0f}. Structural resistance being tested.")
+if sig.get("pivot_staleness_flag"):
+    st.info(f"ℹ️ PIVOT STALENESS — No recent pivot confirmed in {sig.get('bars_since_pivot',0)} trading days. Structural reference unreliable.")
 
 # Staleness check
 if data_ok and not nifty_df.empty:
@@ -151,7 +194,7 @@ verdict     = sig.get("master_verdict", "—")
 master_col  = sig.get("master_colour",  "#94a3b8")
 lens_scores = sig.get("_lens_scores", {})
 
-# Kill switch banners — only hard ones
+# Kill switch banners
 kills = sig.get("kill_switches", {})
 if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"):
     st.error("🔴 RSI_DUAL_EXHAUSTION — Both timeframes exhausted. Flatten 1:1, +300 pts both sides.")
@@ -183,15 +226,21 @@ with col_m:
         unsafe_allow_html=True)
 
 with col_scores:
-    st.markdown("**Per-Lens Scores** (max 20 each)")
+    st.markdown("**Per-Lens Scores**")
+    # Max points per lens for bar calculation
+    LENS_MAX = {
+        "EMA structure": 5, "RSI (P5-8)": 20, "Bollinger": 15,
+        "Options Chain": 25, "VIX / IV": 10, "Mkt Profile": 20, "Dow Theory": 5
+    }
     for lens, sc in lens_scores.items():
-        bar_w  = int(sc / 20 * 100)
-        bar_c  = "#16a34a" if sc >= 15 else "#d97706" if sc >= 8 else "#dc2626"
+        max_pts = LENS_MAX.get(lens, 20)
+        bar_w  = int(sc / max_pts * 100) if max_pts > 0 else 0
+        bar_c  = "#16a34a" if sc >= max_pts * 0.75 else "#d97706" if sc >= max_pts * 0.4 else "#dc2626"
         st.markdown(
             f"<div style='margin-bottom:6px;'>"
             f"<div style='display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;'>"
             f"<span style='color:#334155;font-weight:600;'>{lens}</span>"
-            f"<span style='color:{bar_c};font-weight:700;'>{sc}/20</span></div>"
+            f"<span style='color:{bar_c};font-weight:700;'>{sc}/{max_pts}</span></div>"
             f"<div style='background:#e2e8f0;border-radius:4px;height:6px;'>"
             f"<div style='background:{bar_c};width:{bar_w}%;height:6px;border-radius:4px;'></div>"
             f"</div></div>",
@@ -200,20 +249,21 @@ with col_scores:
 with col_detail:
     st.markdown("**Signal Summary — All Lenses**")
     summary_rows = [
-        ("EMA Regime",     sig.get("cr_regime", sig.get("p2_regime","—")),             "Cluster + Stack"),
+        ("EMA Regime",     sig.get("cr_regime", sig.get("p2_regime","—")),              "Cluster + Stack"),
         ("Canary",         f"Day {sig.get('canary_level',0)} ({sig.get('canary_direction','—')})", "EMA deterioration"),
-        ("MTF Alignment",  sig.get("mtf_alignment", sig.get("alignment","—")),          "RSI weekly × daily"),
-        ("W Regime",       sig.get("weekly_regime","—"),                                 "Weekly RSI"),
-        ("D Zone",         sig.get("daily_zone","—"),                                    "Daily RSI"),
-        ("BB Regime",      sig.get("bb_regime","—"),                                     "Bollinger"),
-        ("VIX State",      sig.get("vix_state","—"),                                     "VIX environment"),
-        ("IVP",            f"{sig.get('ivp_1yr',50):.0f}% — {sig.get('ivp_zone','—')}", "IV percentile"),
-        ("VRP",            f"{sig.get('vrp',0):+.1f}%",                                 "IV minus HV20"),
-        ("MP Nesting",     sig.get("mp_nesting","—"),                                    "Market Profile"),
-        ("Behaviour",      sig.get("mp_behaviour","—"),                                  "Responsive/Initiative"),
+        ("MTF Alignment",  sig.get("mtf_alignment", sig.get("alignment","—")),           "RSI weekly × daily"),
+        ("W Regime",       sig.get("weekly_regime","—"),                                  "Weekly RSI"),
+        ("D Zone",         sig.get("daily_zone","—"),                                     "Daily RSI"),
+        ("BB Regime",      sig.get("bb_regime","—"),                                      "Bollinger"),
+        ("VIX State",      sig.get("vix_state","—"),                                      "VIX environment"),
+        ("IVP",            f"{sig.get('ivp_1yr',50):.0f}% — {sig.get('ivp_zone','—')}",  "IV percentile"),
+        ("VRP",            f"{sig.get('vrp',0):+.1f}%",                                  "IV minus HV20"),
+        ("MP Nesting",     sig.get("mp_nesting","—"),                                     "Market Profile"),
+        ("Behaviour",      sig.get("mp_behaviour","—"),                                   "Responsive/Initiative"),
         ("Breadth",        f"{sig.get('breadth_score',50):.0f}% — {sig.get('breadth_label','—')}", "Stock moat breadth"),
-        ("GEX",            f"{sig.get('gex_total',0):+,.0f}",                           "Options chain"),
-        ("PCR",            f"{sig.get('pcr',1.0):.2f}",                                  "Put/Call ratio"),
+        ("GEX",            f"{sig.get('gex_total',0):+,.0f}",                            "Options chain"),
+        ("PCR",            f"{sig.get('pcr',1.0):.2f}",                                   "Put/Call ratio"),
+        ("Dow Structure",  sig.get("dow_structure","—"),                                  "Dow Theory"),
     ]
     for label, value, note in summary_rows:
         st.markdown(
@@ -223,13 +273,49 @@ with col_detail:
             f"<span style='color:#94a3b8;'>{note}</span>"
             f"</div>", unsafe_allow_html=True)
 
+# LOCKED: Master score explanation — collapsible, collapsed by default
+with st.expander("ℹ️ How is the Master Score calculated?", expanded=False):
+    st.markdown("""
+**Master Score — 100 points total**
+
+Six independent analytical lenses each score the current market conditions from their own perspective.
+They never interfere with each other. The total is your trade-readiness score.
+""")
+    score_rows = [
+        ["Options Chain (Page 10)", "25 pts", "OI structure, PCR balance, GEX environment, wall integrity"],
+        ["RSI (Pages 05+06)",       "20 pts", "Weekly regime + daily zone alignment for IC entry quality"],
+        ["Market Profile (Page 12)","20 pts", "Nesting, VA width, POC proximity, biweekly tinge"],
+        ["Bollinger (Page 09)",     "15 pts", "Band position, walk modifier, squeeze state"],
+        ["VIX / IV (Page 11)",      "10 pts", "VIX state, IVP zone, VRP sign"],
+        ["Dow Theory (Page 00)",    "5 pts",  "Structural clarity — UPTREND/DOWNTREND scores highest, MIXED lowest"],
+        ["EMA structural quality",  "5 pts",  "Regime + moat combination quality"],
+        ["TOTAL",                   "100 pts",""],
+    ]
+    df_score = pd.DataFrame(score_rows, columns=["Engine", "Max Points", "What It Scores"])
+    st.dataframe(df_score, use_container_width=True, hide_index=True)
+    st.markdown("""
+**Score Bands**
+
+| Score | Verdict | Position Size |
+|-------|---------|---------------|
+| 0–34 | Stand Aside | 0% |
+| 35–54 | Marginal — reduce size | 50% |
+| 55–74 | Enter with caution | 75% |
+| 75–100 | Enter — high confidence | 100% |
+
+**Breadth multiplier applied AFTER score:**
+8–10 stocks above EMA60 = 1.0× · 6–7 = 0.85× · 4–5 = 0.65× · 0–3 = 0.40×
+
+**Any kill switch = absolute veto regardless of score.** Kill switches override the master score entirely.
+""")
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # C — FINAL STRIKE SUGGESTION + DISTANCE TRANSPARENCY
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("🎯 Final Strike Suggestion")
-st.caption("Binding = MAX of strategy formula and MP biweekly anchor per side · All modifiers independent")
+st.caption("Binding = MAX of all lens distances per side · All modifiers independent · Suggested is most conservative")
 
 from config import WING_DISTANCE
 fd_put  = sig.get("final_put_dist",  1200)
@@ -240,28 +326,24 @@ fpew    = sig.get("final_put_wing",   fpe  - WING_DISTANCE)
 fcew    = sig.get("final_call_wing",  fce  + WING_DISTANCE)
 sug_pe_lens = sig.get("suggested_pe_lens", "—")
 sug_ce_lens = sig.get("suggested_ce_lens", "—")
-bind_flag_p = f"Driven by: {sug_pe_lens}"
-bind_flag_c = f"Driven by: {sug_ce_lens}"
 
 c1,c2,c3,c4 = st.columns(4)
 with c1:
-    ui.metric_card("PE SHORT", f"{fpe:,}", sub=f"−{fd_put:,} pts · {bind_flag_p}", color="green")
+    ui.metric_card("PE SHORT", f"{fpe:,}",
+                   sub=f"−{fd_put:,} pts · Driven by: {sug_pe_lens}", color="green")
 with c2:
     ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts beyond short")
 with c3:
-    ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {bind_flag_c}", color="red")
+    ui.metric_card("CE SHORT", f"{fce:,}",
+                   sub=f"+{fd_call:,} pts · Driven by: {sug_ce_lens}", color="red")
 with c4:
     ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
 
-# Lens table — each lens independently
 with st.expander("📊 All Lens Distances — each lens speaks independently", expanded=True):
     lens_table = sig.get("lens_table", {})
-    sug_pe_lens = sig.get("suggested_pe_lens","—")
-    sug_ce_lens = sig.get("suggested_ce_lens","—")
     if lens_table:
-        st.markdown("Each lens below has independently assessed the safe distance. **You decide which to use.** The suggested strike is the most conservative (furthest from spot) across all lenses.")
+        st.markdown("Each lens has independently assessed the safe distance. **You decide which to use.** The suggested strike is the most conservative (furthest from spot) across all lenses.")
         st.markdown("")
-        import pandas as _pd
         rows = []
         for lens_name, dists in lens_table.items():
             pe_v = dists["pe"]; ce_v = dists["ce"]
@@ -270,15 +352,15 @@ with st.expander("📊 All Lens Distances — each lens speaks independently", e
             is_pe_max = lens_name == sug_pe_lens
             is_ce_max = lens_name == sug_ce_lens
             rows.append({
-                "Lens":       lens_name,
-                "PE Dist":    f"{'⭐ ' if is_pe_max else ''}{pe_v:,} pts",
-                "PE % OTM":   pe_pct,
-                "PE Strike":  f"~{int(spot - pe_v):,}" if spot > 0 else "—",
-                "CE Dist":    f"{'⭐ ' if is_ce_max else ''}{ce_v:,} pts",
-                "CE % OTM":   ce_pct,
-                "CE Strike":  f"~{int(spot + ce_v):,}" if spot > 0 else "—",
+                "Lens":      lens_name,
+                "PE Dist":   f"{'⭐ ' if is_pe_max else ''}{pe_v:,} pts",
+                "PE % OTM":  pe_pct,
+                "PE Strike": f"~{int(spot - pe_v):,}" if spot > 0 else "—",
+                "CE Dist":   f"{'⭐ ' if is_ce_max else ''}{ce_v:,} pts",
+                "CE % OTM":  ce_pct,
+                "CE Strike": f"~{int(spot + ce_v):,}" if spot > 0 else "—",
             })
-        df_lens = _pd.DataFrame(rows)
+        df_lens = pd.DataFrame(rows)
         def hl_max(row):
             styles = [""] * len(row)
             if "⭐" in str(row["PE Dist"]): styles[1] = styles[2] = styles[3] = "background-color:#dcfce7;font-weight:700"
@@ -286,7 +368,7 @@ with st.expander("📊 All Lens Distances — each lens speaks independently", e
             return styles
         st.dataframe(df_lens.style.apply(hl_max, axis=1),
                      use_container_width=True, hide_index=True)
-        st.caption("⭐ = most conservative (suggested). Highlighted green = PE driver. Highlighted red = CE driver.")
+        st.caption("⭐ = most conservative (suggested). Green = PE driver. Red = CE driver.")
 
 st.divider()
 
@@ -314,14 +396,12 @@ if has_pos:
                               sub=f"2×ATR = {2*atr14:.0f} pts",
                               color="green" if pe_dist_live > 2*atr14 else "red")
 
-    # MtM P&L if entered
-    mtm = pos.get("mtm_pnl", 0)
+    mtm    = pos.get("mtm_pnl", 0)
     credit = pos.get("entry_credit", 0)
     if credit > 0:
         pnl_pct = mtm / credit * 100 if credit else 0
         st.info(f"Entry credit: {credit:.1f} pts · Current MtM: {mtm:+.1f} pts ({pnl_pct:+.0f}% of credit)")
 
-    # Kill switch check against open strikes
     if ce_dist_live < 2 * atr14:
         if kills.get("RSI_ZONE_SKIP") or kills.get("K2"):
             st.error(f"🔴 RSI_ZONE_SKIP + CE buffer < 2×ATR ({ce_dist_live:.0f} pts). EXIT CE leg.")
@@ -339,14 +419,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Session**")
     if st.button("🚪 Logout / Clear Token", use_container_width=True):
-        # Clear all session state and cached Kite token
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        # Clear the access token file if it exists
         import os
         token_paths = [
-            ".kite_token",
-            "data/.kite_token",
+            ".kite_token", "data/.kite_token",
             Path(__file__).parent / "data" / ".kite_token",
         ]
         for tp in token_paths:
@@ -355,7 +432,6 @@ with st.sidebar:
                     os.remove(str(tp))
             except Exception:
                 pass
-        # Clear Streamlit cache
         st.cache_data.clear()
         st.success("Logged out. Refresh the page to re-authenticate.")
         st.rerun()
