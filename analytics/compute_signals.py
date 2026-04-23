@@ -317,9 +317,9 @@ def _build_lens_table(sig: dict, spot: float) -> None:
 }
     l3_pe_m = BREADTH_PE_MULT.get(breadth_lbl, 2.25)
     # Named signals (HEAVYWEIGHT_COLLAPSE etc) override upward
-    if const_pe_mod >= 300:  l3_pe_m = max(l3_pe_m, 2.75)
-    elif const_pe_mod >= 200: l3_pe_m = max(l3_pe_m, 2.50)
-    elif const_pe_mod < 0:    l3_pe_m = max(l3_pe_m - 0.25, 2.00)
+    if const_pe_mod >= 150:  l3_pe_m = max(l3_pe_m, 2.25)
+    elif const_pe_mod >= 100: l3_pe_m = max(l3_pe_m, 2.00)
+    elif const_pe_mod < 0:    l3_pe_m = max(l3_pe_m - 0.25, 1.50)
     l3_pe = int(round(l3_pe_m * atr14 / 50) * 50)
     l3_ce = int(round(2.25 * atr14 / 50) * 50)   # CE: constituent has no CE-specific signal
 
