@@ -1,6 +1,13 @@
-# pages/01_Nifty_EMA_Price.py — Page 01: EMA Entry Engine v6
+# pages/01_Nifty_EMA_Price.py — v7 (22 April 2026)
+# EMA Entry Engine
 # Cluster Regime · Moat Count · Momentum Score · EMA Lens Distance
-# Three independent components — no double counting
+#
+# LOCKED CHANGES:
+#   - Canary section REMOVED entirely (belongs on Page 02 only)
+#   - Auto-compute fallback — no forced Home redirect
+#   - Moat and momentum display updated to show FIXED POINTS (not ATR multiples)
+#   - Page ends cleanly after EMA Lens Distance output
+
 import streamlit as st
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
@@ -11,14 +18,35 @@ st_autorefresh(interval=60_000, key="p01")
 st.title("Page 01 — EMA Entry Engine")
 st.caption("Cluster Regime · ATR Danger Zones · Moat Count · Momentum Score · EMA Lens Distance")
 
+# ── Auto-compute fallback ─────────────────────────────────────────────────
 sig = st.session_state.get("signals", {})
 if not sig:
-    st.info("⬅️ Open **Home** page first — it loads all signals."); st.stop()
+    with st.spinner("Loading signals — please wait..."):
+        try:
+            from data.live_fetcher import (
+                get_nifty_spot, get_nifty_daily, get_top10_daily,
+                get_india_vix, get_vix_history, get_dual_expiry_chains,
+            )
+            from analytics.compute_signals import compute_all_signals
+            spot     = get_nifty_spot()
+            nifty_df = get_nifty_daily()
+            stock_dfs= get_top10_daily()
+            vix_live = get_india_vix()
+            vix_hist = get_vix_history()
+            chains   = get_dual_expiry_chains(spot)
+            if spot == 0 and not nifty_df.empty:
+                spot = float(nifty_df["close"].iloc[-1])
+            sig = compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot)
+            st.session_state["signals"] = sig
+        except Exception as e:
+            st.error(f"Could not load signals: {e}. Please open Home page first.")
+            st.stop()
 
 atr14     = sig.get("atr14", 200)
 spot_est  = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
 regime    = sig.get("cr_regime", "INSIDE_BULL")
-base_mult = sig.get("cr_base_mult", 2.0)
+base_mult = sig.get("cr_base_mult", 1.5)
+base_pts  = sig.get("cr_base_pts",  int(round(base_mult * atr14 / 50) * 50))
 
 # ── Kill banners ──────────────────────────────────────────────────────────
 if sig.get("cr_hard_skip"):
@@ -26,7 +54,7 @@ if sig.get("cr_hard_skip"):
 if sig.get("flat_block"):
     st.error("🔴 EMA 3/8 FLAT 5+ DAYS — Coiled spring. Stand aside.")
 if sig.get("p1_hard_exit"):
-    st.error("🔴 CANARY P1 HARD EXIT — Put Safety <50% and EMA3 < EMA8. Review put leg.")
+    st.error("🔴 EMA HARD EXIT — Put Safety <50% and EMA3 < EMA8. Review put leg.")
 
 st.divider()
 
@@ -46,41 +74,51 @@ REGIME_DESC_LONG = {
     "STRONG_BULL":    "Spot above fast cluster AND fast above slow cluster. Full bullish stack.",
     "BULL_COMPRESSED":"Spot above fast cluster AND fast cluster penetrating slow cluster.",
     "INSIDE_BULL":    "Fast cluster above slow cluster AND spot has pulled back inside fast cluster.",
-    "RECOVERING":     "Spot cleared above fast cluster on a bounce but fast cluster is entirely below slow cluster. Transitional — slow cluster is significant overhead resistance.",
-    "INSIDE_BEAR":    "Fast cluster crossed below slow cluster AND spot is between the two clusters. Structure deteriorating — both legs uncertain.",
-    "BEAR_COMPRESSED":"Spot below fast cluster AND fast cluster overlapping with slow cluster.",
-    "STRONG_BEAR":    "Spot below fast cluster AND fast cluster below slow cluster. Full bearish stack. CE has all EMAs as overhead resistance.",
+    "RECOVERING":     "Spot cleared above fast cluster on a bounce but fast cluster is entirely below slow cluster. Slow cluster is significant overhead resistance.",
+    "INSIDE_BEAR":    "Fast cluster crossed below slow cluster AND spot is between the two clusters. Structure deteriorating.",
+    "BEAR_COMPRESSED":"Spot below fast cluster AND fast cluster penetrating slow cluster from below.",
+    "STRONG_BEAR":    "Spot below fast cluster AND fast cluster below slow cluster. Full bearish stack.",
+}
+REGIME_IC = {
+    "STRONG_BULL":    ("1:2 — CE further",  "Full size",   "Strong PE floor. CE needs room."),
+    "BULL_COMPRESSED":("1:2 — CE further",  "75% size",    "Fast cluster compressing. CE caution."),
+    "INSIDE_BULL":    ("1:1 — Symmetric",   "75% size",    "Pullback in uptrend. Both sides equal."),
+    "RECOVERING":     ("1:1 — Symmetric",   "75% size",    "Bounced above fast — slow cluster overhead."),
+    "INSIDE_BEAR":    ("1:1 — Symmetric",   "50% size",    "Deteriorating. Both legs uncertain."),
+    "BEAR_COMPRESSED":("2:1 — PE further",  "75% size",    "Downside pressure. PE needs room."),
+    "STRONG_BEAR":    ("2:1 — PE further",  "62.5% size",  "Full bear stack. PE fully exposed."),
 }
 
-r_col = REGIME_COLOURS.get(regime, "default")
-ui.alert_box(regime, REGIME_DESC_LONG.get(regime, ""), level={
-    "green":"success","blue":"info","amber":"warning","red":"danger","default":"info"
-}.get(r_col,"info"))
+ic_shape, ic_size, ic_note = REGIME_IC.get(regime, ("1:1","Full size","—"))
+regime_col = REGIME_COLOURS.get(regime, "default")
 
-c1, c2, c3, c4 = st.columns(4)
-with c1: ui.metric_card("CLUSTER REGIME", regime, color=r_col)
-with c2: ui.metric_card("BASE ATR MULT", f"{base_mult}×", sub=f"= {int(round(base_mult*atr14/50)*50):,} pts at ATR {atr14:.0f}")
-with c3: ui.metric_card("IC SHAPE", sig.get("cr_ic_shape","1:1"), sub="Size guidance")
-with c4: ui.metric_card("SIZE GUIDANCE", f"{sig.get('cr_size',0.75):.0%}",
-                          color="green" if sig.get("cr_size",0.75) >= 1.0 else "amber")
+c1,c2,c3,c4,c5 = st.columns(5)
+with c1: ui.metric_card("REGIME",    regime,   color=regime_col)
+with c2: ui.metric_card("BASE MULT", f"{base_mult}×", sub=f"= {base_pts:,} pts")
+with c3: ui.metric_card("IC SHAPE",  ic_shape, sub=ic_note)
+with c4: ui.metric_card("SIZE GUIDE",ic_size)
+with c5: ui.metric_card("ATR14",     f"{atr14:.0f} pts", sub="Daily ATR14")
 
-# EMA level table
-st.markdown("")
-ema_vals = sig.get("cr_ema_vals", {})
-if ema_vals:
-    spot_disp = spot_est if spot_est > 0 else 0
-    cols = st.columns(7)
-    labels = ["EMA8","EMA16","EMA30","EMA60","EMA120","EMA200","Spot"]
-    values = [ema_vals.get(8,0), ema_vals.get(16,0), ema_vals.get(30,0),
-              ema_vals.get(60,0), ema_vals.get(120,0), ema_vals.get(200,0), spot_disp]
-    for i, (lbl, val) in enumerate(zip(labels, values)):
-        is_fast = i < 3
-        is_spot = i == 6
-        colour  = "blue" if is_spot else "green" if is_fast else "default"
-        with cols[i]:
-            ui.metric_card(lbl, f"{val:,.0f}",
-                           sub="Fast" if is_fast else "Slow" if not is_spot else "Current",
-                           color=colour)
+ui.simple_technical(
+    REGIME_DESC_LONG.get(regime, "—"),
+    f"Fast cluster: EMA8, EMA16, EMA30\n"
+    f"Slow cluster: EMA60, EMA120, EMA200\n"
+    f"Base = {base_mult}× ATR14 = {base_pts:,} pts\n"
+    f"Same base both PE and CE — moat count creates asymmetry"
+)
+
+ema_v = sig.get("cr_ema_vals", {})
+if ema_v:
+    st.markdown("**EMA Levels**")
+    cols_e = st.columns(6)
+    for i, p in enumerate([8, 16, 30, 60, 120, 200]):
+        v = ema_v.get(p, 0)
+        diff = round(float(spot_est - v), 0) if spot_est > 0 and v > 0 else 0
+        side = "below" if diff > 0 else "above"
+        with cols_e[i]:
+            ui.metric_card(f"EMA{p}", f"{v:,.0f}",
+                           sub=f"{abs(diff):,.0f} pts {side} spot" if diff != 0 else "at spot",
+                           color="green" if v < spot_est else "red" if v > spot_est else "default")
 
 st.divider()
 
@@ -88,54 +126,51 @@ st.divider()
 # COMPONENT 2 — Moat Count
 # ══════════════════════════════════════════════════════════════════════════
 ui.section_header("Component 2 — Moat Count",
-                  "EMAs between spot and your strike = walls the market must break through · Creates all PE/CE asymmetry")
+                  "EMA walls between spot and short strikes · Fixed point adjustment per moat label")
 
-ui.simple_technical(
-    "Each moat is one EMA wall between spot and your short strike. More moats = more protection = you can afford to be tighter. The moat count creates the asymmetry between put and call distances — the cluster regime base is symmetric; moats make it directional.",
-    f"Moat set: EMA8, 16, 30, 60, 120, 200\nClustering rule: moats within {50} pts count as ONE\nDegraded rule: EMA8 put-side with negative slope = 0.5 moat (weakening before spot arrives)\nZone: within 3× ATR14 ({int(3*atr14):,} pts) of spot"
-)
-st.markdown("")
+put_moats  = sig.get("cr_put_moats",      2.0)
+call_moats = sig.get("cr_call_moats",     2.0)
+put_label  = sig.get("cr_put_moat_label", "adequate")
+call_label = sig.get("cr_call_moat_label","adequate")
+put_pts    = sig.get("cr_put_moat_pts",   100)
+call_pts   = sig.get("cr_call_moat_pts",  100)
 
-put_moats  = sig.get("cr_put_moats",  2)
-call_moats = sig.get("cr_call_moats", 2)
-put_label  = sig.get("cr_put_moat_label",  "adequate")
-call_label = sig.get("cr_call_moat_label", "adequate")
-put_mult   = sig.get("cr_put_moat_mult",   0.25)
-call_mult  = sig.get("cr_call_moat_mult",  0.25)
-
-MOAT_COLOUR = {"fortress":"green","strong":"green","adequate":"amber","thin":"red","exposed":"red"}
+MOAT_COLOUR = {
+    "fortress": "green", "strong": "green",
+    "adequate": "amber", "thin": "red", "exposed": "red"
+}
 
 col1, col2 = st.columns(2)
 with col1:
-    ui.metric_card("PUT-SIDE MOATS", f"{put_moats:.1f}",
-                   sub=f"{put_label.capitalize()} — {'+' if put_mult>=0 else ''}{put_mult:+.2f}× ATR adjustment ({int(round(put_mult*atr14/50)*50):+,} pts)",
-                   color=MOAT_COLOUR.get(put_label,"default"))
+    ui.metric_card("PUT MOATS (PE side)", f"{put_moats:.1f}",
+                   sub=f"{put_label.capitalize()} → {put_pts:+,} pts",
+                   color=MOAT_COLOUR.get(put_label, "default"))
     detail_p = sig.get("cr_put_moat_detail", [])
     if detail_p:
-        st.caption("Moats (EMA → level): " + " | ".join(f"{label}: {val:,.0f}" for label, val in detail_p))
+        for lbl, val in detail_p:
+            st.caption(f"  {lbl}: {val:,.0f}")
 
 with col2:
-    ui.metric_card("CALL-SIDE MOATS", f"{call_moats:.1f}",
-                   sub=f"{call_label.capitalize()} — {'+' if call_mult>=0 else ''}{call_mult:+.2f}× ATR adjustment ({int(round(call_mult*atr14/50)*50):+,} pts)",
-                   color=MOAT_COLOUR.get(call_label,"default"))
+    ui.metric_card("CALL MOATS (CE side)", f"{call_moats:.1f}",
+                   sub=f"{call_label.capitalize()} → {call_pts:+,} pts",
+                   color=MOAT_COLOUR.get(call_label, "default"))
     detail_c = sig.get("cr_call_moat_detail", [])
     if detail_c:
-        st.caption("Moats (EMA → level): " + " | ".join(f"{label}: {val:,.0f}" for label, val in detail_c))
+        for lbl, val in detail_c:
+            st.caption(f"  {lbl}: {val:,.0f}")
 
-# ATR danger zones
-weekly_z  = sig.get("cr_weekly_zone",  atr14*2)
-biwkly_z  = sig.get("cr_biweekly_zone",atr14*3)
-put_dngr  = sig.get("cr_put_danger_emas",  [])
-call_dngr = sig.get("cr_call_danger_emas", [])
-
-if put_dngr or call_dngr:
-    st.markdown("")
-    if put_dngr:
-        st.warning(f"⚠️ Put-side EMAs inside weekly zone (±{weekly_z:.0f} pts — WILL be tested): "
-                   + ", ".join(f"EMA{p}" for p in put_dngr))
-    if call_dngr:
-        st.warning(f"⚠️ Call-side EMAs inside weekly zone (±{weekly_z:.0f} pts — WILL be tested): "
-                   + ", ".join(f"EMA{p}" for p in call_dngr))
+import pandas as pd
+moat_ref = pd.DataFrame([
+    ["5–6", "Fortress", "−100 pts", "Rare. Multi-wall cluster. Very strong protection."],
+    ["3–4", "Strong",   "+0 pts",   "Standard protection. Base distance stands."],
+    ["2",   "Adequate", "+100 pts", "Decent but one session can consume a moat."],
+    ["1",   "Thin",     "+200 pts", "Only one wall. Genuine exposure."],
+    ["0",   "Exposed",  "+350 pts", "No EMA protection at all on this side."],
+], columns=["Moat Count", "Label", "Adjustment", "Reasoning"])
+with st.expander("Moat adjustment reference", expanded=False):
+    st.dataframe(moat_ref, use_container_width=True, hide_index=True)
+    st.caption("Clustering rule: moats within 50 pts of each other = ONE moat. "
+               "Degraded rule: EMA8 put-side moat with negative slope = 0.5 moat.")
 
 st.divider()
 
@@ -143,16 +178,17 @@ st.divider()
 # COMPONENT 3 — Momentum Score
 # ══════════════════════════════════════════════════════════════════════════
 ui.section_header("Component 3 — Momentum Score",
-                  "Speed and direction of the current move · Adjusts the threatened leg only")
+                  "Speed and direction of current price trend · Threatened leg only · Fixed points")
 
-mom_state = sig.get("cr_mom_state",  "FLAT")
-mom_score = sig.get("cr_mom_score",  0.0)
-mom_pe_m  = sig.get("cr_mom_pe_mult",0.0)
-mom_ce_m  = sig.get("cr_mom_ce_mult",0.0)
+mom_state  = sig.get("cr_mom_state",    "FLAT")
+mom_score  = sig.get("cr_mom_score",    0.0)
+mom_pe_pts = sig.get("cr_mom_pe_pts",   0)
+mom_ce_pts = sig.get("cr_mom_ce_pts",   0)
 
 MOM_COLOUR = {
-    "STRONG_UP":"red","MODERATE_UP":"amber","FLAT":"green",
-    "MODERATE_DOWN":"amber","STRONG_DOWN":"red","TRANSITIONING":"amber"
+    "STRONG_UP":    "red",   "MODERATE_UP":    "amber",
+    "FLAT":         "green", "MODERATE_DOWN":  "amber",
+    "STRONG_DOWN":  "red",   "TRANSITIONING":  "amber",
 }
 MOM_DESC = {
     "STRONG_UP":    "Market moving toward CE fast. CE is the threatened leg.",
@@ -160,45 +196,41 @@ MOM_DESC = {
     "FLAT":         "No conviction either way. Moats reliable as-is.",
     "MODERATE_DOWN":"Downward drift. PE side under mild pressure.",
     "STRONG_DOWN":  "Market moving toward PE fast. PE is the threatened leg.",
-    "TRANSITIONING":"EMA3 and EMA8 disagree. Uncertainty — both sides get +0.25×.",
+    "TRANSITIONING":"EMA3 and EMA8 disagree. Uncertainty — both sides get +75 pts.",
 }
 
 c1,c2,c3,c4 = st.columns(4)
 with c1: ui.metric_card("MOMENTUM STATE", mom_state,
-                          sub=MOM_DESC.get(mom_state,""),
-                          color=MOM_COLOUR.get(mom_state,"default"))
+                          sub=MOM_DESC.get(mom_state, ""),
+                          color=MOM_COLOUR.get(mom_state, "default"))
 with c2: ui.metric_card("COMBINED SCORE", f"{mom_score:+.1f}%", sub="% of ATR per day")
 with c3: ui.metric_card("EMA3 SLOPE", f"{sig.get('cr_mom_ema3_slope',0):+.1f} pts/day", sub="Fast (60% weight)")
 with c4: ui.metric_card("EMA8 SLOPE", f"{sig.get('cr_mom_ema8_slope',0):+.1f} pts/day", sub="Smooth (40% weight)")
 
-# Which leg gets the momentum adjustment
 st.markdown("")
 col1, col2 = st.columns(2)
 with col1:
-    pe_mom_pts = int(round(mom_pe_m * atr14 / 50) * 50)
-    ui.metric_card("PE MOMENTUM ADJ", f"{mom_pe_m:+.2f}× ATR",
-                   sub=f"= {pe_mom_pts:+,} pts {'← threatened' if mom_pe_m > 0 else '← safe leg, no addition'}",
-                   color="red" if mom_pe_m > 0 else "green")
+    ui.metric_card("PE MOMENTUM ADJ", f"{mom_pe_pts:+,} pts",
+                   sub="← threatened" if mom_pe_pts > 0 else "← safe leg, +0",
+                   color="red" if mom_pe_pts > 0 else "green")
 with col2:
-    ce_mom_pts = int(round(mom_ce_m * atr14 / 50) * 50)
-    ui.metric_card("CE MOMENTUM ADJ", f"{mom_ce_m:+.2f}× ATR",
-                   sub=f"= {ce_mom_pts:+,} pts {'← threatened' if mom_ce_m > 0 else '← safe leg, no addition'}",
-                   color="red" if mom_ce_m > 0 else "green")
+    ui.metric_card("CE MOMENTUM ADJ", f"{mom_ce_pts:+,} pts",
+                   sub="← threatened" if mom_ce_pts > 0 else "← safe leg, +0",
+                   color="red" if mom_ce_pts > 0 else "green")
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════
-# EMA LENS DISTANCE — Final output of this page
+# SECTION 4 — EMA Lens Distance Total
 # ══════════════════════════════════════════════════════════════════════════
 ui.section_header("EMA Lens Distance — This Page's Output",
-                  "Base + Moat + Momentum = EMA lens recommendation · Other lenses produce their own · Home page shows all")
+                  "Base pts + Moat pts + Momentum pts = EMA lens · Capped at 3.0× ATR14 · Other lenses produce their own")
 
-pe_total_m = sig.get("cr_pe_total_mult", base_mult)
-ce_total_m = sig.get("cr_ce_total_mult", base_mult)
-pe_dist    = sig.get("cr_pe_dist_pts",   int(round(pe_total_m * atr14 / 50) * 50))
-ce_dist    = sig.get("cr_ce_dist_pts",   int(round(ce_total_m * atr14 / 50) * 50))
+pe_dist = sig.get("cr_pe_dist_pts", int(round(base_mult * atr14 / 50) * 50))
+ce_dist = sig.get("cr_ce_dist_pts", int(round(base_mult * atr14 / 50) * 50))
+cap_applied_pe = sig.get("cr_cap_applied_pe", False)
+cap_applied_ce = sig.get("cr_cap_applied_ce", False)
 
-# Breakdown rows
 def pct_otm(dist, spot):
     return f"{dist/spot*100:.1f}% OTM" if spot > 0 else ""
 
@@ -206,63 +238,50 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("**PE (Put) Distance — Breakdown**")
     rows_pe = [
-        ("1. Regime base",      f"{base_mult}×",    f"{int(round(base_mult*atr14/50)*50):,} pts"),
-        ("2. Moat adjustment",  f"{put_mult:+.2f}×", f"{int(round(put_mult*atr14/50)*50):+,} pts  ({put_label})"),
-        ("3. Momentum adj",     f"{mom_pe_m:+.2f}×", f"{int(round(mom_pe_m*atr14/50)*50):+,} pts"),
-        ("━━ EMA LENS TOTAL",   f"{pe_total_m:.2f}×",f"{pe_dist:,} pts  ({pct_otm(pe_dist, spot_est)})"),
+        ("1. Regime base",    f"{base_mult}× ATR", f"{base_pts:,} pts"),
+        ("2. Moat adj",       f"{put_label.capitalize()}", f"{put_pts:+,} pts"),
+        ("3. Momentum adj",   f"{mom_state}", f"{mom_pe_pts:+,} pts"),
+        ("━━ EMA LENS TOTAL", f"{'⚠️ Cap applied' if cap_applied_pe else ''}", f"{pe_dist:,} pts  ({pct_otm(pe_dist, spot_est)})"),
     ]
-    for label, mult, pts in rows_pe:
+    for label, detail, pts in rows_pe:
         is_total = "TOTAL" in label
         st.markdown(
             f"<div style='display:flex;justify-content:space-between;font-size:{'13' if is_total else '11'}px;"
             f"font-weight:{'700' if is_total else '400'};color:{'#dc2626' if is_total else '#334155'};"
-            f"padding:{'6' if is_total else '3'}px 0;border-{'top' if is_total else 'bottom'}:"
-            f"{'2px solid #e2e8f0' if not is_total else '2px solid #dc2626'};'>"
-            f"<span>{label}</span><span>{mult} = {pts}</span></div>",
+            f"padding:{'6' if is_total else '3'}px 0;border-bottom:1px solid #e2e8f0;'>"
+            f"<span>{label} <span style='color:#94a3b8;font-size:10px;'>{detail}</span></span>"
+            f"<span>{pts}</span></div>",
             unsafe_allow_html=True)
     ui.metric_card("PE LENS DISTANCE", f"{pe_dist:,} pts",
-                   sub=f"PE short suggestion: ~{int(spot_est - pe_dist):,}" if spot_est > 0 else "",
+                   sub=f"PE short ~{int(spot_est - pe_dist):,}" if spot_est > 0 else "",
                    color="green")
 
 with col2:
     st.markdown("**CE (Call) Distance — Breakdown**")
     rows_ce = [
-        ("1. Regime base",      f"{base_mult}×",    f"{int(round(base_mult*atr14/50)*50):,} pts"),
-        ("2. Moat adjustment",  f"{call_mult:+.2f}×",f"{int(round(call_mult*atr14/50)*50):+,} pts  ({call_label})"),
-        ("3. Momentum adj",     f"{mom_ce_m:+.2f}×", f"{int(round(mom_ce_m*atr14/50)*50):+,} pts"),
-        ("━━ EMA LENS TOTAL",   f"{ce_total_m:.2f}×",f"{ce_dist:,} pts  ({pct_otm(ce_dist, spot_est)})"),
+        ("1. Regime base",    f"{base_mult}× ATR", f"{base_pts:,} pts"),
+        ("2. Moat adj",       f"{call_label.capitalize()}", f"{call_pts:+,} pts"),
+        ("3. Momentum adj",   f"{mom_state}", f"{mom_ce_pts:+,} pts"),
+        ("━━ EMA LENS TOTAL", f"{'⚠️ Cap applied' if cap_applied_ce else ''}", f"{ce_dist:,} pts  ({pct_otm(ce_dist, spot_est)})"),
     ]
-    for label, mult, pts in rows_ce:
+    for label, detail, pts in rows_ce:
         is_total = "TOTAL" in label
         st.markdown(
             f"<div style='display:flex;justify-content:space-between;font-size:{'13' if is_total else '11'}px;"
             f"font-weight:{'700' if is_total else '400'};color:{'#dc2626' if is_total else '#334155'};"
-            f"padding:{'6' if is_total else '3'}px 0;border-{'top' if is_total else 'bottom'}:"
-            f"{'2px solid #e2e8f0' if not is_total else '2px solid #dc2626'};'>"
-            f"<span>{label}</span><span>{mult} = {pts}</span></div>",
+            f"padding:{'6' if is_total else '3'}px 0;border-bottom:1px solid #e2e8f0;'>"
+            f"<span>{label} <span style='color:#94a3b8;font-size:10px;'>{detail}</span></span>"
+            f"<span>{pts}</span></div>",
             unsafe_allow_html=True)
     ui.metric_card("CE LENS DISTANCE", f"{ce_dist:,} pts",
-                   sub=f"CE short suggestion: ~{int(spot_est + ce_dist):,}" if spot_est > 0 else "",
+                   sub=f"CE short ~{int(spot_est + ce_dist):,}" if spot_est > 0 else "",
                    color="green")
 
-st.caption("This is the EMA lens output only. RSI, Bollinger, VIX, and Market Profile each produce their own independent distance. The Home page shows all lenses side by side. Suggested final strike = most conservative across all lenses.")
+st.caption(
+    "This is the EMA lens output only. RSI, Bollinger, VIX, and Market Profile each produce "
+    "their own independent distance. The Home page shows all lenses side by side. "
+    "Suggested final strike = most conservative across all lenses. "
+    "Hard cap: 3.0× ATR14 per side — EMA lens never exceeds this."
+)
 
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════
-# CANARY — Hold Monitor (from Page 02 context)
-# ══════════════════════════════════════════════════════════════════════════
-ui.section_header("Canary Signal — Regime Deterioration Early Warning")
-
-canary    = sig.get("canary_level",    0)
-can_dir   = sig.get("canary_direction","NONE")
-CANARY_LEVEL = {4:"danger",3:"danger",2:"warning",1:"warning",0:"success"}
-CANARY_MSG   = {
-    4: "FULL CANARY — EMA16 crossed EMA30. Regime has shifted. Consider defensive roll.",
-    3: "CANARY DAY 3 — EMA8 crossed EMA16. Structural weakness. Tighten monitoring.",
-    2: "CANARY DAY 2 — EMA8 within 30pts of EMA16. Regime weakening.",
-    1: "CANARY DAY 1 — EMA3 crossed EMA8. Watch for reversal — no action yet.",
-    0: "Canary clear — no deterioration signals.",
-}
-ui.alert_box(f"Canary Day {canary} ({can_dir})", CANARY_MSG.get(canary,""),
-             level=CANARY_LEVEL.get(canary,"info"))
+# PAGE ENDS HERE — canary section removed (belongs on Page 02 only)
