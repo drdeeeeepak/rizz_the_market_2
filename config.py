@@ -1,17 +1,15 @@
 # config.py — premiumdecay / nifty_options_dashboard
 # Single source of truth for ALL strategy constants.
-# Derived from nifty_complete_reference.docx (April 2026).
+# Dow Theory updated: 1H single-window phase system — 27 Apr 2026
 
 # ─── Universe ────────────────────────────────────────────────────────────────
 NIFTY_INDEX_TOKEN = "256265"
-# Top 10 Nifty 50 by free-float market cap weight (April 2026)
-# Update only at NSE semi-annual rebalance — March and September
 TOP_10_NIFTY = [
     "HDFCBANK","RELIANCE","ICICIBANK","INFY",
     "BHARTIARTL","TCS","LT","AXISBANK","KOTAKBANK","ITC",
 ]
 BANKING_QUARTET = ["HDFCBANK","ICICIBANK","AXISBANK","KOTAKBANK"]
-HEAVY_STOCKS    = ["HDFCBANK","RELIANCE","ICICIBANK"]   # top 3 by weight
+HEAVY_STOCKS    = ["HDFCBANK","RELIANCE","ICICIBANK"]
 IT_STOCKS       = ["INFY","TCS"]
 
 # ─── Core Strategy ───────────────────────────────────────────────────────────
@@ -136,24 +134,125 @@ LS_ATR_FACTOR=1.2; LS_CREDIT_VIABLE=15; LS_CREDIT_MARGINAL=8; LS_FORBIDDEN_DIST=
 EXIT_PROFIT_PCT=0.55; EXIT_DTE=5
 EXPIRY_DELTA_MON=0.30; EXPIRY_TUE_CLOSE=150
 
-# ─── Dow Theory Pivots ───────────────────────────────────────────────────────
-DOW_PIVOT_LOOKBACK = 5    # bars each side for swing point detection
-DOW_PIVOT_BREACH_PCT = 0.005  # 0.5% below/above pivot
-PIVOT_HIGHER_HIGH  = "HH"
-PIVOT_HIGHER_LOW   = "HL"
-PIVOT_LOWER_HIGH   = "LH"
-PIVOT_LOWER_LOW    = "LL"
+# ─── Dow Theory — Single Window Phase System ─────────────────────────────────
+# ONE window. ONE N. Everything derived from same pivot series.
+#
+# DATA:
+#   20 trading days × 6 candles/day = 120 candles of 1H OHLCV
+#   Fetched daily. NOT frozen. Cache TTL = 1 hour.
+#
+# PIVOT DETECTION (N=3):
+#   Pivot HIGH at bar i:
+#     high[i] >= high[i-1,i-2,i-3]  AND  high[i] >= high[i+1,i+2,i+3]
+#   Pivot LOW at bar i:
+#     low[i]  <= low[i-1,i-2,i-3]   AND  low[i]  <= low[i+1,i+2,i+3]
+#   Confirmation lag = 3 hours. Last 3 candles of today always unconfirmed.
+#   Acceptable for EOD use.
+#
+# REFERENCE PIVOTS:
+#   PH_last, PH_prev  = last two confirmed pivot highs
+#   PL_last, PL_prev  = last two confirmed pivot lows
+#   Minimum 2 of each required. Else → INSUFFICIENT_DATA.
+#
+# STRUCTURE:
+#   PH_last > PH_prev AND PL_last > PL_prev → UPTREND
+#   PH_last < PH_prev AND PL_last < PL_prev → DOWNTREND
+#   PH_last > PH_prev AND PL_last < PL_prev → MIXED_EXPANDING
+#   PH_last < PH_prev AND PL_last > PL_prev → MIXED_CONTRACTING
+#   abs(PH_last - PL_last) < DOW_CONSOLIDATION_ATR × ATR14 → CONSOLIDATING
+#
+# SEQUENCE:
+#   Which pivot was most recent in time?
+#   PH_last.time > PL_last.time → price fell FROM a high → FALLING
+#   PL_last.time > PH_last.time → price rose FROM a low  → RISING
+#
+# RETRACE DEPTH %:
+#   RISING:  (spot - PL_last) / (PH_last - PL_last) × 100
+#   FALLING: (PH_last - spot) / (PH_last - PL_last) × 100
+#   Range: 0% (just left pivot) to 100% (back at opposite pivot)
+#   >100% = new pivot forming (continuation)
+#
+# DURATION:
+#   Sessions since PH_last or PL_last confirmed (whichever is most recent)
+#   = (current_index - pivot_index) / 6
+#   Rounded to 0.5. Minimum display = "today" if < 1.
+#
+# PHASE (8 states + 2 mixed + 1 consolidating):
+#   UPTREND:
+#     UT-1  RETRACING     → rising from PL_last, retrace_pct 0-90%, below PH_last
+#     UT-2  CONTINUING    → spot > PH_last (last candle HIGH crossed raw level)
+#     UT-3  HL_THREATENED → rising from PL_last, retrace_pct > 90%, within 50pts of PL_last
+#     UT-4  BROKEN        → last candle LOW < PL_last (raw level, no buffer)
+#   DOWNTREND:
+#     DT-1  RETRACING     → rising from PL_last, retrace_pct 0-90%, below PH_last
+#     DT-2  CONTINUING    → spot < PL_last (last candle LOW crossed raw level)
+#     DT-3  LH_THREATENED → rising from PL_last, retrace_pct > 90%, within 50pts of PH_last
+#     DT-4  BROKEN        → last candle HIGH > PH_last (raw level, no buffer)
+#   MIXED_EXPANDING, MIXED_CONTRACTING, CONSOLIDATING → always WAIT
+#
+# HEALTH (per leg, based on skewed IC):
+#   In DOWNTREND (2:1 — CE is vulnerable leg):
+#     CE health = distance from spot to PH_last
+#     PE health = distance from spot to PL_last
+#   In UPTREND (1:2 — PE is vulnerable leg):
+#     PE health = distance from spot to PL_last
+#     CE health = distance from spot to PH_last
+#   Thresholds (pts from reference level):
+#     > 200pts  → STRONG
+#     100-200   → MODERATE
+#     50-100    → WATCH
+#     < 50pts   → ALERT
+#     crossed   → BREACH
+#
+# PHASE SCORE (runs every day — not just Tuesday):
+#   DOWNTREND:
+#     DT-1 retrace 60-90%  → PRIME    (at ceiling — max CE protection)
+#     DT-1 retrace 30-60%  → GOOD
+#     DT-1 retrace 0-30%   → WAIT     (PE still has room to rise)
+#     DT-3 LH threatened   → PRIME    (last moment at ceiling)
+#     DT-2 continuing down → AVOID    (PE threatened)
+#     DT-4 broken          → NO_TRADE
+#   UPTREND: mirror (PE/CE reversed)
+#   MIXED/CONSOLIDATING    → WAIT always
+#   Label: "Entry Decision" on Tuesday / "Nifty Health" Wed-Mon
+#
+# BREACH LEVELS:
+#   Call breach = PH_last + 50 pts
+#   Put  breach = PL_last - 50 pts
+#   Proximity warning when spot within ATR14/3 of either level
+#
+# SCORE HISTORY:
+#   Last 5 trading days stored in data/dow_score_history.json
+#   Fields per day: date, weekday, structure, phase, retrace_pct,
+#                   ce_health, pe_health, phase_score, narrative
+
+DOW_N                  = 3      # bars each side for pivot confirmation
+DOW_PHASE_DAYS         = 20     # trading days of 1H data (= 120 candles)
+DOW_BREACH_BUFFER_PTS  = 50     # fixed points added/subtracted from pivot level
+DOW_HEALTH_ALERT_PTS   = 50     # within 50pts  → ALERT
+DOW_HEALTH_WATCH_PTS   = 100    # within 100pts → WATCH
+DOW_HEALTH_MOD_PTS     = 200    # within 200pts → MODERATE  (beyond = STRONG)
+DOW_CONSOLIDATION_ATR  = 1.0    # PH-PL < 1×ATR14 → CONSOLIDATING
+DOW_SCORE_HISTORY_DAYS = 5      # days of score history to retain
+
+# Legacy aliases — DO NOT USE in new code
+DOW_PIVOT_LOOKBACK   = 3
+DOW_PIVOT_BREACH_PCT = 0.005
+
+PIVOT_HIGHER_HIGH = "HH"
+PIVOT_HIGHER_LOW  = "HL"
+PIVOT_LOWER_HIGH  = "LH"
+PIVOT_LOWER_LOW   = "LL"
 
 # ─── Live Fetcher Constants ──────────────────────────────────────────────────
-TTL_OPTIONS   = 30      # seconds — options chain cache
-TTL_PRICE     = 60      # seconds — spot / VIX live
-TTL_DAILY     = 86400   # seconds — 24h OHLCV cache
-EXPIRY_WEEKDAY = 1      # Tuesday = 1 (Mon=0, Tue=1, ..., Sun=6)
+TTL_OPTIONS    = 30
+TTL_PRICE      = 60
+TTL_DAILY      = 86400
+TTL_1H         = 3600
+EXPIRY_WEEKDAY = 1
 
-# IVP alias (old code uses IVP_SMALL, new doc uses IVP_HALF=25)
-IVP_SMALL = 25   # alias for IVP_HALF — keeps old imports working
+IVP_SMALL = 25
 
-# Nifty token map for top 10 stocks (NSE instrument tokens)
 TOP_10_TOKENS = {
     "HDFCBANK":   341249,
     "RELIANCE":   738561,
@@ -166,26 +265,15 @@ TOP_10_TOKENS = {
     "KOTAKBANK":  492033,
     "ITC":        424961,
 }
-# KOTAKBANK token added. SBIN removed from top 10 (weight dropped).
-# Verify tokens against Kite instruments list before trading.
 
-# Gift Nifty / Futures tokens
 GIFT_NIFTY_TOKEN = "NSE_IFSC:GIFTNIFTY"
 
 # ─── Geometric Edge Scanner (Page 13) ────────────────────────────────────────
 GEO_PRICE_STRENGTH = {
-    "nifty50":    0.020,
-    "nifty_next": 0.025,
-    "midcap":     0.030,
-    "smallcap":   0.035,
+    "nifty50": 0.020, "nifty_next": 0.025,
+    "midcap":  0.030, "smallcap":   0.035,
 }
-GEO_VOL_MULT          = 2.0
-GEO_ADR               = 0.04
-GEO_EP_GAP            = 0.005
-GEO_VOL_SMA_PERIOD    = 50
-GEO_MAX_RESULTS       = 20
-GEO_MIN_RR            = 2.0
-GEO_MARKET_HEALTH_BULL   = 300
-GEO_MARKET_HEALTH_SELECT = 200
-WATCHLIST_DIR  = "data/watchlists"
-PARQUET_DIR    = "data/parquet"
+GEO_VOL_MULT=2.0; GEO_ADR=0.04; GEO_EP_GAP=0.005
+GEO_VOL_SMA_PERIOD=50; GEO_MAX_RESULTS=20; GEO_MIN_RR=2.0
+GEO_MARKET_HEALTH_BULL=300; GEO_MARKET_HEALTH_SELECT=200
+WATCHLIST_DIR="data/watchlists"; PARQUET_DIR="data/parquet"
