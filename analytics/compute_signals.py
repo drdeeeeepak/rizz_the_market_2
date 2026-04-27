@@ -1,25 +1,11 @@
-# analytics/compute_signals.py — v7 (22 April 2026)
-# Central orchestrator — runs all engines, assembles lens distance table.
-#
-# LOCKED CHANGES vs v6 (per premiumdecay_locked_rules_22Apr2026_1600IST.docx):
-#   - Nifty Tuesday anchor write (Source 3 canary anchor for Page 02)
-#   - Dow Theory: pass atr14, fix key names, expose breach/proximity keys directly
-#   - VIX: add sig["vix"] key for Page 11 display
-#   - BREADTH_PE_MULT table recalibrated (1.50/1.75/2.00/2.50)
-#   - Named signal override thresholds recalibrated (>=150 → 2.25x, >=100 → 2.00x)
-#   - CE constituent: IT drag modifier properly applied
-#   - _compute_master_score: uses cr_ema_master_score, adds oc_sc + dow_sc
-#   - _lens_scores labels updated for Home page clarity
-#
-# AGGREGATION PHILOSOPHY: unchanged
-#   Each lens independently computes its own distance. No stacking. No summing.
-#   MAX per side = suggested strike. Trader makes final decision.
+# analytics/compute_signals.py — v8 (27 Apr 2026)
+# Dow Theory: single DowTheoryEngine().signals(df_1h, spot) call.
+# No frozen windows. No entry-day detection. One fetch, one compute.
 
 import json
 import logging
-from datetime import date as _date
+from datetime import date
 from pathlib import Path
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -41,17 +27,17 @@ from config import (
 )
 
 log = logging.getLogger(__name__)
-SIGNALS_PATH  = Path(__file__).parent.parent / "data" / "signals.json"
-ANCHOR_FILE   = Path(__file__).parent.parent / "data" / "tuesday_anchors.json"
+SIGNALS_PATH = Path(__file__).parent.parent / "data" / "signals.json"
 
 
 def compute_all_signals(
-    nifty_df: pd.DataFrame,
-    stock_dfs: dict,
-    vix_live: float,
-    vix_hist: pd.DataFrame,
-    chains: dict,
-    spot: float,
+    nifty_df:   pd.DataFrame,
+    stock_dfs:  dict,
+    vix_live:   float,
+    vix_hist:   pd.DataFrame,
+    chains:     dict,
+    spot:       float,
+    nifty_1h:   pd.DataFrame = None,   # 20-day 1H for Dow Theory phase engine
 ) -> dict:
     sig = {}
 
@@ -65,72 +51,46 @@ def compute_all_signals(
             "atr14": 200, "net_skew": 0, "canary_level": 0,
             "canary_direction": "NONE", "canary_day": 0,
             "put_safety_adj": 50, "call_safety_adj": 50,
-            "cr_regime": "INSIDE_BULL", "cr_pe_dist_pts": 645,
-            "cr_ce_dist_pts": 645, "cr_base_mult": 1.5,
-            "cr_base_pts": 645,
+            "cr_regime": "INSIDE_BULL", "cr_pe_dist_pts": 860,
+            "cr_ce_dist_pts": 860, "cr_base_mult": 2.0,
             "cr_put_moats": 2, "cr_call_moats": 2,
-            "cr_put_moat_pts": 100, "cr_call_moat_pts": 100,
-            "cr_mom_state": "FLAT", "cr_mom_pe_pts": 0, "cr_mom_ce_pts": 0,
-            "cr_hard_skip": False, "cr_ema_master_score": 2,
+            "cr_mom_state": "FLAT", "cr_hard_skip": False,
         })
 
-    # ── LOCKED: Nifty Tuesday anchor write ────────────────────────────────
-    # Fires only on Tuesdays. Persists to disk for Page 02 canary Source 3.
+    # ── Page 00: Dow Theory Phase Engine ─────────────────────────────────
     try:
-        if _date.today().weekday() == 1 and not nifty_df.empty:
-            anchors = {}
-            if ANCHOR_FILE.exists():
-                try:
-                    anchors = json.loads(ANCHOR_FILE.read_text())
-                except Exception:
-                    pass
-            # Compute Nifty ATR14
-            _atr14_nifty = sig.get("atr14", 200.0)
-            if len(nifty_df) >= 15 and "high" in nifty_df.columns:
-                hi = nifty_df["high"].values
-                lo = nifty_df["low"].values
-                cl = nifty_df["close"].values
-                tr = [max(hi[i]-lo[i], abs(hi[i]-cl[i-1]), abs(lo[i]-cl[i-1]))
-                      for i in range(1, len(nifty_df))]
-                _atr14_nifty = float(np.mean(tr[-14:])) if len(tr) >= 14 else float(np.mean(tr))
-            anchors["NIFTY"] = {
-                "close": float(nifty_df["close"].iloc[-1]),
-                "atr":   round(_atr14_nifty, 1),
-                "date":  str(_date.today()),
-            }
-            ANCHOR_FILE.parent.mkdir(exist_ok=True)
-            ANCHOR_FILE.write_text(json.dumps(anchors, indent=2))
-            log.info("Nifty Tuesday anchor: close=%.0f atr=%.1f",
-                     anchors["NIFTY"]["close"], anchors["NIFTY"]["atr"])
-    except Exception as e:
-        log.warning("Nifty anchor write failed: %s", e)
+        if nifty_1h is not None and not nifty_1h.empty:
+            dow_raw = DowTheoryEngine().signals(nifty_1h.copy(), spot)
+        else:
+            # 1H data not available — return safe empty signals
+            log.warning("Dow Theory: 1H data not provided — using empty fallback")
+            dow_raw = DowTheoryEngine()._empty_signals()
 
-    # ── Dow Theory ────────────────────────────────────────────────────────
-    try:
-        _atr14_for_dow = sig.get("atr14", 200.0)
-        dow_sig = DowTheoryEngine().signals(nifty_df.copy(), atr14=_atr14_for_dow)
-        # Write with prefix for generic access
-        sig.update({"dow_" + k: v for k, v in dow_sig.items()
-                    if k not in ("kill_switches",)})
-        # Also write key fields without prefix for direct page access
-        sig["dow_structure"]          = dow_sig.get("dow_structure", "MIXED")
-        sig["dow_home_score"]         = dow_sig.get("home_score", 3)
-        sig["put_breach_level"]       = dow_sig.get("put_breach_level", 0)
-        sig["call_breach_level"]      = dow_sig.get("call_breach_level", 0)
-        sig["pe_proximity_warning"]   = dow_sig.get("pe_proximity_warning", False)
-        sig["ce_proximity_warning"]   = dow_sig.get("ce_proximity_warning", False)
-        sig["pivot_staleness_flag"]   = dow_sig.get("pivot_staleness_flag", False)
-        sig["recent_pivot_high"]      = dow_sig.get("recent_pivot_high", 0)
-        sig["recent_pivot_low"]       = dow_sig.get("recent_pivot_low", 0)
-        sig["put_breach_active"]      = dow_sig.get("put_breach_active", False)
-        sig["call_breach_active"]     = dow_sig.get("call_breach_active", False)
-        sig.setdefault("kill_switches", {}).update(dow_sig.get("kill_switches", {}))
+        # Prefix all Dow keys with "dow_" for sig dict consistency
+        sig.update({f"dow_{k}": v for k, v in dow_raw.items()})
+
+        # Also expose unprefixed for backward compat with old Page 00
+        sig["dow_structure"]  = dow_raw.get("structure", "MIXED")
+        sig["dow_phase"]      = dow_raw.get("phase", "MX")
+        sig["dow_narrative"]  = dow_raw.get("narrative", "")
+        sig["dow_phase_score"]= dow_raw.get("phase_score", "WAIT")
+
     except Exception as e:
         log.error("Dow Theory: %s", e)
-        sig.update({"dow_structure": "MIXED", "dow_home_score": 3,
-                    "put_breach_level": 0, "call_breach_level": 0,
-                    "pe_proximity_warning": False, "ce_proximity_warning": False,
-                    "pivot_staleness_flag": False})
+        sig.update({
+            "dow_structure":        "MIXED",
+            "dow_phase":            "MX",
+            "dow_narrative":        "Dow Theory error — check logs.",
+            "dow_phase_score":      "WAIT",
+            "dow_ce_health":        "STRONG",
+            "dow_pe_health":        "STRONG",
+            "dow_call_breach":      0.0,
+            "dow_put_breach":       0.0,
+            "dow_call_prox_warn":   False,
+            "dow_put_prox_warn":    False,
+            "dow_home_score":       2,
+            "dow_insufficient_data": True,
+        })
 
     # ── Pages 3+4: Constituent EMA ─────────────────────────────────────────
     try:
@@ -151,8 +111,7 @@ def compute_all_signals(
         sig["constituent_ce_mod"]= const_sig.get("constituent_ce_mod", 0)
     except Exception as e:
         log.error("Constituent EMA: %s", e)
-        sig.update({"breadth_score": 50, "breadth_label": "ADEQUATE",
-                    "sw3_active": False, "sw4_active": False,
+        sig.update({"breadth_score": 50, "sw3_active": False, "sw4_active": False,
                     "bfsi_softening": False, "divergence_alert": False,
                     "lead_warning": False, "constituent_pe_mod": 0,
                     "constituent_ce_mod": 0})
@@ -167,8 +126,7 @@ def compute_all_signals(
     except Exception as e:
         log.error("RSI engine: %s", e)
         sig.update({"w_regime": "W_NEUTRAL", "d_zone": "D_BALANCE",
-                    "alignment": "MIXED", "rsi_put_dist_mod": 0,
-                    "rsi_call_dist_mod": 0})
+                    "alignment": "MIXED", "rsi_put_dist_mod": 0, "rsi_call_dist_mod": 0})
 
     sig["weekly_regime"] = sig.get("w_regime", "W_NEUTRAL")
     sig["daily_zone"]    = sig.get("d_zone",   "D_BALANCE")
@@ -206,16 +164,9 @@ def compute_all_signals(
     # ── Page 10: Options Chain ─────────────────────────────────────────────
     try:
         atr14_val = sig.get("atr14", 200)
-        # Fetch futures LTP for premium calculation
-        try:
-            from data.live_fetcher import get_nifty_futures_ltp
-            futures_ltp = get_nifty_futures_ltp()
-        except Exception:
-            futures_ltp = 0.0
         oc_sig = OptionsChainEngine().signals(
             chains.get("far", pd.DataFrame()), spot,
-            chains.get("far_dte", 7), atr14=atr14_val,
-            futures_price=futures_ltp,
+            chains.get("far_dte", 7), atr14=atr14_val
         )
         sig["gex_total"]          = oc_sig["gex"]["total_gex"]
         sig["gex_flip_level"]     = oc_sig["gex"]["flip_level"]
@@ -229,17 +180,12 @@ def compute_all_signals(
         sig["oc_binding_ce"]      = oc_sig["synthesis"]["binding_ce"]
         sig["oc_binding_pe"]      = oc_sig["synthesis"]["binding_pe"]
         sig["oc_home_score"]      = oc_sig["home_score"]
-        sig["fut_premium"]        = oc_sig.get("fut_premium", 0)
-        sig["magnet_strike"]      = oc_sig.get("magnet_strike", 0)
-        sig["theta_iv_ratio"]     = oc_sig.get("theta_iv_ratio", 0)
-        sig["delta_skew"]         = oc_sig.get("delta_skew", "BALANCED")
     except Exception as e:
         log.error("Options Chain: %s", e)
         sig.update({"gex_total": 0, "gex_flip_level": 0, "call_wall": 0,
                     "put_wall": 0, "pcr": 1.0, "migration_detected": False,
                     "iv_skew": 0.0, "atm_iv": 12.0, "straddle_price": 0,
-                    "oc_binding_ce": 0, "oc_binding_pe": 0, "oc_home_score": 10,
-                    "fut_premium": 0, "magnet_strike": 0})
+                    "oc_binding_ce": 0, "oc_binding_pe": 0, "oc_home_score": 10})
 
     # ── Page 10B: OI Scoring ───────────────────────────────────────────────
     try:
@@ -261,7 +207,6 @@ def compute_all_signals(
         vix_sig = VixIVRegimeEngine().signals(
             nifty_df.copy(), vix_hist, vix_live, sig.get("atm_iv", 12.0)
         )
-        sig["vix"]                 = round(vix_live, 2)   # FIXED: direct key for Page 11
         sig["vix_state"]           = vix_sig.get("vix_state", "STABLE_NORMAL")
         sig["vix_zone"]            = sig["vix_state"]
         sig["ivp_1yr"]             = vix_sig["ivp_1yr"]
@@ -287,10 +232,9 @@ def compute_all_signals(
         sig["vix_home_score"]      = vix_sig.get("home_score", 10)
     except Exception as e:
         log.error("VIX engine: %s", e)
-        sig.update({"vix": round(vix_live, 2), "vix_zone": "STABLE_NORMAL",
-                    "vix_state": "STABLE_NORMAL", "size_multiplier": 1.0,
-                    "vrp": 0.0, "ivp_1yr": 50, "vix_home_score": 10,
-                    "warnings": []})
+        sig.update({"vix_zone": "STABLE_NORMAL", "vix_state": "STABLE_NORMAL",
+                    "size_multiplier": 1.0, "vrp": 0.0, "ivp_1yr": 50,
+                    "vix_home_score": 10, "warnings": []})
 
     # ── Page 12: Market Profile ────────────────────────────────────────────
     try:
@@ -326,146 +270,88 @@ def compute_all_signals(
         log.error("Market Profile: %s", e)
         sig.update({"mp_nesting": "BALANCED", "mp_responsive": True,
                     "mp_behaviour": "NEUTRAL", "mp_initiative_both": False,
-                    "mp_ce_anchor": spot + 400, "mp_pe_anchor": spot - 400,
+                    "mp_ce_anchor": spot+400, "mp_pe_anchor": spot-400,
                     "mp_home_score": 12, "mp_ce_biwkly_dist": 400,
                     "mp_pe_biwkly_dist": 400})
 
-    # ── Lens table + final suggestion ─────────────────────────────────────
     _build_lens_table(sig, spot)
     _compute_master_score(sig)
-
     return sig
 
 
 def _build_lens_table(sig: dict, spot: float) -> None:
-    """
-    Each lens produces its own standalone PE and CE distance.
-    No stacking. No summing. MAX per side = suggested strike.
-    """
-    atr14 = sig.get("atr14", 200)
-    if atr14 <= 0: atr14 = 200
+    atr14 = max(sig.get("atr14", 200), 1)
 
-    # ── Lens 1: EMA (cluster + moat + momentum) ───────────────────────────
-    # LOCKED: new formula outputs cr_pe_dist_pts / cr_ce_dist_pts
-    l1_pe = sig.get("cr_pe_dist_pts", int(round(1.75 * atr14 / 50) * 50))
-    l1_ce = sig.get("cr_ce_dist_pts", int(round(1.75 * atr14 / 50) * 50))
+    l1_pe = sig.get("cr_pe_dist_pts", int(round(2.0 * atr14 / 50) * 50))
+    l1_ce = sig.get("cr_ce_dist_pts", int(round(2.0 * atr14 / 50) * 50))
 
-    # ── Lens 2: RSI regime ────────────────────────────────────────────────
     w_regime = sig.get("w_regime", sig.get("weekly_regime", "W_NEUTRAL"))
-    RSI_REGIME_PE_MULT = {
-        "W_CAPIT":     3.25,
-        "W_BEAR":      2.75,
-        "W_BEAR_TRANS":2.50,
-        "W_NEUTRAL":   2.25,
-        "W_BULL_TRANS":2.00,
-        "W_BULL":      2.00,
-        "W_BULL_EXH":  2.50,
-    }
-    RSI_REGIME_CE_MULT = {
-        "W_CAPIT":     2.00,
-        "W_BEAR":      2.00,
-        "W_BEAR_TRANS":2.25,
-        "W_NEUTRAL":   2.25,
-        "W_BULL_TRANS":2.50,
-        "W_BULL":      2.75,
-        "W_BULL_EXH":  2.50,
-    }
+    RSI_PE = {"W_CAPIT":3.25,"W_BEAR":2.75,"W_BEAR_TRANS":2.50,"W_NEUTRAL":2.25,
+              "W_BULL_TRANS":2.00,"W_BULL":2.00,"W_BULL_EXH":2.50}
+    RSI_CE = {"W_CAPIT":2.00,"W_BEAR":2.00,"W_BEAR_TRANS":2.25,"W_NEUTRAL":2.25,
+              "W_BULL_TRANS":2.50,"W_BULL":2.75,"W_BULL_EXH":2.50}
     kills    = sig.get("kill_switches", {})
     dual_exh = kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3")
-    rsi_pe_m = RSI_REGIME_PE_MULT.get(w_regime, 2.25)
-    rsi_ce_m = RSI_REGIME_CE_MULT.get(w_regime, 2.25)
-    if dual_exh:
-        rsi_pe_m = max(rsi_pe_m, 3.0)
-        rsi_ce_m = max(rsi_ce_m, 3.0)
+    rsi_pe_m = RSI_PE.get(w_regime, 2.25)
+    rsi_ce_m = RSI_CE.get(w_regime, 2.25)
+    if dual_exh: rsi_pe_m = max(rsi_pe_m, 3.0); rsi_ce_m = max(rsi_ce_m, 3.0)
     l2_pe = int(round(rsi_pe_m * atr14 / 50) * 50)
     l2_ce = int(round(rsi_ce_m * atr14 / 50) * 50)
 
-    # ── Lens 3: Constituent EMA (breadth) — LOCKED: recalibrated ─────────
     breadth_lbl  = sig.get("breadth_label", "ADEQUATE")
     const_pe_mod = sig.get("constituent_pe_mod", 0)
-    const_ce_mod = sig.get("constituent_ce_mod", 0)
-
-    # LOCKED: new table calibrated for 1.5× base multiples
-    BREADTH_PE_MULT = {
-        "BROAD_HEALTH": 1.50,
-        "ADEQUATE":     1.75,
-        "THINNING":     2.00,
-        "COLLAPSE":     2.50,
-    }
-    l3_pe_m = BREADTH_PE_MULT.get(breadth_lbl, 1.75)
-    # LOCKED: override thresholds recalibrated for leaner modifier values
-    if const_pe_mod >= 150:    l3_pe_m = max(l3_pe_m, 2.25)
-    elif const_pe_mod >= 100:  l3_pe_m = max(l3_pe_m, 2.00)
-    elif const_pe_mod < 0:     l3_pe_m = max(l3_pe_m - 0.25, 1.50)
+    BP = {"BROAD_HEALTH":2.00,"ADEQUATE":2.25,"THINNING":2.50,"COLLAPSE":3.00}
+    l3_pe_m = BP.get(breadth_lbl, 2.25)
+    if const_pe_mod >= 300:   l3_pe_m = max(l3_pe_m, 2.75)
+    elif const_pe_mod >= 200: l3_pe_m = max(l3_pe_m, 2.50)
+    elif const_pe_mod < 0:    l3_pe_m = max(l3_pe_m - 0.25, 2.00)
     l3_pe = int(round(l3_pe_m * atr14 / 50) * 50)
-    # LOCKED: CE constituent — neutral base + IT drag modifier in points
-    l3_ce_base = int(round(1.75 * atr14 / 50) * 50)
-    l3_ce      = max(l3_ce_base, l3_ce_base + const_ce_mod)
+    l3_ce = int(round(2.25 * atr14 / 50) * 50)
 
-    # ── Lens 4: Bollinger ─────────────────────────────────────────────────
     bb_regime = sig.get("bb_regime", "NEUTRAL_WALK")
-    bb_pe_pts = sig.get("bb_distance_put", 0)
-    bb_ce_pts = sig.get("bb_distance_call", 0)
-    neutral_base = int(round(1.75 * atr14 / 50) * 50)   # updated neutral
+    neutral   = int(round(2.25 * atr14 / 50) * 50)
     if bb_regime == "MEAN_REVERT":
-        l4_pe = int(round(1.50 * atr14 / 50) * 50)
-        l4_ce = int(round(1.50 * atr14 / 50) * 50)
+        l4_pe = l4_ce = int(round(2.00 * atr14 / 50) * 50)
     elif bb_regime == "SQUEEZE":
-        l4_pe = int(round(2.00 * atr14 / 50) * 50)
-        l4_ce = int(round(2.00 * atr14 / 50) * 50)
+        l4_pe = l4_ce = int(round(2.50 * atr14 / 50) * 50)
     else:
-        l4_pe = neutral_base + bb_pe_pts
-        l4_ce = neutral_base + bb_ce_pts
+        l4_pe = neutral + sig.get("bb_distance_put", 0)
+        l4_ce = neutral + sig.get("bb_distance_call", 0)
 
-    # ── Lens 5: VIX / IV ──────────────────────────────────────────────────
     vix_state = sig.get("vix_state", "STABLE_NORMAL")
     vrp       = sig.get("vrp", 0.0)
-    VIX_MULT = {
-        "STABLE_LOW":      2.00,
-        "STABLE_NORMAL":   2.25,
-        "SPIKE_RESOLVING": 2.25,
-        "ELEVATED":        2.50,
-        "CAUTION":         2.75,
-        "DANGER":          3.25,
-    }
-    vix_m = VIX_MULT.get(vix_state, 2.25)
-    if vrp < 0:    vix_m = max(vix_m, 2.75)
-    if vrp > 5.0:  vix_m = max(vix_m - 0.25, 2.00)
-    l5_pe = int(round(vix_m * atr14 / 50) * 50)
-    l5_ce = int(round(vix_m * atr14 / 50) * 50)
+    VM = {"STABLE_LOW":2.00,"STABLE_NORMAL":2.25,"SPIKE_RESOLVING":2.25,
+          "ELEVATED":2.50,"CAUTION":2.75,"DANGER":3.25}
+    vix_m = VM.get(vix_state, 2.25)
+    if vrp < 0:   vix_m = max(vix_m, 2.75)
+    if vrp > 5.0: vix_m = max(vix_m - 0.25, 2.00)
+    l5_pe = l5_ce = int(round(vix_m * atr14 / 50) * 50)
 
-    # ── Lens 6: Market Profile biweekly anchor ────────────────────────────
-    l6_pe = sig.get("mp_pe_biwkly_dist", int(round(1.75 * atr14 / 50) * 50))
-    l6_ce = sig.get("mp_ce_biwkly_dist", int(round(1.75 * atr14 / 50) * 50))
+    l6_pe = sig.get("mp_pe_biwkly_dist", int(round(2.25 * atr14 / 50) * 50))
+    l6_ce = sig.get("mp_ce_biwkly_dist", int(round(2.25 * atr14 / 50) * 50))
 
-    # ── Assemble lens table ───────────────────────────────────────────────
     lens_table = {
-        "EMA (regime+moat+mom)":   {"pe": l1_pe, "ce": l1_ce},
-        "RSI (weekly regime)":      {"pe": l2_pe, "ce": l2_ce},
-        "Constituent EMA (breadth)":{"pe": l3_pe, "ce": l3_ce},
-        "Bollinger":                {"pe": l4_pe, "ce": l4_ce},
-        "VIX / IV":                 {"pe": l5_pe, "ce": l5_ce},
-        "Market Profile (biweekly)":{"pe": l6_pe, "ce": l6_ce},
+        "EMA (regime+moat+momentum)": {"pe": l1_pe, "ce": l1_ce},
+        "RSI (weekly regime)":         {"pe": l2_pe, "ce": l2_ce},
+        "Constituent EMA (breadth)":   {"pe": l3_pe, "ce": l3_ce},
+        "Bollinger":                   {"pe": l4_pe, "ce": l4_ce},
+        "VIX / IV":                    {"pe": l5_pe, "ce": l5_ce},
+        "Market Profile (biweekly)":   {"pe": l6_pe, "ce": l6_ce},
     }
     sig["lens_table"] = lens_table
 
-    # ── MAX per side = suggested (most conservative) ──────────────────────
-    all_pe = {name: v["pe"] for name, v in lens_table.items()}
-    all_ce = {name: v["ce"] for name, v in lens_table.items()}
-
+    all_pe = {n: v["pe"] for n, v in lens_table.items()}
+    all_ce = {n: v["ce"] for n, v in lens_table.items()}
     suggested_pe      = max(all_pe.values())
     suggested_ce      = max(all_ce.values())
     suggested_pe_lens = max(all_pe, key=all_pe.get)
     suggested_ce_lens = max(all_ce, key=all_ce.get)
 
-    if sig.get("pe_dual_fortress"): suggested_pe = max(suggested_pe - DUAL_FORTRESS_DIST_RED, int(round(1.75 * atr14 / 50) * 50))
-    if sig.get("ce_dual_fortress"): suggested_ce = max(suggested_ce - DUAL_FORTRESS_DIST_RED, int(round(1.75 * atr14 / 50) * 50))
+    if sig.get("pe_dual_fortress"): suggested_pe = max(suggested_pe - DUAL_FORTRESS_DIST_RED, int(round(2.0 * atr14 / 50) * 50))
+    if sig.get("ce_dual_fortress"): suggested_ce = max(suggested_ce - DUAL_FORTRESS_DIST_RED, int(round(2.0 * atr14 / 50) * 50))
 
     suggested_pe = round(suggested_pe / 50) * 50
     suggested_ce = round(suggested_ce / 50) * 50
-
-    final_pe_short  = round((spot - suggested_pe) / 50) * 50
-    final_ce_short  = round((spot + suggested_ce) / 50) * 50
 
     sig["suggested_pe_dist"]  = int(suggested_pe)
     sig["suggested_ce_dist"]  = int(suggested_ce)
@@ -473,45 +359,35 @@ def _build_lens_table(sig: dict, spot: float) -> None:
     sig["suggested_ce_lens"]  = suggested_ce_lens
     sig["final_put_dist"]     = int(suggested_pe)
     sig["final_call_dist"]    = int(suggested_ce)
-    sig["final_put_short"]    = int(final_pe_short)
-    sig["final_call_short"]   = int(final_ce_short)
-    sig["final_put_wing"]     = int(final_pe_short  - WING_DISTANCE)
-    sig["final_call_wing"]    = int(final_ce_short  + WING_DISTANCE)
+    sig["final_put_short"]    = int(round((spot - suggested_pe) / 50) * 50)
+    sig["final_call_short"]   = int(round((spot + suggested_ce) / 50) * 50)
+    sig["final_put_wing"]     = sig["final_put_short"]  - WING_DISTANCE
+    sig["final_call_wing"]    = sig["final_call_short"] + WING_DISTANCE
 
 
 def _compute_master_score(sig: dict) -> None:
-    """
-    LOCKED per premiumdecay_locked_rules_22Apr2026_1600IST.docx Section 7.1:
-    Options Chain 25 · RSI 20 · Market Profile 20 · Bollinger 15 ·
-    VIX/IV 10 · Dow Theory 5 · EMA structural quality 5 = 100 total
-    """
-    # LOCKED: use EMA structural quality score, not legacy put/call safety score
-    ema_sc  = sig.get("cr_ema_master_score", sig.get("home_score", 2))
-    rsi_sc  = _rsi_master_score(sig)
-    bb_sc   = min(sig.get("bb_home_score", 10), 15)
-    oc_sc   = min(sig.get("oc_home_score", 10), 25)
-    vx_sc   = min(sig.get("vix_home_score", 10), 10)
-    mp_sc   = min(sig.get("mp_home_score",  12), 20)
-    dow_sc  = min(sig.get("dow_home_score", sig.get("dow_dow_home_score", 3)), 5)
-
-    # Kill switch penalties
+    ema_sc = sig.get("home_score", 0)
+    bb_sc  = sig.get("bb_home_score", 10)
+    vx_sc  = sig.get("vix_home_score", 10)
+    mp_sc  = sig.get("mp_home_score",  12)
+    dow_sc = sig.get("dow_home_score", 2)
+    alignment = sig.get("mtf_alignment", sig.get("alignment", "MIXED"))
+    rsi_sc = (20 if alignment == "ALIGNED_BULL" else
+              18 if alignment == "ALIGNED_BULL_NEUTRAL" else
+              15 if alignment == "ALIGNED_BEAR" else
+               5 if "COUNTER" in alignment else 10)
     kills = sig.get("kill_switches", {})
-    if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"):
-        rsi_sc = max(0, rsi_sc - 10)
-    if kills.get("RSI_REGIME_FLIP") or kills.get("K1"):
-        rsi_sc = max(0, rsi_sc - 5)
+    if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"): rsi_sc = max(0, rsi_sc - 10)
+    if kills.get("RSI_REGIME_FLIP")     or kills.get("K1"): rsi_sc = max(0, rsi_sc - 5)
     if sig.get("BANKING_DAILY_COLLAPSE") or sig.get("sd6_collapse"):
         ema_sc = 0; rsi_sc = 0
-    if sig.get("is_danger"):
-        vx_sc = max(0, vx_sc - 5)
-
-    master = min(100, ema_sc + rsi_sc + bb_sc + oc_sc + vx_sc + mp_sc + dow_sc)
-
+    if sig.get("is_danger"): vx_sc = max(0, vx_sc - 5)
+    master = min(100, ema_sc + rsi_sc + bb_sc + vx_sc + mp_sc + dow_sc)
     sig["master_score"]   = master
     sig["master_verdict"] = (
-        "ENTER — high confidence"       if master >= 75 else
-        "ENTER — proceed with caution"  if master >= 55 else
-        "MARGINAL — reduce size"        if master >= 40 else
+        "ENTER — high confidence"   if master >= 75 else
+        "ENTER — proceed with caution" if master >= 55 else
+        "MARGINAL — reduce size"    if master >= 40 else
         "STAND ASIDE"
     )
     sig["master_colour"] = (
@@ -520,30 +396,17 @@ def _compute_master_score(sig: dict) -> None:
         "#ea580c" if master >= 40 else
         "#dc2626"
     )
-    # LOCKED: updated _lens_scores labels for Home page clarity
     sig["_lens_scores"] = {
-        "EMA structure":    ema_sc,
-        "RSI (P5-8)":       rsi_sc,
-        "Bollinger":        bb_sc,
-        "Options Chain":    oc_sc,
-        "VIX / IV":         vx_sc,
-        "Mkt Profile":      mp_sc,
-        "Dow Theory":       dow_sc,
+        "EMA (P1+2)":  ema_sc,
+        "RSI (P5-8)":  rsi_sc,
+        "Bollinger":   bb_sc,
+        "VIX/IV":      vx_sc,
+        "Mkt Profile": mp_sc,
+        "Dow Theory":  dow_sc,
     }
 
 
-def _rsi_master_score(sig: dict) -> int:
-    """RSI contribution to master score — max 20 pts."""
-    alignment = sig.get("mtf_alignment", sig.get("alignment", "MIXED"))
-    return (
-        20 if alignment == "ALIGNED_BULL" else
-        18 if alignment == "ALIGNED_BULL_NEUTRAL" else
-        15 if alignment == "ALIGNED_BEAR" else
-         5 if "COUNTER" in alignment else 10
-    )
-
-
-def _first_active_kill(kills: dict):
+def _first_active_kill(kills: dict) -> str | None:
     for k, v in kills.items():
         if v: return k
     return None
@@ -551,23 +414,19 @@ def _first_active_kill(kills: dict):
 
 def load_saved_signals() -> dict:
     if SIGNALS_PATH.exists():
-        try:
-            return json.loads(SIGNALS_PATH.read_text())
-        except Exception:
-            pass
+        try: return json.loads(SIGNALS_PATH.read_text())
+        except Exception: pass
     return {}
 
 
 def save_signals(sig: dict) -> None:
     SIGNALS_PATH.parent.mkdir(exist_ok=True)
     clean = {k: v for k, v in sig.items()
-             if not hasattr(v, "to_dict") and k not in ("near_scored", "far_scored")}
-    try:
-        SIGNALS_PATH.write_text(json.dumps(clean, default=str, indent=2))
-    except Exception as e:
-        log.error("Failed to save signals: %s", e)
+             if not hasattr(v, "to_dict") and k not in ("near_scored","far_scored")}
+    try: SIGNALS_PATH.write_text(json.dumps(clean, default=str, indent=2))
+    except Exception as e: log.error("Failed to save signals: %s", e)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot):
-    return compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot)
+def get_cached_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot, nifty_1h=None):
+    return compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot, nifty_1h=nifty_1h)
