@@ -1,309 +1,332 @@
-# pages/00_Dow_Theory.py — Dow Theory+ Structural Analysis
-# Market structure · Pivot sequence · Breach levels · IC implication
+# pages/00_Dow_Theory.py — Dow Theory Phase Engine
+# Redesigned 27 Apr 2026 — single window, N=3, phase narrative
+# Section 0: Narrative (first thing seen)
+# Section 1: Phase metrics + score trajectory
+# Section 2: Structural pivots
+# Section 3: Breach levels + proximity
+# Section 4: Level chart
+# Section 5: Reference table
+
 import streamlit as st
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import pandas as pd
-import numpy as np
 import ui.components as ui
 
 st.set_page_config(page_title="P00 · Dow Theory", layout="wide")
 st_autorefresh(interval=900_000, key="p00")
-st.title("Page 00 — Dow Theory+ Structural Analysis")
-st.caption(
-    "Market structure · Pivot sequence (HH/HL/LH/LL) · "
-    "Breach trigger levels · IC shape implication"
-)
+st.title("Page 00 — Nifty Structure & Phase")
+st.caption("20-day 1H · N=3 · Single rolling window · Phase narrative · Nifty Health Monitor")
 
 sig = st.session_state.get("signals", {})
 if not sig:
     st.info("⬅️ Open **Home** page first."); st.stop()
 
-# Pull Dow signals (all prefixed dow_ in sig dict)
-structure    = sig.get("dow_dow_structure",   sig.get("dow_structure",   "MIXED"))
-last_ph      = sig.get("dow_last_pivot_high", sig.get("last_pivot_high", 0))
-last_pl      = sig.get("dow_last_pivot_low",  sig.get("last_pivot_low",  0))
-call_breach  = sig.get("dow_call_breach_level",sig.get("call_breach_level", 0))
-put_breach   = sig.get("dow_put_breach_level", sig.get("put_breach_level",  0))
-pivot_hi_ref = sig.get("dow_pivot_high_ref",  sig.get("pivot_high_ref",   last_ph))
-pivot_lo_ref = sig.get("dow_pivot_low_ref",   sig.get("pivot_low_ref",    last_pl))
-uptrend      = sig.get("dow_uptrend",         sig.get("uptrend",          False))
-downtrend    = sig.get("dow_downtrend",        sig.get("downtrend",        False))
-spot         = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
+# ── Pull signals ──────────────────────────────────────────────────────────────
+structure    = sig.get("dow_structure",          "MIXED")
+phase        = sig.get("dow_phase",              "MX")
+narrative    = sig.get("dow_narrative",          "—")
+score        = sig.get("dow_phase_score",        "WAIT")
+score_label  = sig.get("dow_dow_phase_score_label", "Nifty Health Monitor")
+retrace_pct  = sig.get("dow_retrace_pct",        0.0)
+sessions     = sig.get("dow_sessions_in_phase",  0.0)
+ph_last      = sig.get("dow_ph_last",            0.0)
+ph_prev      = sig.get("dow_ph_prev",            0.0)
+pl_last      = sig.get("dow_pl_last",            0.0)
+pl_prev      = sig.get("dow_pl_prev",            0.0)
+ce_health    = sig.get("dow_ce_health",          "STRONG")
+pe_health    = sig.get("dow_pe_health",          "STRONG")
+ce_pts       = sig.get("dow_ce_health_pts",      0.0)
+pe_pts       = sig.get("dow_pe_health_pts",      0.0)
+call_breach  = sig.get("dow_call_breach",        0.0)
+put_breach   = sig.get("dow_put_breach",         0.0)
+prox_pts     = sig.get("dow_proximity_pts",      66.0)
+call_prox    = sig.get("dow_call_prox_warn",     False)
+put_prox     = sig.get("dow_put_prox_warn",      False)
+atr14_1h     = sig.get("dow_atr14_1h",           200.0)
+ic_shape     = sig.get("dow_ic_shape",           "1:1 — Symmetric")
+ic_size      = sig.get("dow_ic_size",            "Full size")
+score_hist   = sig.get("dow_score_history",      [])
+candles_used = sig.get("dow_candles_used",       0)
+insufficient = sig.get("dow_insufficient_data",  False)
 
-# ── Structure banner ──────────────────────────────────────────────────────────
-STRUCTURE_CONFIG = {
-    "UPTREND": (
-        "green",
-        "UPTREND — Higher Highs and Higher Lows",
-        "Market printing HH+HL sequence. Put floor structurally supported. "
-        "IC can be asymmetric 1:2 (CE further). PE side benefits from structural support. "
-        "CE side needs room — market has upward bias.",
-        "1:2 — CE further",
-        "Full size"
-    ),
-    "DOWNTREND": (
-        "red",
-        "DOWNTREND — Lower Highs and Lower Lows",
-        "Market printing LH+LL sequence. Call ceiling structurally suppressed. "
-        "IC can be asymmetric 2:1 (PE further). CE side benefits from structural resistance. "
-        "PE side needs more room — market has downward bias.",
-        "2:1 — PE further",
-        "75% size"
-    ),
-    "MIXED_BULL_DIVERGE": (
-        "amber",
-        "MIXED — Higher Highs but Lower Lows",
-        "Expanding range — higher highs but lows also dropping. Market volatile in both directions. "
-        "Both legs under pressure. Symmetric IC recommended. Widen both sides beyond standard. "
-        "This is the most volatile structure — consider reducing size.",
-        "1:1 — Symmetric, wide",
-        "75% size"
-    ),
-    "MIXED_BEAR_DIVERGE": (
-        "amber",
-        "MIXED — Lower Highs but Higher Lows",
-        "Contracting range — coiling. Lower highs and higher lows forming a wedge. "
-        "Big move building — direction unknown. Symmetric IC with caution. "
-        "Monitor for breakout direction before entry. Wedge resolution often violent.",
-        "1:1 — Symmetric, watch for breakout",
-        "75% size"
-    ),
-    "MIXED": (
-        "default",
-        "MIXED — No clear structure",
-        "Insufficient pivot data or conflicting pivot sequence. "
-        "Treat as symmetric — no directional structural bias. Standard 1:1 IC.",
-        "1:1 — Symmetric",
-        "Full size"
-    ),
+spot = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
+
+_STRUCT_COL = {
+    "UPTREND": "#16a34a", "DOWNTREND": "#dc2626",
+    "MIXED_EXPANDING": "#d97706", "MIXED_CONTRACTING": "#d97706",
+    "CONSOLIDATING": "#64748b",
 }
-
-cfg = STRUCTURE_CONFIG.get(structure, STRUCTURE_CONFIG["MIXED"])
-s_col, s_title, s_desc, s_ratio, s_size = cfg
-
-ALERT_LEVEL = {
-    "green": "success", "red": "danger", "amber": "warning", "default": "info"
+_SCORE_COL = {
+    "PRIME": "success", "GOOD": "info",
+    "WAIT": "warning", "AVOID": "danger", "NO_TRADE": "danger",
 }
-ui.alert_box(s_title, f"{s_desc}\n\nIC shape: {s_ratio} · Size guidance: {s_size}",
-             level=ALERT_LEVEL.get(s_col, "info"))
+_HEALTH_COL = {
+    "STRONG": "green", "MODERATE": "default",
+    "WATCH": "amber", "ALERT": "red", "BREACH": "red",
+}
+struct_col = _STRUCT_COL.get(structure, "#64748b")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 0 — NARRATIVE (first thing you see)
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown(
+    f"<div style='background:#f0f9ff;border-left:5px solid {struct_col};"
+    f"padding:16px 20px;border-radius:8px;margin-bottom:16px;"
+    f"font-size:16px;color:#0f1724;font-weight:500;line-height:1.6;'>"
+    f"📍 {narrative}"
+    f"</div>",
+    unsafe_allow_html=True
+)
+
+if insufficient:
+    ui.alert_box(
+        "Insufficient Pivot Data",
+        "Fewer than 2 confirmed pivot highs or 2 confirmed pivot lows in the 20-day window. "
+        "Structure defaults to MIXED. This can happen during low-volatility compression "
+        "or if 1H data fetch is incomplete.",
+        level="warning"
+    )
 
 st.divider()
 
-# ── Headline metrics ──────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 1 — PHASE METRICS + SCORE TRAJECTORY
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 1 — Phase Metrics & Score Trajectory",
+                  "Current phase, depth, health, and 5-day history")
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-with c1: ui.metric_card("STRUCTURE", structure, color=s_col)
-with c2: ui.metric_card("IC SHAPE",  s_ratio,   sub="Dow Theory guidance")
-with c3: ui.metric_card("LAST PIVOT HIGH", f"{last_ph:,.0f}",
-                          sub="Recent swing high")
-with c4: ui.metric_card("LAST PIVOT LOW",  f"{last_pl:,.0f}",
-                          sub="Recent swing low")
-with c5: ui.metric_card("CALL BREACH LEVEL", f"{call_breach:,.0f}",
-                          sub=f"+0.5% above pivot high",
-                          color="red" if spot > 0 and call_breach > 0 and spot > call_breach * 0.98 else "default")
-with c6: ui.metric_card("PUT BREACH LEVEL", f"{put_breach:,.0f}",
-                          sub=f"−0.5% below pivot low",
-                          color="red" if spot > 0 and put_breach > 0 and spot < put_breach * 1.02 else "default")
+with c1: ui.metric_card("STRUCTURE",  structure, color=("green" if structure=="UPTREND" else "red" if structure=="DOWNTREND" else "amber"))
+with c2: ui.metric_card("PHASE",      phase,     sub="Current phase code")
+with c3: ui.metric_card(score_label,  score,     color=("green" if score=="PRIME" else "blue" if score=="GOOD" else "amber" if score=="WAIT" else "red"))
+with c4: ui.metric_card("RETRACE",    f"{retrace_pct:.0f}%", sub=f"of last swing")
+with c5: ui.metric_card("SESSIONS",   f"{sessions:.0f}" if sessions==int(sessions) else f"{sessions:.1f}", sub="in current phase")
+with c6: ui.metric_card("IC SHAPE",   ic_shape,  sub=ic_size)
 
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — What Dow Theory Tells You
-# ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 1 — What Dow Theory Tells You",
-                  "Structural context for IC shape and bias")
-
-ui.simple_technical(
-    "Dow Theory reads the market's structural rhythm — the sequence of swing highs and lows over days and weeks. "
-    "An uptrend is confirmed not by price being high, but by each new high being higher than the last AND each "
-    "pullback holding above the previous pullback. This structural support is what makes the PE floor reliable. "
-    "A downtrend is the mirror — each rally fails lower, each drop takes out the previous low. "
-    "This structural ceiling is what makes the CE leg safer.\n\n"
-    "Dow Theory does NOT tell you direction from today. It tells you the current structural bias "
-    "that has been validated over the past several weeks of price action.",
-
-    "Pivot detection: swing high = high[i] > all highs within N bars either side (N=5)\n"
-    "HH = higher high (last pivot high > prior pivot high)\n"
-    "HL = higher low (last pivot low > prior pivot low)\n"
-    "LH = lower high | LL = lower low\n"
-    "UPTREND = HH + HL simultaneously\n"
-    "DOWNTREND = LH + LL simultaneously\n"
-    "Breach level = 0.5% beyond pivot → structural break trigger"
-)
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Pivot Sequence and Breach Levels
-# ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 2 — Pivot Sequence and Breach Levels",
-                  "Structural pivot highs and lows · Breach = structural change signal")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("**Call (CE) Side — Resistance Structure**")
-    ui.simple_technical(
-        f"The last confirmed pivot high is at **{last_ph:,.0f}**. "
-        f"The call breach level is **{call_breach:,.0f}** — 0.5% above this pivot. "
-        f"{'Price is currently near or above the breach level — structural resistance is being tested.' if spot > 0 and call_breach > 0 and spot > call_breach * 0.98 else 'Price is currently below the breach level — CE structural protection intact.'}\n\n"
-        f"In an uptrend (HH+HL), each new high is expected to exceed the previous. "
-        f"A failure to break above the last pivot high is the first Dow Theory warning "
-        f"that the uptrend may be stalling.",
-        f"Last pivot high: {last_ph:,.0f}\n"
-        f"Breach level: {call_breach:,.0f} (+0.5%)\n"
-        f"Breach signal: close above {call_breach:,.0f} = structural breakout\n"
-        f"CE implication: strike must be above {call_breach:,.0f} in uptrend"
+# ── CE and PE health ──────────────────────────────────────────────────────────
+st.markdown("")
+c1, c2 = st.columns(2)
+with c1:
+    ui.metric_card(
+        "CE HEALTH (Vulnerable in DOWNTREND)",
+        f"{ce_health} — {ce_pts:,.0f} pts",
+        sub=f"Distance from spot to structural LH/HH",
+        color=_HEALTH_COL.get(ce_health, "default")
+    )
+with c2:
+    ui.metric_card(
+        "PE HEALTH (Vulnerable in UPTREND)",
+        f"{pe_health} — {pe_pts:,.0f} pts",
+        sub=f"Distance from spot to structural LL/HL",
+        color=_HEALTH_COL.get(pe_health, "default")
     )
 
-with col2:
-    st.markdown("**Put (PE) Side — Support Structure**")
-    ui.simple_technical(
-        f"The last confirmed pivot low is at **{last_pl:,.0f}**. "
-        f"The put breach level is **{put_breach:,.0f}** — 0.5% below this pivot. "
-        f"{'Price is currently near or below the breach level — structural support is being tested.' if spot > 0 and put_breach > 0 and spot < put_breach * 1.02 else 'Price is currently above the breach level — PE structural protection intact.'}\n\n"
-        f"In an uptrend (HH+HL), each pullback must hold above the previous pivot low. "
-        f"A close below the put breach level means the HL pattern has failed — "
-        f"the uptrend structure is broken and the IC PE leg loses its structural support.",
-        f"Last pivot low: {last_pl:,.0f}\n"
-        f"Breach level: {put_breach:,.0f} (−0.5%)\n"
-        f"Breach signal: close below {put_breach:,.0f} = structural breakdown\n"
-        f"PE implication: pivot low must be between spot and PE short"
+# ── Score trajectory table ────────────────────────────────────────────────────
+if score_hist:
+    st.markdown("**Score Trajectory — Last 5 Sessions**")
+    rows = []
+    for r in score_hist:
+        rows.append({
+            "Date":       r.get("date",""),
+            "Day":        r.get("weekday","")[:3],
+            "Structure":  r.get("structure",""),
+            "Phase":      r.get("phase",""),
+            "Retrace %":  f"{r.get('retrace_pct',0):.0f}%",
+            "CE Health":  r.get("ce_health",""),
+            "PE Health":  r.get("pe_health",""),
+            "Score":      r.get("phase_score",""),
+        })
+    df_hist = pd.DataFrame(rows)
+
+    def _colour_score(val):
+        c = {"PRIME":"background-color:#dcfce7;font-weight:700",
+             "GOOD":"background-color:#dbeafe;font-weight:700",
+             "WAIT":"background-color:#fef9c3",
+             "AVOID":"background-color:#fee2e2;font-weight:700",
+             "NO_TRADE":"background-color:#fecaca;font-weight:700"}
+        return c.get(val,"")
+
+    def _colour_health(val):
+        c = {"STRONG":"color:#16a34a;font-weight:600",
+             "MODERATE":"color:#2563eb",
+             "WATCH":"color:#d97706;font-weight:600",
+             "ALERT":"color:#ea580c;font-weight:700",
+             "BREACH":"color:#dc2626;font-weight:700"}
+        return c.get(val,"")
+
+    st.dataframe(
+        df_hist.style
+            .map(_colour_score,  subset=["Score"])
+            .map(_colour_health, subset=["CE Health","PE Health"]),
+        use_container_width=True, hide_index=True
+    )
+    st.caption(
+        f"PRIME = ideal entry zone · GOOD = acceptable · WAIT = not yet · "
+        f"AVOID = threat active · NO_TRADE = structure changing"
     )
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — Structure Reference Table
+# SECTION 2 — STRUCTURAL PIVOTS
 # ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 3 — Structure Reference Table",
-                  "All four Dow Theory structures and their IC implications")
+ui.section_header("Section 2 — Structural Pivots",
+                  "Last two confirmed pivot highs and lows · 20-day 1H · N=3")
 
-import pandas as pd
-rows = [
-    ["UPTREND",            "HH + HL",      "1:2 — CE further", "Full",  "Strong PE floor. CE needs room. Ideal IC entry."],
-    ["DOWNTREND",          "LH + LL",      "2:1 — PE further", "75%",   "Strong CE ceiling. PE needs room. Valid but cautious."],
-    ["MIXED_BULL_DIVERGE", "HH + LL",      "1:1 — Wide both",  "75%",   "Expanding range. Both legs volatile. Reduce size."],
-    ["MIXED_BEAR_DIVERGE", "LH + HL",      "1:1 — Watch",      "75%",   "Contracting range — coiling. Breakout risk. Monitor."],
-    ["MIXED",              "Unclear",       "1:1 — Standard",   "Full",  "No structural bias. Symmetric IC. Standard approach."],
-]
-df_ref = pd.DataFrame(rows, columns=["Structure","Pivot Pattern","IC Shape","Size","Note"])
+c1, c2, c3, c4 = st.columns(4)
+hh = ph_last > ph_prev if ph_prev > 0 else None
+hl = pl_last > pl_prev if pl_prev > 0 else None
 
-def hl_structure(val):
-    if val == structure:
-        return "background-color:#dbeafe;font-weight:700"
-    return ""
+with c1: ui.metric_card(
+    "PIVOT HIGH 1 (Recent)", f"{ph_last:,.0f}" if ph_last>0 else "—",
+    sub="Most recent confirmed swing high"
+)
+with c2: ui.metric_card(
+    "PIVOT HIGH 2 (Prior)", f"{ph_prev:,.0f}" if ph_prev>0 else "—",
+    sub=("↑ HH — Higher High" if hh else "↓ LH — Lower High") if hh is not None else "Prior high",
+    color="green" if hh else "red" if hh is not None else "default"
+)
+with c3: ui.metric_card(
+    "PIVOT LOW 1 (Recent)", f"{pl_last:,.0f}" if pl_last>0 else "—",
+    sub="Most recent confirmed swing low"
+)
+with c4: ui.metric_card(
+    "PIVOT LOW 2 (Prior)", f"{pl_prev:,.0f}" if pl_prev>0 else "—",
+    sub=("↑ HL — Higher Low" if hl else "↓ LL — Lower Low") if hl is not None else "Prior low",
+    color="green" if hl else "red" if hl is not None else "default"
+)
 
-st.dataframe(
-    df_ref.style.map(hl_structure, subset=["Structure"]),
-    use_container_width=True, hide_index=True
+st.caption(
+    f"Window: 20 trading days of 1H OHLCV · {candles_used} candles · "
+    f"N=3 (3 hours each side for pivot confirmation) · "
+    f"ATR14(1H) = {atr14_1h:.0f} pts"
 )
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — Live Price Chart with Pivot Levels
+# SECTION 3 — BREACH LEVELS
 # ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 4 — Price Context with Structural Levels",
-                  "Pivot highs, pivot lows, breach levels, and current spot")
+ui.section_header("Section 3 — Breach Levels & Proximity",
+                  "PH_last + 50 pts · PL_last − 50 pts · Warning within ATR14/3")
 
-# We only have sig dict — draw a simple level chart
-if last_ph > 0 and last_pl > 0:
+c1, c2, c3, c4 = st.columns(4)
+with c1: ui.metric_card("CALL BREACH", f"{call_breach:,.0f}" if call_breach>0 else "—",
+                          sub="PH_last + 50 pts", color="red" if call_prox else "default")
+with c2: ui.metric_card("PUT BREACH",  f"{put_breach:,.0f}"  if put_breach>0  else "—",
+                          sub="PL_last − 50 pts",  color="red" if put_prox  else "default")
+with c3: ui.metric_card("PROXIMITY ZONE", f"±{prox_pts:.0f} pts",
+                          sub=f"ATR14(1H) / 3 = {atr14_1h:.0f}/3")
+with c4: ui.metric_card("CALL STATUS",
+                          "⚠️ IN ZONE" if call_prox else "✓ Clear",
+                          color="red" if call_prox else "green")
+
+if call_prox:
+    ui.alert_box("⚠️ CALL PROXIMITY WARNING",
+        f"Spot is within {prox_pts:.0f} pts of call breach level {call_breach:,.0f}. "
+        f"CE leg approaching structural trigger. Check moat count (Page 02) and nesting (Page 12).",
+        level="danger")
+if put_prox:
+    ui.alert_box("⚠️ PUT PROXIMITY WARNING",
+        f"Spot is within {prox_pts:.0f} pts of put breach level {put_breach:,.0f}. "
+        f"PE leg approaching structural trigger. Check moat count (Page 02) and nesting (Page 12).",
+        level="danger")
+if not call_prox and not put_prox:
+    ui.alert_box("✓ Breach Levels Clear",
+        f"Spot is more than {prox_pts:.0f} pts from both breach levels. "
+        f"Structural protection intact on both sides.",
+        level="success")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4 — LEVEL CHART
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 4 — Structural Level Map",
+                  "Pivots · Breach levels · Proximity zones · Current spot")
+
+if ph_last > 0 and pl_last > 0:
     fig = go.Figure()
 
-    levels = [
-        (call_breach, "Call Breach Level (+0.5%)", "#dc2626", "dash"),
-        (last_ph,     "Last Pivot High",            "#f97316", "solid"),
-        (spot,        "Current Spot",               "#7c3aed", "dot") if spot > 0 else None,
-        (last_pl,     "Last Pivot Low",             "#16a34a", "solid"),
-        (put_breach,  "Put Breach Level (−0.5%)",   "#15803d", "dash"),
+    all_levels = [
+        (call_breach, "Call Breach (+50 pts)",     "#dc2626", "dash",  2),
+        (ph_last,     "PH_last (LH/HH)",           "#f97316", "solid", 2),
+        (ph_prev,     "PH_prev (prior high)",       "#fb923c", "dot",   1) if ph_prev>0 else None,
+        (spot,        "Current Spot",               "#7c3aed", "dot",   2) if spot>0   else None,
+        (pl_last,     "PL_last (LL/HL)",            "#16a34a", "solid", 2),
+        (pl_prev,     "PL_prev (prior low)",        "#4ade80", "dot",   1) if pl_prev>0 else None,
+        (put_breach,  "Put Breach (−50 pts)",       "#15803d", "dash",  2),
     ]
 
-    # Approximate a mini range for y axis
-    y_min = min(put_breach * 0.998, last_pl * 0.998) if put_breach > 0 else last_pl * 0.99
-    y_max = max(call_breach * 1.002, last_ph * 1.002) if call_breach > 0 else last_ph * 1.01
+    y_vals = [v[0] for v in all_levels if v and v[0]>0]
+    y_min  = min(y_vals)*0.997 if y_vals else 22000
+    y_max  = max(y_vals)*1.003 if y_vals else 26000
 
-    for item in levels:
-        if item is None:
-            continue
-        level, name, colour, dash = item
-        if level <= 0:
-            continue
-        fig.add_hline(
-            y=level, line_color=colour, line_dash=dash, line_width=2,
-            annotation_text=f"{name}: {level:,.0f}",
-            annotation_position="right",
-            annotation_font_color=colour,
-        )
+    for item in all_levels:
+        if item is None: continue
+        level, name, colour, dash, width = item
+        if level <= 0: continue
+        fig.add_hline(y=level, line_color=colour, line_dash=dash, line_width=width,
+                      annotation_text=f"{name}: {level:,.0f}",
+                      annotation_position="right",
+                      annotation_font_color=colour)
 
-    # Shade zone between pivots = value zone
-    if last_pl > 0 and last_ph > 0:
-        fig.add_hrect(
-            y0=last_pl, y1=last_ph,
-            fillcolor="#dcfce7", opacity=0.15,
-            annotation_text="Structural Range",
-            annotation_position="top left",
-        )
+    # Structural range
+    if pl_last>0 and ph_last>0:
+        fig.add_hrect(y0=pl_last, y1=ph_last, fillcolor="#dcfce7", opacity=0.10,
+                      annotation_text="Structural Range", annotation_position="top left")
+
+    # Proximity zones
+    if call_breach>0:
+        fig.add_hrect(y0=call_breach-prox_pts, y1=call_breach+prox_pts,
+                      fillcolor="#fee2e2", opacity=0.20,
+                      annotation_text=f"Call proximity ±{prox_pts:.0f}",
+                      annotation_position="top right")
+    if put_breach>0:
+        fig.add_hrect(y0=put_breach-prox_pts, y1=put_breach+prox_pts,
+                      fillcolor="#fef9c3", opacity=0.20,
+                      annotation_text=f"Put proximity ±{prox_pts:.0f}",
+                      annotation_position="bottom right")
 
     fig.update_layout(
-        height=320,
-        margin=dict(l=0, r=180, t=20, b=20),
-        yaxis=dict(range=[y_min, y_max], title="Nifty Level",
-                   tickformat=",.0f"),
+        height=400, margin=dict(l=0,r=220,t=20,b=20),
+        yaxis=dict(range=[y_min,y_max], title="Nifty Level", tickformat=",.0f"),
         xaxis=dict(visible=False),
-        plot_bgcolor="#f8f9fb",
-        paper_bgcolor="#f8f9fb",
-        showlegend=False,
+        plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Pivot levels not yet computed — open Home page first to load signals.")
+    st.info("Pivot levels not yet computed — open Home page first.")
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — IC Implication Summary
+# SECTION 5 — REFERENCE TABLE
 # ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 5 — IC Implication Summary",
-                  "How Dow Theory structure feeds into your IC decisions")
+ui.section_header("Section 5 — Phase Reference",
+                  "All phases, conditions, and IC implications")
 
-# Determine which leg is structurally supported
-if uptrend:
-    pe_note = "PE leg benefits from HH+HL structural support. Put floor is validated by the uptrend sequence."
-    ce_note = "CE leg needs extra room — market has upward structural bias. Strike must sit above last pivot high."
-    entry   = "Prime entry: on HL pullback confirmation — after a dip holds above last pivot low."
-elif downtrend:
-    pe_note = "PE leg needs extra room — market has downward structural bias. Strike must sit below last pivot low."
-    ce_note = "CE leg benefits from LH+LL structural resistance. Call ceiling validated by downtrend sequence."
-    entry   = "Prime entry: on LH rally confirmation — after a bounce fails below last pivot high."
-else:
-    pe_note = "Mixed structure — no structural directional support for PE. Use symmetric IC."
-    ce_note = "Mixed structure — no structural directional support for CE. Use symmetric IC."
-    entry   = "Wait for structure to clarify. Monitor pivot sequence over next 1-2 weeks."
+ref_rows = [
+    # Structure  Phase  Condition                    IC Note
+    ["UPTREND",    "UT-1", "Retracing — below PH_last, above PL_last",      "1:2 CE further · PE structurally supported"],
+    ["UPTREND",    "UT-2", "Continuing — last candle HIGH > PH_last",        "1:2 CE further · Uptrend extending — verify"],
+    ["UPTREND",    "UT-3", "HL threatened — retrace >90%, near PL_last",     "1:2 CE further · Monitor HL closely"],
+    ["UPTREND",    "UT-4", "BROKEN — last candle LOW < PL_last",             "NO_TRADE — structure changing"],
+    ["DOWNTREND",  "DT-1", "Retracing up — above PL_last, below PH_last",   "2:1 PE further · CE structurally capped"],
+    ["DOWNTREND",  "DT-2", "Continuing — last candle LOW < PL_last",         "2:1 PE further · Downtrend extending — verify PE"],
+    ["DOWNTREND",  "DT-3", "LH threatened — retrace >90%, near PH_last",    "2:1 PE further · PRIME entry zone"],
+    ["DOWNTREND",  "DT-4", "BROKEN — last candle HIGH > PH_last",           "NO_TRADE — structure changing"],
+    ["MIXED",      "MX",   "Expanding or contracting range",                 "1:1 Symmetric · Wait for structure to resolve"],
+    ["CONSOL.",    "SC",   "PH-PL range < 1×ATR14",                         "Wait — no actionable structure"],
+]
+df_ref = pd.DataFrame(ref_rows, columns=["Structure","Phase","Condition","IC Note"])
 
-col1, col2 = st.columns(2)
-with col1:
-    ui.alert_box("PE (Put) Leg — Structural View", pe_note,
-                 level="success" if uptrend else "danger" if downtrend else "info")
-with col2:
-    ui.alert_box("CE (Call) Leg — Structural View", ce_note,
-                 level="success" if downtrend else "danger" if uptrend else "info")
+def hl_current(val):
+    return "background-color:#dbeafe;font-weight:700" if val == phase else ""
 
-st.markdown("")
-ui.alert_box("Entry Timing Guidance", entry, level="info")
-
-# Breach monitoring
-st.markdown("**Breach Level Monitoring — During Your Hold**")
-ui.simple_technical(
-    f"If spot closes below {put_breach:,.0f} (put breach level) during your hold — the HH+HL uptrend "
-    f"structure is broken. The PE leg loses its structural support. This is a signal to review "
-    f"your put short immediately — not necessarily to exit, but to confirm moat count and buffer.\n\n"
-    f"If spot closes above {call_breach:,.0f} (call breach level) — the LH+LL downtrend structure is "
-    f"broken. The CE ceiling has been taken out. Review your call short.",
-
-    f"Put breach trigger: close < {put_breach:,.0f}\n"
-    f"Call breach trigger: close > {call_breach:,.0f}\n"
-    f"Action on breach: check moat count (Page 02) + nesting state (Page 12)\n"
-    f"Breach alone ≠ exit — combine with moat count and nesting"
+st.dataframe(
+    df_ref.style.map(hl_current, subset=["Phase"]),
+    use_container_width=True, hide_index=True
 )
-
+st.caption("Highlighted row = current phase. Phase codes: UT=Uptrend, DT=Downtrend, MX=Mixed, SC=Consolidating.")
