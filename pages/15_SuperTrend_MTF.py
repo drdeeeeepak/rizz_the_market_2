@@ -264,10 +264,12 @@ ce_floor  = sig.get("st_ce_floor_applied", False)
 pe_thresh_wall = sig.get("st_put_dist", {}).get("threshold_wall", None)
 ce_thresh_wall = sig.get("st_call_dist", {}).get("threshold_wall", None)
 
+pe_sub = "⚠️ Floor applied" if pe_floor else ("Threshold wall: " + str(pe_thresh_wall or "—"))
+ce_sub = "⚠️ Floor applied" if ce_floor else ("Threshold wall: " + str(ce_thresh_wall or "—"))
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1:
-    ui.metric_card("PE Distance", f"{pe_dist:,} pts",
-                   sub=f"{'⚠️ Floor applied' if pe_floor else f'Threshold wall: {pe_thresh_wall or \"-\"}'}")
+    ui.metric_card("PE Distance", f"{pe_dist:,} pts", sub=pe_sub)
 with c2:
     ui.metric_card("PE % OTM", f"{pe_pct:.2f}%",
                    color="amber" if pe_floor else "green")
@@ -275,8 +277,7 @@ with c3:
     ui.metric_card("PE Strike", f"~{pe_strike:,}",
                    sub="ST structural floor", color="green")
 with c4:
-    ui.metric_card("CE Distance", f"{ce_dist:,} pts",
-                   sub=f"{'⚠️ Floor applied' if ce_floor else f'Threshold wall: {ce_thresh_wall or \"-\"}'}")
+    ui.metric_card("CE Distance", f"{ce_dist:,} pts", sub=ce_sub)
 with c5:
     ui.metric_card("CE % OTM", f"{ce_pct:.2f}%",
                    color="amber" if ce_floor else "red")
