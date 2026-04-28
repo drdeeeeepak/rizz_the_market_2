@@ -1,6 +1,7 @@
 # data/live_fetcher.py
 # All Kite data fetching lives here. Analytics modules never call Kite directly.
 # Updated 27 Apr 2026: single get_nifty_1h_phase() replaces all previous 1H fetchers.
+# Updated 27 Apr 2026: added get_nifty_15m(), get_nifty_30m(), get_nifty_5m() for SuperTrend MTF page.
 
 import logging
 from datetime import date, timedelta
@@ -27,6 +28,8 @@ from config import (
     TTL_OPTIONS, TTL_PRICE, TTL_DAILY, TTL_1H,
     OI_STRIKE_STEP, OI_STRIKE_RANGE, EXPIRY_WEEKDAY,
     DOW_PHASE_DAYS,
+    TTL_15M, TTL_30M, TTL_5M,
+    ST_15M_DAYS, ST_30M_DAYS, ST_5M_DAYS,
 )
 
 log = logging.getLogger(__name__)
@@ -99,6 +102,7 @@ def get_nifty_daily(days: int = 400) -> pd.DataFrame:
 def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
     """
     Fetch 1H candles for Dow Theory phase engine.
+    Also used by SuperTrend engine for 1H TF and proxy resampling to 2H/4H.
 
     Window  : last N trading days (default 20 = 120 candles at 6/day)
     Interval: 60minute (Kite)
@@ -106,19 +110,12 @@ def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
     Frozen  : NO — fetched fresh every day
 
     This is the ONLY 1H fetch in the system.
-    Replaces get_nifty_1h_structural() and get_nifty_1h_breach().
-
-    Returns DataFrame with DatetimeIndex (ascending),
-    columns: open, high, low, close, volume.
-
-    NSE session = 9:15 AM to 3:30 PM = 6 complete 1H candles per day.
-    20 trading days × 6 = 120 candles expected.
+    SuperTrend resamples 2H and 4H from this same DataFrame.
     """
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
     try:
         to_date   = date.today()
-        # Add buffer: 20 trading days ≈ 30 calendar days
         from_date = to_date - timedelta(days=days + 12)
 
         log.info("Fetching 1H phase: %s → %s (%d trading days)", from_date, to_date, days)
@@ -136,12 +133,10 @@ def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
         df = df.set_index("date").sort_index()
         df = df[["open", "high", "low", "close", "volume"]]
 
-        # Trim to last days×6 candles
         target = days * 6
         if len(df) > target:
             df = df.tail(target)
 
-        # Sanity
         if len(df) < int(days * 6 * 0.6):
             log.warning("1H phase: only %d candles (expected ~%d)", len(df), target)
 
@@ -149,6 +144,135 @@ def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
         return df
     except Exception as e:
         log.error("1H phase fetch failed: %s", e); return pd.DataFrame()
+
+
+# ─── Nifty 30m OHLCV — SuperTrend Tier 3 ────────────────────────────────────
+
+@st.cache_data(ttl=TTL_30M, show_spinner=False)
+def get_nifty_30m(days: int = ST_30M_DAYS) -> pd.DataFrame:
+    """
+    Fetch 30m candles for SuperTrend Tier 3.
+    Window : last ST_30M_DAYS trading days
+    Cache  : TTL_30M = 30 minutes
+    Used by: SuperTrend MTF engine (analytics/supertrend.py)
+    Returns DataFrame with DatetimeIndex, columns: open/high/low/close/volume
+    NSE session: 6 × 1H = 12 × 30m candles per day
+    """
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        to_date   = date.today()
+        from_date = to_date - timedelta(days=days + 5)
+
+        log.info("Fetching 30m ST: %s → %s", from_date, to_date)
+        data = kite.historical_data(
+            NIFTY_INDEX_TOKEN,
+            from_date.strftime("%Y-%m-%d"),
+            to_date.strftime("%Y-%m-%d"),
+            "30minute"
+        )
+        if not data:
+            log.error("30m fetch empty"); return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        df = df[["open", "high", "low", "close", "volume"]]
+
+        # Need enough candles for ST(21): at least 21 + buffer
+        # 12 candles/day × days
+        target = days * 12
+        if len(df) > target:
+            df = df.tail(target)
+
+        log.info("30m ST ready: %d candles", len(df))
+        return df
+    except Exception as e:
+        log.error("30m fetch failed: %s", e); return pd.DataFrame()
+
+
+# ─── Nifty 15m OHLCV — SuperTrend Tier 3 ────────────────────────────────────
+
+@st.cache_data(ttl=TTL_15M, show_spinner=False)
+def get_nifty_15m(days: int = ST_15M_DAYS) -> pd.DataFrame:
+    """
+    Fetch 15m candles for SuperTrend Tier 3.
+    Window : last ST_15M_DAYS trading days
+    Cache  : TTL_15M = 15 minutes
+    Used by: SuperTrend MTF engine (analytics/supertrend.py)
+    Returns DataFrame with DatetimeIndex, columns: open/high/low/close/volume
+    NSE session: 24 × 15m candles per day
+    """
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        to_date   = date.today()
+        from_date = to_date - timedelta(days=days + 3)
+
+        log.info("Fetching 15m ST: %s → %s", from_date, to_date)
+        data = kite.historical_data(
+            NIFTY_INDEX_TOKEN,
+            from_date.strftime("%Y-%m-%d"),
+            to_date.strftime("%Y-%m-%d"),
+            "15minute"
+        )
+        if not data:
+            log.error("15m fetch empty"); return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        df = df[["open", "high", "low", "close", "volume"]]
+
+        # 24 candles/day × days
+        target = days * 24
+        if len(df) > target:
+            df = df.tail(target)
+
+        log.info("15m ST ready: %d candles", len(df))
+        return df
+    except Exception as e:
+        log.error("15m fetch failed: %s", e); return pd.DataFrame()
+
+
+# ─── Nifty 5m OHLCV — SuperTrend display only ────────────────────────────────
+
+@st.cache_data(ttl=TTL_5M, show_spinner=False)
+def get_nifty_5m(days: int = ST_5M_DAYS) -> pd.DataFrame:
+    """
+    Fetch 5m candles for SuperTrend display-only panel.
+    ZERO decision weight. Visual reference only.
+    Window : last ST_5M_DAYS trading days
+    Cache  : TTL_5M = 5 minutes
+    NSE session: 72 × 5m candles per day
+    """
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        to_date   = date.today()
+        from_date = to_date - timedelta(days=days + 2)
+
+        data = kite.historical_data(
+            NIFTY_INDEX_TOKEN,
+            from_date.strftime("%Y-%m-%d"),
+            to_date.strftime("%Y-%m-%d"),
+            "5minute"
+        )
+        if not data:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        df = df[["open", "high", "low", "close", "volume"]]
+
+        target = days * 72
+        if len(df) > target:
+            df = df.tail(target)
+
+        return df
+    except Exception as e:
+        log.error("5m fetch failed: %s", e); return pd.DataFrame()
 
 
 # ─── Top 10 stocks daily ──────────────────────────────────────────────────────
