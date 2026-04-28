@@ -104,6 +104,7 @@ else:
     )
 
 st.session_state["signals"] = sig
+st.session_state["nifty_1h"] = nifty_1h   # used by Dow Theory page for candlestick chart
 
 # ── Top metrics row ───────────────────────────────────────────────────────────
 near_exp, far_exp = get_near_far_expiries()
