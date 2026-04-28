@@ -282,15 +282,23 @@ def compute_all_signals(
                     "mp_home_score": HOME_SCORE_MAX_MP // 2,
                     "mp_ce_biwkly_dist": 400, "mp_pe_biwkly_dist": 400})
 
-    # ── Page 14: SuperTrend MTF ────────────────────────────────────────────
+    # ── Page 15: SuperTrend MTF ────────────────────────────────────────────
     try:
         st_have_data = (
             nifty_df is not None and not nifty_df.empty and
             nifty_1h is not None and not nifty_1h.empty
         )
+
+        # Trajectory: read yesterday's EOD normalised scores from signals.json
+        saved              = load_saved_signals()
+        prev_put_norm_eod  = saved.get("st_put_norm_eod")
+        prev_call_norm_eod = saved.get("st_call_norm_eod")
+
+        # Trajectory: intraday snapshot — captured once at session open
+        open_put_norm  = st.session_state.get("st_open_put_norm")
+        open_call_norm = st.session_state.get("st_open_call_norm")
+
         if st_have_data:
-            # Pass ⭐ MAX strikes if already computed (will be None on first call)
-            # They will be populated after _build_lens_table runs below
             st_raw = SuperTrendEngine().signals(
                 df_daily  = nifty_df.copy(),
                 df_1h     = nifty_1h.copy(),
@@ -298,68 +306,56 @@ def compute_all_signals(
                 df_15m    = nifty_15m.copy() if nifty_15m is not None and not nifty_15m.empty else pd.DataFrame(),
                 df_5m     = nifty_5m.copy()  if nifty_5m  is not None and not nifty_5m.empty  else pd.DataFrame(),
                 spot      = spot,
-                prev_put_norm_eod  = sig.get("st_prev_put_norm_eod"),
-                prev_call_norm_eod = sig.get("st_prev_call_norm_eod"),
-                open_put_norm      = sig.get("st_open_put_norm"),
-                open_call_norm     = sig.get("st_open_call_norm"),
-                star_pe_strike     = None,   # validated after _build_lens_table
-                star_ce_strike     = None,
+                prev_put_norm_eod  = prev_put_norm_eod,
+                prev_call_norm_eod = prev_call_norm_eod,
+                open_put_norm      = open_put_norm,
+                open_call_norm     = open_call_norm,
             )
         else:
             log.warning("SuperTrend: insufficient data — using empty fallback")
             st_raw = SuperTrendEngine()._empty_signals()
 
-        # Prefix all ST keys with "st_"
         sig.update({f"st_{k}": v for k, v in st_raw.items()})
         sig["st_home_score"] = min(st_raw.get("home_score", 0), HOME_SCORE_MAX_ST)
         sig["st_ic_shape"]   = st_raw.get("ic_shape", "SYMMETRIC")
 
+        # Store EOD normalised scores for tomorrow's structural trajectory
+        sig["st_put_norm_eod"]  = st_raw.get("put_stack",  {}).get("normalised", 0)
+        sig["st_call_norm_eod"] = st_raw.get("call_stack", {}).get("normalised", 0)
+
+        # Capture 9:15 AM intraday snapshot (once per session)
+        if open_put_norm is None:
+            tier3   = ["1h", "30m", "15m"]
+            tf_sigs = st_raw.get("tf_signals", {})
+            from analytics.supertrend import MAX_RAW as ST_MAX_RAW
+            t3_put_raw  = sum(tf_sigs.get(tf, {}).get("raw_score", 0)
+                              for tf in tier3 if tf_sigs.get(tf, {}).get("side") == "PUT")
+            t3_call_raw = sum(tf_sigs.get(tf, {}).get("raw_score", 0)
+                              for tf in tier3 if tf_sigs.get(tf, {}).get("side") == "CALL")
+            st.session_state["st_open_put_norm"]  = round((t3_put_raw  / ST_MAX_RAW) * 100, 1)
+            st.session_state["st_open_call_norm"] = round((t3_call_raw / ST_MAX_RAW) * 100, 1)
+
     except Exception as e:
         log.error("SuperTrend MTF: %s", e)
         sig.update({
-            "st_home_score":   0,
-            "st_ic_shape":     "SYMMETRIC",
-            "st_lens_pe_dist": 0,
-            "st_lens_pe_pct":  0.0,
+            "st_home_score":     0,
+            "st_ic_shape":       "SYMMETRIC",
+            "st_lens_pe_dist":   0,
+            "st_lens_pe_pct":    0.0,
             "st_lens_pe_strike": 0,
-            "st_lens_ce_dist": 0,
-            "st_lens_ce_pct":  0.0,
+            "st_lens_ce_dist":   0,
+            "st_lens_ce_pct":    0.0,
             "st_lens_ce_strike": 0,
-            "st_put_stack":    {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
-            "st_call_stack":   {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
-            "st_flip_tfs":     [],
+            "st_put_stack":      {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
+            "st_call_stack":     {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
+            "st_flip_tfs":       [],
+            "st_put_norm_eod":   0,
+            "st_call_norm_eod":  0,
         })
 
     _build_lens_table(sig, spot)
-
-    # ── Strike validation pass (after lens table built) ────────────────────
-    # Re-run ST validation now that ⭐ strikes are known
-    try:
-        if st_have_data and sig.get("st_put_stack") and sig.get("st_call_stack"):
-            star_pe = sig.get("final_put_short", 0)
-            star_ce = sig.get("final_call_short", 0)
-            if star_pe > 0:
-                sig["st_put_validation"] = _validate_st_strike(
-                    sig["st_put_stack"], star_pe, spot
-                )
-            if star_ce > 0:
-                sig["st_call_validation"] = _validate_st_strike(
-                    sig["st_call_stack"], star_ce, spot
-                )
-    except Exception as e:
-        log.error("ST strike validation: %s", e)
-
     _compute_master_score(sig)
     return sig
-
-
-def _validate_st_strike(stack: dict, strike: float, spot: float) -> dict:
-    """Thin wrapper — calls validate_strike from supertrend module."""
-    try:
-        from analytics.supertrend import validate_strike
-        return validate_strike(stack, strike, spot)
-    except Exception:
-        return {}
 
 
 def _build_lens_table(sig: dict, spot: float) -> None:
@@ -432,9 +428,13 @@ def _build_lens_table(sig: dict, spot: float) -> None:
 
     sig["lens_table"] = lens_table
 
-    # ST floor warning flags for display
-    sig["st_pe_floor_applied"] = sig.get("st_put_dist", {}).get("floor_applied", False)
-    sig["st_ce_floor_applied"] = sig.get("st_call_dist", {}).get("floor_applied", False)
+    # ST floor/ceiling warning flags for display
+    put_dist_d = sig.get("st_put_dist", {})
+    call_dist_d = sig.get("st_call_dist", {})
+    sig["st_pe_case"] = put_dist_d.get("case", "NO_WALL")
+    sig["st_ce_case"] = call_dist_d.get("case", "NO_WALL")
+    sig["st_pe_label"] = put_dist_d.get("label", "—")
+    sig["st_ce_label"] = call_dist_d.get("label", "—")
 
     all_pe = {n: v["pe"] for n, v in lens_table.items()}
     all_ce = {n: v["ce"] for n, v in lens_table.items()}

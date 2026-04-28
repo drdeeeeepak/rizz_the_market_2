@@ -45,11 +45,18 @@ DEPTH_MULT = {
     "CRITICAL":    0.2,
 }
 
-# Safe distance cumulative threshold (normalised 0-100)
-SAFE_DIST_THRESHOLD  = 50.0
-
-# Minimum floor % CMP when threshold never reached
-MIN_FLOOR_PCT        = 2.0
+# Safe distance — Tier 1 only (Daily, 4H, 2H)
+TIER1_TFS            = ["daily", "4h", "2h"]
+SD_WALL_TOO_CLOSE    = 1.0    # wall < 1% → use floor
+SD_WALL_TOO_DEEP     = 2.0    # wall > 2% → use ceiling
+SD_BUFFER            = 1.0    # add 1% to wall when in sweet spot
+SD_FLOOR             = 2.0    # output when no wall / wall too close / wall too deep (< 2%)
+SD_CEILING           = 2.5    # hard ceiling — never exceeded
+# Case summary:
+#   no wall         → 2.0%
+#   wall < 1%       → 2.0%  (too close)
+#   wall 1%–2%      → min(wall + 1%, 2.5%)
+#   wall > 2%       → 2.5%  (deep wall, structure strong)
 
 # Cluster rule: two adjacent TF lines within this % CMP = single wall
 CLUSTER_PCT          = 0.5
@@ -298,115 +305,79 @@ def build_moat_stack(tf_signals: dict, side: str) -> dict:
 
 # ─── Safe Distance Computation ────────────────────────────────────────────────
 
-def compute_safe_distance(moat_stack: dict, spot: float) -> dict:
+def compute_safe_distance(tf_signals: dict, side: str, spot: float) -> dict:
     """
-    Compute ST safe distance for one leg.
-    Builds cumulative score from deepest wall inward.
-    Returns distance at first wall where cumulative >= SAFE_DIST_THRESHOLD.
-    Falls back to MIN_FLOOR_PCT if threshold never reached.
+    Compute ST safe distance for one IC leg using Tier 1 walls only.
+
+    Only Daily, 4H, 2H walls are used for strike placement.
+    Lower TFs are S/R reference only — not used here.
+
+    Four cases:
+      Case 3 — No Tier 1 wall on this side      → 2.0% floor
+      Case 1a — Nearest wall < 1%               → 2.0% floor (too close)
+      Case 1b — Nearest wall 1%–2%              → min(wall% + 1%, 2.5%)
+      Case 2  — Nearest wall > 2%               → 2.5% ceiling (deep, strong)
+
+    Returns dict with dist_pct, dist_pts, strike, case, wall_tf, wall_pct.
     """
-    walls = moat_stack["walls"]
+    # Collect Tier 1 walls on this side
+    tier1_walls = []
+    for tf in TIER1_TFS:
+        sig = tf_signals.get(tf, {})
+        if sig.get("side") == side and sig.get("direction") != "UNKNOWN":
+            tier1_walls.append(sig)
 
-    if not walls:
-        # No walls at all — minimum floor
-        dist_pct  = MIN_FLOOR_PCT
-        dist_pts  = int(round(spot * dist_pct / 100 / 50) * 50)
-        strike    = int(round((spot - dist_pts) / 50) * 50) if moat_stack["side"] == "PUT" \
-                    else int(round((spot + dist_pts) / 50) * 50)
-        return {
-            "dist_pts":     dist_pts,
-            "dist_pct":     round(dist_pct, 2),
-            "strike":       strike,
-            "floor_applied": True,
-            "threshold_wall": None,
-        }
+    # Sort by distance ascending (nearest first)
+    tier1_walls.sort(key=lambda w: w["dist_pct"])
 
-    cumulative   = 0.0
-    anchor_wall  = None
-
-    for wall in walls:
-        cumulative += wall["raw_score"]
-        norm_cum    = (cumulative / MAX_RAW) * 100
-        if norm_cum >= SAFE_DIST_THRESHOLD:
-            anchor_wall = wall
-            break
-
-    floor_applied = False
-    if anchor_wall is None:
-        # Threshold never reached — use minimum floor
-        dist_pct  = MIN_FLOOR_PCT
-        floor_applied = True
+    if not tier1_walls:
+        # Case 3 — no Tier 1 wall
+        dist_pct  = SD_FLOOR
+        case      = "NO_WALL"
+        wall_tf   = None
+        wall_pct  = None
+        label     = "No Tier 1 wall — 2.0% floor"
     else:
-        dist_pct = anchor_wall["dist_pct"]
+        nearest   = tier1_walls[0]
+        wall_pct  = nearest["dist_pct"]
+        wall_tf   = nearest["tf"]
 
-    dist_pct = max(dist_pct, MIN_FLOOR_PCT)   # hard floor always applies
+        if wall_pct < SD_WALL_TOO_CLOSE:
+            # Case 1a — wall too close
+            dist_pct = SD_FLOOR
+            case     = "WALL_TOO_CLOSE"
+            label    = f"{wall_tf.upper()} ST at {wall_pct:.2f}% — too close, 2.0% floor"
+
+        elif wall_pct <= SD_WALL_TOO_DEEP:
+            # Case 1b — sweet spot
+            dist_pct = min(wall_pct + SD_BUFFER, SD_CEILING)
+            case     = "WALL_USED"
+            label    = (f"{wall_tf.upper()} ST at {wall_pct:.2f}% + 1% buffer"
+                        + (" — capped at 2.5%" if dist_pct == SD_CEILING else ""))
+
+        else:
+            # Case 2 — wall deep beyond 2%
+            dist_pct = SD_CEILING
+            case     = "WALL_DEEP"
+            label    = f"{wall_tf.upper()} ST at {wall_pct:.2f}% — deep wall, 2.5% applied"
+
+    # Convert to points and strike
     dist_pts = int(round(spot * dist_pct / 100 / 50) * 50)
 
-    if moat_stack["side"] == "PUT":
+    if side == "PUT":
         strike = int(round((spot - dist_pts) / 50) * 50)
     else:
         strike = int(round((spot + dist_pts) / 50) * 50)
 
     return {
-        "dist_pts":      dist_pts,
-        "dist_pct":      round(dist_pct, 2),
-        "strike":        strike,
-        "floor_applied": floor_applied,
-        "threshold_wall": anchor_wall["tf"] if anchor_wall else None,
-    }
-
-
-# ─── Strike Validation ───────────────────────────────────────────────────────
-
-def validate_strike(moat_stack: dict, strike: float, spot: float) -> dict:
-    """
-    Audit how many ST walls stand between spot and the given strike.
-    Returns protection score and verdict for the ⭐ MAX strike.
-    """
-    side   = moat_stack["side"]
-    walls  = moat_stack["walls"]
-
-    # Walls that are between spot and strike (protecting the strike)
-    protecting = []
-    passed     = []
-
-    for wall in walls:
-        wp = wall["st_price"]
-        if side == "PUT":
-            # PUT: strike below spot. Wall protects if wall is above strike (between spot and strike)
-            if wp > strike:
-                protecting.append(wall)
-            else:
-                passed.append(wall)
-        else:
-            # CALL: strike above spot. Wall protects if wall is below strike
-            if wp < strike:
-                protecting.append(wall)
-            else:
-                passed.append(wall)
-
-    prot_raw  = sum(w["raw_score"] for w in protecting)
-    prot_norm = round((prot_raw / MAX_RAW) * 100, 1)
-
-    # Overly conservative: all walls protecting AND score is FORTRESS
-    all_protecting = len(passed) == 0 and len(protecting) == len(walls) and len(walls) > 0
-
-    if   prot_norm >= 75: verdict = "FORTRESS PROTECTED"
-    elif prot_norm >= 55: verdict = "WELL PROTECTED"
-    elif prot_norm >= 35: verdict = "ADEQUATELY PROTECTED"
-    elif prot_norm >= 20: verdict = "THINLY PROTECTED"
-    elif prot_norm >= 5:  verdict = "EXPOSED"
-    else:                 verdict = "STRUCTURALLY EXPOSED"
-
-    return {
-        "protecting_tfs":   [w["tf"] for w in protecting],
-        "passed_tfs":       [w["tf"] for w in passed],
-        "prot_raw":         round(prot_raw, 1),
-        "prot_norm":        prot_norm,
-        "verdict":          verdict,
-        "all_protecting":   all_protecting,
-        "wall_count":       len(walls),
-        "protecting_count": len(protecting),
+        "dist_pct":  round(dist_pct, 2),
+        "dist_pts":  dist_pts,
+        "strike":    strike,
+        "case":      case,
+        "wall_tf":   wall_tf,
+        "wall_pct":  wall_pct,
+        "label":     label,
+        "all_tier1_walls": tier1_walls,
     }
 
 
@@ -514,8 +485,6 @@ class SuperTrendEngine:
         prev_call_norm_eod: Optional[float] = None,
         open_put_norm:      Optional[float] = None,
         open_call_norm:     Optional[float] = None,
-        star_pe_strike:     Optional[float] = None,
-        star_ce_strike:     Optional[float] = None,
     ) -> dict:
 
         out = {}
@@ -562,21 +531,10 @@ class SuperTrendEngine:
         out["call_stack"] = call_stack
 
         # ── Safe distances ────────────────────────────────────────────────
-        put_dist  = compute_safe_distance(put_stack,  spot)
-        call_dist = compute_safe_distance(call_stack, spot)
+        put_dist  = compute_safe_distance(tf_signals, "PUT",  spot)
+        call_dist = compute_safe_distance(tf_signals, "CALL", spot)
         out["put_dist"]  = put_dist
         out["call_dist"] = call_dist
-
-        # ── Strike validation (for ⭐ MAX strikes) ────────────────────────
-        if star_pe_strike and star_pe_strike > 0:
-            out["put_validation"]  = validate_strike(put_stack,  star_pe_strike, spot)
-        else:
-            out["put_validation"]  = None
-
-        if star_ce_strike and star_ce_strike > 0:
-            out["call_validation"] = validate_strike(call_stack, star_ce_strike, spot)
-        else:
-            out["call_validation"] = None
 
         # ── Structural trajectory (Tier 1: daily/4h/2h) ───────────────────
         tier1_tfs   = ["daily", "4h", "2h"]
@@ -642,9 +600,8 @@ class SuperTrendEngine:
             "tf_signals": {}, "flip_tfs": [],
             "put_stack":  {"side":"PUT",  "walls":[], "wall_count":0, "raw_score":0, "normalised":0, "band":"BREACHED", "clusters":[]},
             "call_stack": {"side":"CALL", "walls":[], "wall_count":0, "raw_score":0, "normalised":0, "band":"BREACHED", "clusters":[]},
-            "put_dist":   {"dist_pts":0, "dist_pct":0, "strike":0, "floor_applied":True, "threshold_wall":None},
-            "call_dist":  {"dist_pts":0, "dist_pct":0, "strike":0, "floor_applied":True, "threshold_wall":None},
-            "put_validation": None, "call_validation": None,
+            "put_dist":   {"dist_pts":0,"dist_pct":0.0,"strike":0,"case":"NO_WALL","wall_tf":None,"wall_pct":None,"label":"No data","all_tier1_walls":[]},
+            "call_dist":  {"dist_pts":0,"dist_pct":0.0,"strike":0,"case":"NO_WALL","wall_tf":None,"wall_pct":None,"label":"No data","all_tier1_walls":[]},
             "structural_trajectory": {"put_label":"UNKNOWN","call_label":"UNKNOWN","flip_event":False,"flip_tfs":[],"kind":"structural","put_delta":None,"call_delta":None},
             "intraday_trajectory":   {"put_label":"UNKNOWN","call_label":"UNKNOWN","flip_event":False,"flip_tfs":[],"kind":"intraday","put_delta":None,"call_delta":None},
             "ic_shape": "SYMMETRIC",
