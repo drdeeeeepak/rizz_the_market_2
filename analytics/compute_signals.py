@@ -1,5 +1,7 @@
-# analytics/compute_signals.py — v8 (27 Apr 2026)
+# analytics/compute_signals.py — v9 (27 Apr 2026)
 # Dow Theory: single DowTheoryEngine().signals(df_1h, spot) call.
+# SuperTrend MTF added: SuperTrendEngine().signals(...) — Page 14.
+# Home score rescaled: 8 lenses, total max = 100 (Option B).
 # No frozen windows. No entry-day detection. One fetch, one compute.
 
 import json
@@ -18,12 +20,16 @@ from analytics.oi_scoring      import OIScoringEngine
 from analytics.vix_iv_regime   import VixIVRegimeEngine
 from analytics.market_profile  import MarketProfileEngine
 from analytics.dow_theory      import DowTheoryEngine
+from analytics.supertrend      import SuperTrendEngine
 from config import (
     BASELINE_OTM_PCT, WING_DISTANCE,
     BB_VIX_DIV_VIX, BB_VIX_DIV_BW,
     GEX_NEG_EXTRA, IV_SKEW_HIGH, IV_SKEW_PUT_EXTRA,
     GEX_FLIP_EXTRA, VRP_HIGH_POSITIVE, VRP_NEG_EXTRA,
     DUAL_FORTRESS_DIST_RED,
+    HOME_SCORE_MAX_OC, HOME_SCORE_MAX_RSI, HOME_SCORE_MAX_MP,
+    HOME_SCORE_MAX_BB, HOME_SCORE_MAX_VIX, HOME_SCORE_MAX_DOW,
+    HOME_SCORE_MAX_EMA, HOME_SCORE_MAX_ST,
 )
 
 log = logging.getLogger(__name__)
@@ -37,7 +43,10 @@ def compute_all_signals(
     vix_hist:   pd.DataFrame,
     chains:     dict,
     spot:       float,
-    nifty_1h:   pd.DataFrame = None,   # 20-day 1H for Dow Theory phase engine
+    nifty_1h:   pd.DataFrame = None,   # 20-day 1H for Dow Theory + ST proxy
+    nifty_30m:  pd.DataFrame = None,   # 30m for ST Tier 3
+    nifty_15m:  pd.DataFrame = None,   # 15m for ST Tier 3
+    nifty_5m:   pd.DataFrame = None,   # 5m for ST display only
 ) -> dict:
     sig = {}
 
@@ -62,14 +71,12 @@ def compute_all_signals(
         if nifty_1h is not None and not nifty_1h.empty:
             dow_raw = DowTheoryEngine().signals(nifty_1h.copy(), spot)
         else:
-            # 1H data not available — return safe empty signals
             log.warning("Dow Theory: 1H data not provided — using empty fallback")
             dow_raw = DowTheoryEngine()._empty_signals()
 
-        # Prefix all Dow keys with "dow_" for sig dict consistency
         sig.update({f"dow_{k}": v for k, v in dow_raw.items()})
 
-        # Also expose unprefixed for backward compat with old Page 00
+        # Unprefixed for backward compat with old Page 00
         sig["dow_structure"]  = dow_raw.get("structure", "MIXED")
         sig["dow_phase"]      = dow_raw.get("phase", "MX")
         sig["dow_narrative"]  = dow_raw.get("narrative", "")
@@ -154,12 +161,12 @@ def compute_all_signals(
         sig["bb_walk_up_count"]   = bb_sig.get("walk_up_count", 0)
         sig["bb_walk_down_count"] = bb_sig.get("walk_down_count", 0)
         sig["bb_kill_switches"]   = bb_sig.get("kill_switches", {})
-        sig["bb_home_score"]      = bb_sig.get("home_score", 10)
+        sig["bb_home_score"]      = min(bb_sig.get("home_score", HOME_SCORE_MAX_BB), HOME_SCORE_MAX_BB)
     except Exception as e:
         log.error("Bollinger: %s", e)
         sig.update({"bb_regime": "NEUTRAL_WALK", "bw_pct": 6.0,
                     "bb_vix_divergence": False, "bb_distance_put": 0,
-                    "bb_distance_call": 0, "bb_home_score": 10})
+                    "bb_distance_call": 0, "bb_home_score": HOME_SCORE_MAX_BB})
 
     # ── Page 10: Options Chain ─────────────────────────────────────────────
     try:
@@ -179,13 +186,14 @@ def compute_all_signals(
         sig["straddle_price"]     = oc_sig["straddle_price"]
         sig["oc_binding_ce"]      = oc_sig["synthesis"]["binding_ce"]
         sig["oc_binding_pe"]      = oc_sig["synthesis"]["binding_pe"]
-        sig["oc_home_score"]      = oc_sig["home_score"]
+        sig["oc_home_score"]      = min(oc_sig["home_score"], HOME_SCORE_MAX_OC)
     except Exception as e:
         log.error("Options Chain: %s", e)
         sig.update({"gex_total": 0, "gex_flip_level": 0, "call_wall": 0,
                     "put_wall": 0, "pcr": 1.0, "migration_detected": False,
                     "iv_skew": 0.0, "atm_iv": 12.0, "straddle_price": 0,
-                    "oc_binding_ce": 0, "oc_binding_pe": 0, "oc_home_score": 10})
+                    "oc_binding_ce": 0, "oc_binding_pe": 0,
+                    "oc_home_score": HOME_SCORE_MAX_OC // 2})
 
     # ── Page 10B: OI Scoring ───────────────────────────────────────────────
     try:
@@ -229,12 +237,12 @@ def compute_all_signals(
         sig["is_danger"]           = vix_sig.get("is_danger", False)
         sig["is_caution"]          = vix_sig.get("is_caution", False)
         sig["is_spike_resolving"]  = vix_sig.get("is_spike_resolving", False)
-        sig["vix_home_score"]      = vix_sig.get("home_score", 10)
+        sig["vix_home_score"]      = min(vix_sig.get("home_score", HOME_SCORE_MAX_VIX), HOME_SCORE_MAX_VIX)
     except Exception as e:
         log.error("VIX engine: %s", e)
         sig.update({"vix_zone": "STABLE_NORMAL", "vix_state": "STABLE_NORMAL",
                     "size_multiplier": 1.0, "vrp": 0.0, "ivp_1yr": 50,
-                    "vix_home_score": 10, "warnings": []})
+                    "vix_home_score": HOME_SCORE_MAX_VIX, "warnings": []})
 
     # ── Page 12: Market Profile ────────────────────────────────────────────
     try:
@@ -265,18 +273,93 @@ def compute_all_signals(
         sig["mp_initiative_both"] = mp_sig.get("initiative_both", False)
         sig["mp_ce_biwkly_dist"]  = mp_sig.get("ce_biwkly_dist", 400)
         sig["mp_pe_biwkly_dist"]  = mp_sig.get("pe_biwkly_dist", 400)
-        sig["mp_home_score"]      = mp_sig.get("home_score", 12)
+        sig["mp_home_score"]      = min(mp_sig.get("home_score", HOME_SCORE_MAX_MP), HOME_SCORE_MAX_MP)
     except Exception as e:
         log.error("Market Profile: %s", e)
         sig.update({"mp_nesting": "BALANCED", "mp_responsive": True,
                     "mp_behaviour": "NEUTRAL", "mp_initiative_both": False,
                     "mp_ce_anchor": spot+400, "mp_pe_anchor": spot-400,
-                    "mp_home_score": 12, "mp_ce_biwkly_dist": 400,
-                    "mp_pe_biwkly_dist": 400})
+                    "mp_home_score": HOME_SCORE_MAX_MP // 2,
+                    "mp_ce_biwkly_dist": 400, "mp_pe_biwkly_dist": 400})
+
+    # ── Page 14: SuperTrend MTF ────────────────────────────────────────────
+    try:
+        st_have_data = (
+            nifty_df is not None and not nifty_df.empty and
+            nifty_1h is not None and not nifty_1h.empty
+        )
+        if st_have_data:
+            # Pass ⭐ MAX strikes if already computed (will be None on first call)
+            # They will be populated after _build_lens_table runs below
+            st_raw = SuperTrendEngine().signals(
+                df_daily  = nifty_df.copy(),
+                df_1h     = nifty_1h.copy(),
+                df_30m    = nifty_30m.copy() if nifty_30m is not None and not nifty_30m.empty else pd.DataFrame(),
+                df_15m    = nifty_15m.copy() if nifty_15m is not None and not nifty_15m.empty else pd.DataFrame(),
+                df_5m     = nifty_5m.copy()  if nifty_5m  is not None and not nifty_5m.empty  else pd.DataFrame(),
+                spot      = spot,
+                prev_put_norm_eod  = sig.get("st_prev_put_norm_eod"),
+                prev_call_norm_eod = sig.get("st_prev_call_norm_eod"),
+                open_put_norm      = sig.get("st_open_put_norm"),
+                open_call_norm     = sig.get("st_open_call_norm"),
+                star_pe_strike     = None,   # validated after _build_lens_table
+                star_ce_strike     = None,
+            )
+        else:
+            log.warning("SuperTrend: insufficient data — using empty fallback")
+            st_raw = SuperTrendEngine()._empty_signals()
+
+        # Prefix all ST keys with "st_"
+        sig.update({f"st_{k}": v for k, v in st_raw.items()})
+        sig["st_home_score"] = min(st_raw.get("home_score", 0), HOME_SCORE_MAX_ST)
+        sig["st_ic_shape"]   = st_raw.get("ic_shape", "SYMMETRIC")
+
+    except Exception as e:
+        log.error("SuperTrend MTF: %s", e)
+        sig.update({
+            "st_home_score":   0,
+            "st_ic_shape":     "SYMMETRIC",
+            "st_lens_pe_dist": 0,
+            "st_lens_pe_pct":  0.0,
+            "st_lens_pe_strike": 0,
+            "st_lens_ce_dist": 0,
+            "st_lens_ce_pct":  0.0,
+            "st_lens_ce_strike": 0,
+            "st_put_stack":    {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
+            "st_call_stack":   {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
+            "st_flip_tfs":     [],
+        })
 
     _build_lens_table(sig, spot)
+
+    # ── Strike validation pass (after lens table built) ────────────────────
+    # Re-run ST validation now that ⭐ strikes are known
+    try:
+        if st_have_data and sig.get("st_put_stack") and sig.get("st_call_stack"):
+            star_pe = sig.get("final_put_short", 0)
+            star_ce = sig.get("final_call_short", 0)
+            if star_pe > 0:
+                sig["st_put_validation"] = _validate_st_strike(
+                    sig["st_put_stack"], star_pe, spot
+                )
+            if star_ce > 0:
+                sig["st_call_validation"] = _validate_st_strike(
+                    sig["st_call_stack"], star_ce, spot
+                )
+    except Exception as e:
+        log.error("ST strike validation: %s", e)
+
     _compute_master_score(sig)
     return sig
+
+
+def _validate_st_strike(stack: dict, strike: float, spot: float) -> dict:
+    """Thin wrapper — calls validate_strike from supertrend module."""
+    try:
+        from analytics.supertrend import validate_strike
+        return validate_strike(stack, strike, spot)
+    except Exception:
+        return {}
 
 
 def _build_lens_table(sig: dict, spot: float) -> None:
@@ -330,6 +413,12 @@ def _build_lens_table(sig: dict, spot: float) -> None:
     l6_pe = sig.get("mp_pe_biwkly_dist", int(round(2.25 * atr14 / 50) * 50))
     l6_ce = sig.get("mp_ce_biwkly_dist", int(round(2.25 * atr14 / 50) * 50))
 
+    # SuperTrend MTF lens row
+    l7_pe = sig.get("st_lens_pe_dist", 0)
+    l7_ce = sig.get("st_lens_ce_dist", 0)
+    # If ST produced no data, exclude from table (don't add a zero row)
+    st_has_data = l7_pe > 0 or l7_ce > 0
+
     lens_table = {
         "EMA (regime+moat+momentum)": {"pe": l1_pe, "ce": l1_ce},
         "RSI (weekly regime)":         {"pe": l2_pe, "ce": l2_ce},
@@ -338,7 +427,14 @@ def _build_lens_table(sig: dict, spot: float) -> None:
         "VIX / IV":                    {"pe": l5_pe, "ce": l5_ce},
         "Market Profile (biweekly)":   {"pe": l6_pe, "ce": l6_ce},
     }
+    if st_has_data:
+        lens_table["SuperTrend MTF"] = {"pe": l7_pe, "ce": l7_ce}
+
     sig["lens_table"] = lens_table
+
+    # ST floor warning flags for display
+    sig["st_pe_floor_applied"] = sig.get("st_put_dist", {}).get("floor_applied", False)
+    sig["st_ce_floor_applied"] = sig.get("st_call_dist", {}).get("floor_applied", False)
 
     all_pe = {n: v["pe"] for n, v in lens_table.items()}
     all_ce = {n: v["ce"] for n, v in lens_table.items()}
@@ -366,28 +462,39 @@ def _build_lens_table(sig: dict, spot: float) -> None:
 
 
 def _compute_master_score(sig: dict) -> None:
-    ema_sc = sig.get("home_score", 0)
-    bb_sc  = sig.get("bb_home_score", 10)
-    vx_sc  = sig.get("vix_home_score", 10)
-    mp_sc  = sig.get("mp_home_score",  12)
-    dow_sc = sig.get("dow_home_score", 2)
+    # All scores capped at their rescaled maximums (Option B)
+    ema_sc = min(sig.get("home_score", 0),            HOME_SCORE_MAX_EMA)
+    bb_sc  = min(sig.get("bb_home_score", 0),         HOME_SCORE_MAX_BB)
+    vx_sc  = min(sig.get("vix_home_score", 0),        HOME_SCORE_MAX_VIX)
+    mp_sc  = min(sig.get("mp_home_score",  0),        HOME_SCORE_MAX_MP)
+    dow_sc = min(sig.get("dow_home_score", 0),        HOME_SCORE_MAX_DOW)
+    st_sc  = min(sig.get("st_home_score",  0),        HOME_SCORE_MAX_ST)
+
     alignment = sig.get("mtf_alignment", sig.get("alignment", "MIXED"))
-    rsi_sc = (20 if alignment == "ALIGNED_BULL" else
-              18 if alignment == "ALIGNED_BULL_NEUTRAL" else
-              15 if alignment == "ALIGNED_BEAR" else
-               5 if "COUNTER" in alignment else 10)
+    rsi_raw = (
+        HOME_SCORE_MAX_RSI     if alignment == "ALIGNED_BULL" else
+        HOME_SCORE_MAX_RSI - 2 if alignment == "ALIGNED_BULL_NEUTRAL" else
+        HOME_SCORE_MAX_RSI - 4 if alignment == "ALIGNED_BEAR" else
+        HOME_SCORE_MAX_RSI // 4 if "COUNTER" in alignment else
+        HOME_SCORE_MAX_RSI // 2
+    )
     kills = sig.get("kill_switches", {})
-    if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"): rsi_sc = max(0, rsi_sc - 10)
-    if kills.get("RSI_REGIME_FLIP")     or kills.get("K1"): rsi_sc = max(0, rsi_sc - 5)
+    if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"):
+        rsi_raw = max(0, rsi_raw - min(10, HOME_SCORE_MAX_RSI // 2))
+    if kills.get("RSI_REGIME_FLIP")     or kills.get("K1"):
+        rsi_raw = max(0, rsi_raw - min(5,  HOME_SCORE_MAX_RSI // 4))
+    rsi_sc = min(rsi_raw, HOME_SCORE_MAX_RSI)
+
     if sig.get("BANKING_DAILY_COLLAPSE") or sig.get("sd6_collapse"):
         ema_sc = 0; rsi_sc = 0
-    if sig.get("is_danger"): vx_sc = max(0, vx_sc - 5)
-    master = min(100, ema_sc + rsi_sc + bb_sc + vx_sc + mp_sc + dow_sc)
+    if sig.get("is_danger"): vx_sc = max(0, vx_sc - 3)
+
+    master = min(100, ema_sc + rsi_sc + bb_sc + vx_sc + mp_sc + dow_sc + st_sc)
     sig["master_score"]   = master
     sig["master_verdict"] = (
-        "ENTER — high confidence"   if master >= 75 else
+        "ENTER — high confidence"      if master >= 75 else
         "ENTER — proceed with caution" if master >= 55 else
-        "MARGINAL — reduce size"    if master >= 40 else
+        "MARGINAL — reduce size"       if master >= 40 else
         "STAND ASIDE"
     )
     sig["master_colour"] = (
@@ -397,12 +504,13 @@ def _compute_master_score(sig: dict) -> None:
         "#dc2626"
     )
     sig["_lens_scores"] = {
-        "EMA (P1+2)":  ema_sc,
-        "RSI (P5-8)":  rsi_sc,
-        "Bollinger":   bb_sc,
-        "VIX/IV":      vx_sc,
-        "Mkt Profile": mp_sc,
-        "Dow Theory":  dow_sc,
+        "EMA (P1+2)":       ema_sc,
+        "RSI (P5-8)":       rsi_sc,
+        "Bollinger":        bb_sc,
+        "VIX/IV":           vx_sc,
+        "Mkt Profile":      mp_sc,
+        "Dow Theory":       dow_sc,
+        "SuperTrend MTF":   st_sc,
     }
 
 
@@ -428,5 +536,10 @@ def save_signals(sig: dict) -> None:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot, nifty_1h=None):
-    return compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot, nifty_1h=nifty_1h)
+def get_cached_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot,
+                       nifty_1h=None, nifty_30m=None, nifty_15m=None, nifty_5m=None):
+    return compute_all_signals(
+        nifty_df, stock_dfs, vix_live, vix_hist, chains, spot,
+        nifty_1h=nifty_1h, nifty_30m=nifty_30m,
+        nifty_15m=nifty_15m, nifty_5m=nifty_5m,
+    )
