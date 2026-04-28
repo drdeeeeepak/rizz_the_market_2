@@ -249,7 +249,7 @@ ui.section_header("Section 4 — Structural Level Map",
 nifty_1h_full = st.session_state.get("nifty_1h", pd.DataFrame())
 
 if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
-    df_chart = nifty_1h_full.tail(30).copy()
+    df_chart = nifty_1h_full.tail(50).copy()
     if not isinstance(df_chart.index, pd.DatetimeIndex):
         df_chart.index = pd.to_datetime(df_chart.index)
 
