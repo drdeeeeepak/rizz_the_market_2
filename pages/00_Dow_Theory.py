@@ -286,9 +286,6 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
         line_width=1,
     ))
 
-    x0 = df_chart.index[0]
-    x1 = df_chart.index[-1]
-
     line_levels = [
         (call_breach, "Call Breach +50", "#7f1d1d", "dash",  1.5),
         (ph_last,     "PH_last",         "#dc2626", "solid", 2.0),
@@ -302,11 +299,13 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
         if item is None: continue
         level, name, colour, dash, width = item
         if level <= 0: continue
-        fig.add_shape(type="line", x0=x0, x1=x1, y0=level, y1=level,
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper",
+                      y0=level, y1=level, yref="y",
                       line=dict(color=colour, dash=dash, width=width))
-        fig.add_annotation(x=x1, y=level, text=f"  {name}: {level:,.0f}",
+        fig.add_annotation(x=1.01, xref="paper", y=level, yref="y",
+                           text=f"{name}: {level:,.0f}",
                            showarrow=False, xanchor="left",
-                           font=dict(color=colour, size=10))
+                           font=dict(color=colour, size=9))
 
     if call_breach > 0 and prox_pts > 0:
         fig.add_hrect(y0=call_breach - prox_pts, y1=call_breach + prox_pts,
@@ -318,7 +317,7 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
         fig.add_hrect(y0=pl_last, y1=ph_last,
                       fillcolor="#dcfce7", opacity=0.07, line_width=0)
 
-    swing_range = (ph_last - pl_last) if ph_last > pl_last else 200
+    swing_range   = (ph_last - pl_last) if ph_last > pl_last else 200
     marker_offset = swing_range * 0.012
 
     pivot_markers = [
@@ -345,9 +344,13 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
     y_max  = max(all_y) * 1.004 if all_y else df_chart["high"].max()
 
     fig.update_layout(
-        height=460, margin=dict(l=10, r=200, t=20, b=20),
-        yaxis=dict(range=[y_min, y_max], title="Nifty", tickformat=",.0f"),
-        xaxis=dict(rangeslider=dict(visible=False), tickformat="%d %b %H:%M"),
+        height=500, margin=dict(l=10, r=160, t=30, b=40),
+        yaxis=dict(range=[y_min, y_max], title="Nifty", tickformat=",.0f",
+                   side="right"),
+        xaxis=dict(rangeslider=dict(visible=False),
+                   tickformat="%d %b\n%H:%M",
+                   tickangle=0,
+                   type="category"),
         plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True)
