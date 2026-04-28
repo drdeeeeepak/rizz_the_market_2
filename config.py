@@ -1,6 +1,8 @@
 # config.py — premiumdecay / nifty_options_dashboard
 # Single source of truth for ALL strategy constants.
 # Dow Theory updated: 1H single-window phase system — 27 Apr 2026
+# SuperTrend MTF added — 27 Apr 2026
+# Home score rescaled (Option B): total max = 100 across 8 lenses — 27 Apr 2026
 
 # ─── Universe ────────────────────────────────────────────────────────────────
 NIFTY_INDEX_TOKEN = "256265"
@@ -118,6 +120,51 @@ VIX_SPIKE_MODERATE=0.30; VIX_SPIKE_EXTREME=0.50; VIX_SPIKE_BUF_MULT=2.0; VIX_SPI
 MP_BUCKET=50; MP_VA_PCT=0.70; MP_IC_WIDTH_MIN=1.5
 MP_POC_CLOSE_DIST=200; MP_RESPONSIVE_RED=100; MP_INITIATIVE_EXTRA=200
 MP_K1_EXTRA=200; MP_K3_ATR_MULT=2.0; MP_PARTIAL_EXTRA=100
+
+# ─── Page 14: SuperTrend MTF ─────────────────────────────────────────────────
+#
+# Indicator: SuperTrend(21, 2) on 6 scored TFs + 5m display-only
+# Proxy TFs: 2H and 4H resampled from 1H OHLCV inside supertrend.py
+# Measuring unit: % of CMP throughout (not ATR)
+#
+# TF weights (total = 90, max raw score = 180 at all DEEP 2.0×)
+ST_PERIOD          = 21
+ST_MULTIPLIER      = 2.0
+ST_TF_WEIGHTS      = {"daily":30, "4h":20, "2h":15, "1h":12, "30m":8, "15m":5}
+
+# Depth thresholds (% of CMP)
+ST_DEPTH_DEEP        = 3.0   # > 3.0%  → DEEP
+ST_DEPTH_COMFORTABLE = 2.0   # 2.0-3.0% → COMFORTABLE
+ST_DEPTH_ADEQUATE    = 1.0   # 1.0-2.0% → ADEQUATE
+ST_DEPTH_THIN        = 0.5   # 0.5-1.0% → THIN
+                              # < 0.5%   → CRITICAL
+
+# Depth multipliers
+ST_MULT_DEEP        = 2.0
+ST_MULT_COMFORTABLE = 1.5
+ST_MULT_ADEQUATE    = 1.0
+ST_MULT_THIN        = 0.5
+ST_MULT_CRITICAL    = 0.2
+
+# Safe distance: cumulative normalised score threshold (0-100)
+ST_SAFE_DIST_THRESHOLD = 50.0
+
+# Minimum distance floor when threshold never reached
+ST_MIN_FLOOR_PCT = 2.0
+
+# Cluster rule: adjacent TF lines within this % CMP = single wall bracket
+ST_CLUSTER_PCT = 0.5
+
+# IC shape skew threshold (normalised score difference between sides)
+ST_SHAPE_SKEW_THRESHOLD = 25.0
+
+# Home score max (rescaled from 10 → 9 under Option B)
+ST_HOME_SCORE_MAX = 9
+
+# Data fetch windows
+ST_30M_DAYS = 10   # 30m candles: 10 trading days × 12 = 120 candles
+ST_15M_DAYS = 5    # 15m candles: 5 trading days × 24 = 120 candles
+ST_5M_DAYS  = 2    # 5m candles: display only, 2 days × 72 = 144 candles
 
 # ─── ATR / Breach / Survival ─────────────────────────────────────────────────
 ATR_PERIOD=14
@@ -249,6 +296,9 @@ TTL_OPTIONS    = 30
 TTL_PRICE      = 60
 TTL_DAILY      = 86400
 TTL_1H         = 3600
+TTL_30M        = 1800    # 30 minutes — SuperTrend Tier 3
+TTL_15M        = 900     # 15 minutes — SuperTrend Tier 3
+TTL_5M         = 300     # 5 minutes  — SuperTrend display only
 EXPIRY_WEEKDAY = 1
 
 IVP_SMALL = 25
@@ -277,3 +327,17 @@ GEO_VOL_MULT=2.0; GEO_ADR=0.04; GEO_EP_GAP=0.005
 GEO_VOL_SMA_PERIOD=50; GEO_MAX_RESULTS=20; GEO_MIN_RR=2.0
 GEO_MARKET_HEALTH_BULL=300; GEO_MARKET_HEALTH_SELECT=200
 WATCHLIST_DIR="data/watchlists"; PARQUET_DIR="data/parquet"
+
+# ─── Home Score Rescaling (Option B) — 8 lenses, total max = 100 ─────────────
+# Previous max per lens:  OC=25, RSI=20, MP=20, BB=15, VIX=10, Dow=5, EMA=5
+# ST adds 9 pts. Rescaled so total max = 100.
+# Options Chain: 22, RSI: 18, Market Profile: 18, Bollinger: 14,
+# VIX/IV: 9, Dow Theory: 5, EMA: 5, SuperTrend MTF: 9  → Total: 100
+HOME_SCORE_MAX_OC  = 22
+HOME_SCORE_MAX_RSI = 18
+HOME_SCORE_MAX_MP  = 18
+HOME_SCORE_MAX_BB  = 14
+HOME_SCORE_MAX_VIX = 9
+HOME_SCORE_MAX_DOW = 5
+HOME_SCORE_MAX_EMA = 5
+HOME_SCORE_MAX_ST  = 9
