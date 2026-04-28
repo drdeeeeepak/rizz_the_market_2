@@ -244,12 +244,12 @@ st.divider()
 # SECTION 4 — LEVEL CHART
 # ══════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 4 — Structural Level Map",
-                  "Last 5 days of 1H candles · Pivot markers · Breach levels · Proximity zones")
+                  "Last 10 days of 1H candles · Pivot markers · Breach levels · Proximity zones")
 
 nifty_1h_full = st.session_state.get("nifty_1h", pd.DataFrame())
 
 if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
-    df_chart = nifty_1h_full.tail(50).copy()
+    df_chart = nifty_1h_full.tail(60).copy()
     if not isinstance(df_chart.index, pd.DatetimeIndex):
         df_chart.index = pd.to_datetime(df_chart.index)
 
@@ -352,7 +352,7 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        f"Last 5 trading days · {len(df_chart)} candles of 1H OHLCV · "
+        f"Last 10 trading days · {len(df_chart)} candles of 1H OHLCV · "
         f"▼ = pivot high · ▲ = pivot low · green band = structural range · "
         f"dashed = breach levels · shaded = proximity zones"
     )
