@@ -31,8 +31,6 @@ ic_shape       = sig.get("st_ic_shape",   "SYMMETRIC")
 home_score     = sig.get("st_home_score", 0)
 st_traj        = sig.get("st_structural_trajectory", {})
 it_traj        = sig.get("st_intraday_trajectory",   {})
-put_val        = sig.get("st_put_validation",  {})
-call_val       = sig.get("st_call_validation", {})
 tf5m           = sig.get("st_tf_5m_display",   {})
 spot           = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
 if spot == 0:
@@ -246,10 +244,10 @@ with col_call:
 st.divider()
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — ST LENS ROW (Safe Distance Output)
+# SECTION 3 — ST SAFE DISTANCE
 # ═════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 3 — ST Safe Distance",
-                  "Cumulative score threshold (50/100) determines distance · 2.0% CMP floor if threshold not reached")
+                  "Tier 1 walls only (Daily / 4H / 2H) · 1% buffer · 2.0%–2.5% output range")
 
 pe_dist   = sig.get("st_lens_pe_dist",   0)
 pe_pct    = sig.get("st_lens_pe_pct",    0.0)
@@ -257,108 +255,74 @@ pe_strike = sig.get("st_lens_pe_strike", 0)
 ce_dist   = sig.get("st_lens_ce_dist",   0)
 ce_pct    = sig.get("st_lens_ce_pct",    0.0)
 ce_strike = sig.get("st_lens_ce_strike", 0)
-pe_floor  = sig.get("st_pe_floor_applied", False)
-ce_floor  = sig.get("st_ce_floor_applied", False)
+pe_label  = sig.get("st_pe_label", "—")
+ce_label  = sig.get("st_ce_label", "—")
+pe_case   = sig.get("st_pe_case", "NO_WALL")
+ce_case   = sig.get("st_ce_case", "NO_WALL")
 
-# Threshold wall info
-pe_thresh_wall = sig.get("st_put_dist", {}).get("threshold_wall", None)
-ce_thresh_wall = sig.get("st_call_dist", {}).get("threshold_wall", None)
+CASE_COL = {
+    "WALL_USED":       "#16a34a",
+    "WALL_TOO_CLOSE":  "#d97706",
+    "WALL_DEEP":       "#2563eb",
+    "NO_WALL":         "#94a3b8",
+}
 
-pe_sub = "⚠️ Floor applied" if pe_floor else ("Threshold wall: " + str(pe_thresh_wall or "—"))
-ce_sub = "⚠️ Floor applied" if ce_floor else ("Threshold wall: " + str(ce_thresh_wall or "—"))
-
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, col_div, c4, c5, c6 = st.columns([2, 1, 1, 0.1, 2, 1, 1])
 with c1:
-    ui.metric_card("PE Distance", f"{pe_dist:,} pts", sub=pe_sub)
+    pc = CASE_COL.get(pe_case, "#94a3b8")
+    st.markdown(
+        f"<div style='border-left:4px solid {pc};padding:8px 12px;border-radius:4px;"
+        f"background:{pc}12;'>"
+        f"<div style='font-size:11px;color:#64748b;font-weight:600;'>PUT SIDE — BASIS</div>"
+        f"<div style='font-size:13px;color:{pc};font-weight:700;margin-top:2px;'>{pe_label}</div>"
+        f"</div>", unsafe_allow_html=True
+    )
 with c2:
-    ui.metric_card("PE % OTM", f"{pe_pct:.2f}%",
-                   color="amber" if pe_floor else "green")
+    ui.metric_card("PE Dist", f"{pe_dist:,} pts", sub=f"{pe_pct:.2f}% CMP", color="green")
 with c3:
-    ui.metric_card("PE Strike", f"~{pe_strike:,}",
-                   sub="ST structural floor", color="green")
-with c4:
-    ui.metric_card("CE Distance", f"{ce_dist:,} pts", sub=ce_sub)
-with c5:
-    ui.metric_card("CE % OTM", f"{ce_pct:.2f}%",
-                   color="amber" if ce_floor else "red")
-with c6:
-    ui.metric_card("CE Strike", f"~{ce_strike:,}",
-                   sub="ST structural ceiling", color="red")
+    ui.metric_card("PE Strike", f"~{pe_strike:,}", color="green")
 
-if pe_floor:
-    st.warning("⚠️ PUT side: Cumulative ST score never reached 50/100 threshold. "
-               "2.0% CMP minimum floor applied. No genuine structural wall found on PUT side.")
-if ce_floor:
-    st.warning("⚠️ CALL side: Cumulative ST score never reached 50/100 threshold. "
-               "2.0% CMP minimum floor applied. No genuine structural wall found on CALL side.")
+with c4:
+    cc = CASE_COL.get(ce_case, "#94a3b8")
+    st.markdown(
+        f"<div style='border-left:4px solid {cc};padding:8px 12px;border-radius:4px;"
+        f"background:{cc}12;'>"
+        f"<div style='font-size:11px;color:#64748b;font-weight:600;'>CALL SIDE — BASIS</div>"
+        f"<div style='font-size:13px;color:{cc};font-weight:700;margin-top:2px;'>{ce_label}</div>"
+        f"</div>", unsafe_allow_html=True
+    )
+with c5:
+    ui.metric_card("CE Dist", f"{ce_dist:,} pts", sub=f"{ce_pct:.2f}% CMP", color="red")
+with c6:
+    ui.metric_card("CE Strike", f"~{ce_strike:,}", color="red")
 
 st.divider()
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — STRIKE VALIDATION
+# SECTION 4 — ST STRIKES
 # ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 4 — Strike Validation",
-                  "How many ST walls protect the current ⭐ MAX strikes from other lenses")
+ui.section_header("Section 4 — ST Strikes",
+                  "ST-derived strikes only · Participates in Home lens table MAX")
 
-star_pe = sig.get("final_put_short",  0)
-star_ce = sig.get("final_call_short", 0)
-
-VERDICT_COL = {
-    "FORTRESS PROTECTED":   "#16a34a",
-    "WELL PROTECTED":       "#2563eb",
-    "ADEQUATELY PROTECTED": "#d97706",
-    "THINLY PROTECTED":     "#ea580c",
-    "EXPOSED":              "#dc2626",
-    "STRUCTURALLY EXPOSED": "#7f1d1d",
-}
-
-def _render_validation(val: dict, strike: float, leg: str, leg_col: str):
-    if not val:
-        st.info(f"Strike validation not available for {leg} leg.")
-        return
-
-    prot_tfs  = val.get("protecting_tfs", [])
-    pass_tfs  = val.get("passed_tfs", [])
-    norm      = val.get("prot_norm", 0.0)
-    verdict   = val.get("verdict", "—")
-    all_prot  = val.get("all_protecting", False)
-    vc        = VERDICT_COL.get(verdict, "#94a3b8")
-
-    walls_str  = ", ".join([t.upper() for t in prot_tfs]) if prot_tfs else "None"
-    passed_str = ", ".join([t.upper() for t in pass_tfs]) if pass_tfs else "None"
-
+s4c1, s4c2 = st.columns(2)
+with s4c1:
     st.markdown(
-        f"<div style='border:1px solid {leg_col};border-radius:8px;padding:14px;'>"
-        f"<div style='font-size:13px;font-weight:700;color:{leg_col};margin-bottom:8px;'>"
-        f"{leg} SHORT at {strike:,}</div>"
-        f"<div style='background:{vc}18;border-left:3px solid {vc};"
-        f"padding:6px 12px;border-radius:4px;margin-bottom:8px;'>"
-        f"<span style='font-size:13px;font-weight:700;color:{vc};'>{verdict}</span>"
-        f"&nbsp;&nbsp;<span style='font-size:12px;color:#334155;'>Protection: {norm:.1f}/100</span>"
-        f"</div>"
-        f"<div style='font-size:12px;color:#334155;margin-bottom:4px;'>"
-        f"✅ Walls protecting: <b>{walls_str}</b></div>"
-        f"<div style='font-size:12px;color:#64748b;'>"
-        f"⚪ Walls already passed: <b>{passed_str}</b></div>",
-        unsafe_allow_html=True
+        f"<div style='border:2px solid #16a34a;border-radius:10px;padding:16px;text-align:center;'>"
+        f"<div style='font-size:12px;font-weight:600;color:#64748b;'>ST PE SHORT STRIKE</div>"
+        f"<div style='font-size:28px;font-weight:800;color:#16a34a;margin:6px 0;'>~{pe_strike:,}</div>"
+        f"<div style='font-size:12px;color:#334155;'>{pe_dist:,} pts below spot · {pe_pct:.2f}% OTM</div>"
+        f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>{pe_label}</div>"
+        f"</div>", unsafe_allow_html=True
     )
-
-    if all_prot:
-        st.markdown(
-            "<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:4px;"
-            "padding:6px 10px;margin-top:8px;font-size:11px;color:#16a34a;font-weight:600;'>"
-            "ℹ️ All ST walls protecting this strike. Strike may be tightened without losing structural protection.</div>",
-            unsafe_allow_html=True
-        )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-vcol1, vcol2 = st.columns(2)
-with vcol1:
-    _render_validation(put_val, star_pe, "PE", "#16a34a")
-with vcol2:
-    _render_validation(call_val, star_ce, "CE", "#dc2626")
+with s4c2:
+    st.markdown(
+        f"<div style='border:2px solid #dc2626;border-radius:10px;padding:16px;text-align:center;'>"
+        f"<div style='font-size:12px;font-weight:600;color:#64748b;'>ST CE SHORT STRIKE</div>"
+        f"<div style='font-size:28px;font-weight:800;color:#dc2626;margin:6px 0;'>~{ce_strike:,}</div>"
+        f"<div style='font-size:12px;color:#334155;'>{ce_dist:,} pts above spot · {ce_pct:.2f}% OTM</div>"
+        f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>{ce_label}</div>"
+        f"</div>", unsafe_allow_html=True
+    )
 
 st.divider()
 

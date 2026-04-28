@@ -244,58 +244,150 @@ st.divider()
 # SECTION 4 — LEVEL CHART
 # ══════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 4 — Structural Level Map",
-                  "Pivots · Breach levels · Proximity zones · Current spot")
+                  "Last 5 days of 1H candles · Pivot markers · Breach levels · Proximity zones")
 
-if ph_last > 0 and pl_last > 0:
+nifty_1h_full = st.session_state.get("nifty_1h", pd.DataFrame())
+
+if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
+    df_chart = nifty_1h_full.tail(30).copy()
+    if not isinstance(df_chart.index, pd.DatetimeIndex):
+        df_chart.index = pd.to_datetime(df_chart.index)
+
+    ph_last_ts = sig.get("dow_ph_last_ts", "")
+    ph_prev_ts = sig.get("dow_dow_ph_prev_ts", sig.get("dow_ph_prev_ts", ""))
+    pl_last_ts = sig.get("dow_pl_last_ts", "")
+    pl_prev_ts = sig.get("dow_dow_pl_prev_ts", sig.get("dow_pl_prev_ts", ""))
+
+    def _find_pivot_bar(df, ts_str, col):
+        if not ts_str:
+            return None, None
+        try:
+            ts = pd.to_datetime(ts_str)
+            diffs = (df.index - ts).abs()
+            idx   = diffs.argmin()
+            return df.index[idx], float(df[col].iloc[idx])
+        except Exception:
+            return None, None
+
+    ph_last_x, ph_last_y = _find_pivot_bar(df_chart, ph_last_ts, "high")
+    ph_prev_x, ph_prev_y = _find_pivot_bar(df_chart, ph_prev_ts, "high")
+    pl_last_x, pl_last_y = _find_pivot_bar(df_chart, pl_last_ts, "low")
+    pl_prev_x, pl_prev_y = _find_pivot_bar(df_chart, pl_prev_ts, "low")
+
     fig = go.Figure()
 
-    all_levels = [
-        (call_breach, "Call Breach (+50 pts)",     "#dc2626", "dash",  2),
-        (ph_last,     "PH_last (LH/HH)",           "#f97316", "solid", 2),
-        (ph_prev,     "PH_prev (prior high)",       "#fb923c", "dot",   1) if ph_prev>0 else None,
-        (spot,        "Current Spot",               "#7c3aed", "dot",   2) if spot>0   else None,
-        (pl_last,     "PL_last (LL/HL)",            "#16a34a", "solid", 2),
-        (pl_prev,     "PL_prev (prior low)",        "#4ade80", "dot",   1) if pl_prev>0 else None,
-        (put_breach,  "Put Breach (−50 pts)",       "#15803d", "dash",  2),
+    fig.add_trace(go.Candlestick(
+        x=df_chart.index,
+        open=df_chart["open"], high=df_chart["high"],
+        low=df_chart["low"],   close=df_chart["close"],
+        name="Nifty 1H",
+        increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
+        increasing_fillcolor="#16a34a",  decreasing_fillcolor="#dc2626",
+        line_width=1,
+    ))
+
+    x0 = df_chart.index[0]
+    x1 = df_chart.index[-1]
+
+    line_levels = [
+        (call_breach, "Call Breach +50", "#7f1d1d", "dash",  1.5),
+        (ph_last,     "PH_last",         "#dc2626", "solid", 2.0),
+        (ph_prev,     "PH_prev",         "#f87171", "dot",   1.5) if ph_prev > 0 else None,
+        (spot,        "Spot",            "#7c3aed", "dot",   1.5) if spot > 0   else None,
+        (pl_last,     "PL_last",         "#16a34a", "solid", 2.0),
+        (pl_prev,     "PL_prev",         "#4ade80", "dot",   1.5) if pl_prev > 0 else None,
+        (put_breach,  "Put Breach -50",  "#14532d", "dash",  1.5),
     ]
+    for item in line_levels:
+        if item is None: continue
+        level, name, colour, dash, width = item
+        if level <= 0: continue
+        fig.add_shape(type="line", x0=x0, x1=x1, y0=level, y1=level,
+                      line=dict(color=colour, dash=dash, width=width))
+        fig.add_annotation(x=x1, y=level, text=f"  {name}: {level:,.0f}",
+                           showarrow=False, xanchor="left",
+                           font=dict(color=colour, size=10))
 
-    y_vals = [v[0] for v in all_levels if v and v[0]>0]
-    y_min  = min(y_vals)*0.997 if y_vals else 22000
-    y_max  = max(y_vals)*1.003 if y_vals else 26000
+    if call_breach > 0 and prox_pts > 0:
+        fig.add_hrect(y0=call_breach - prox_pts, y1=call_breach + prox_pts,
+                      fillcolor="#fee2e2", opacity=0.20, line_width=0)
+    if put_breach > 0 and prox_pts > 0:
+        fig.add_hrect(y0=put_breach - prox_pts, y1=put_breach + prox_pts,
+                      fillcolor="#fef9c3", opacity=0.20, line_width=0)
+    if pl_last > 0 and ph_last > 0:
+        fig.add_hrect(y0=pl_last, y1=ph_last,
+                      fillcolor="#dcfce7", opacity=0.07, line_width=0)
 
+    swing_range = (ph_last - pl_last) if ph_last > pl_last else 200
+    marker_offset = swing_range * 0.012
+
+    pivot_markers = [
+        (ph_last_x, ph_last_y, "triangle-down", "#dc2626", "PH_last", True),
+        (ph_prev_x, ph_prev_y, "triangle-down", "#f87171", "PH_prev", True),
+        (pl_last_x, pl_last_y, "triangle-up",   "#16a34a", "PL_last", False),
+        (pl_prev_x, pl_prev_y, "triangle-up",   "#4ade80", "PL_prev", False),
+    ]
+    for px, py, sym, col, name, is_high in pivot_markers:
+        if px is None or py is None:
+            continue
+        marker_y = py + marker_offset if is_high else py - marker_offset
+        fig.add_trace(go.Scatter(
+            x=[px], y=[marker_y], mode="markers+text",
+            marker=dict(symbol=sym, size=12, color=col),
+            text=[name],
+            textposition="top center" if is_high else "bottom center",
+            textfont=dict(size=9, color=col),
+            showlegend=False,
+        ))
+
+    all_y = [v[0] for v in line_levels if v and v[0] > 0]
+    y_min  = min(all_y) * 0.996 if all_y else df_chart["low"].min()
+    y_max  = max(all_y) * 1.004 if all_y else df_chart["high"].max()
+
+    fig.update_layout(
+        height=460, margin=dict(l=10, r=200, t=20, b=20),
+        yaxis=dict(range=[y_min, y_max], title="Nifty", tickformat=",.0f"),
+        xaxis=dict(rangeslider=dict(visible=False), tickformat="%d %b %H:%M"),
+        plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Last 5 trading days · {len(df_chart)} candles of 1H OHLCV · "
+        f"▼ = pivot high · ▲ = pivot low · green band = structural range · "
+        f"dashed = breach levels · shaded = proximity zones"
+    )
+
+elif ph_last > 0 and pl_last > 0:
+    # Pivot data exists but no 1H df available — horizontal lines fallback
+    fig = go.Figure()
+    all_levels = [
+        (call_breach, "Call Breach (+50)", "#dc2626", "dash",  2),
+        (ph_last,     "PH_last",           "#f97316", "solid", 2),
+        (ph_prev,     "PH_prev",           "#fb923c", "dot",   1) if ph_prev > 0 else None,
+        (spot,        "Current Spot",      "#7c3aed", "dot",   2) if spot > 0   else None,
+        (pl_last,     "PL_last",           "#16a34a", "solid", 2),
+        (pl_prev,     "PL_prev",           "#4ade80", "dot",   1) if pl_prev > 0 else None,
+        (put_breach,  "Put Breach (-50)",  "#15803d", "dash",  2),
+    ]
+    y_vals = [v[0] for v in all_levels if v and v[0] > 0]
+    y_min  = min(y_vals) * 0.997 if y_vals else 22000
+    y_max  = max(y_vals) * 1.003 if y_vals else 26000
     for item in all_levels:
         if item is None: continue
         level, name, colour, dash, width = item
         if level <= 0: continue
         fig.add_hline(y=level, line_color=colour, line_dash=dash, line_width=width,
                       annotation_text=f"{name}: {level:,.0f}",
-                      annotation_position="right",
-                      annotation_font_color=colour)
-
-    # Structural range
-    if pl_last>0 and ph_last>0:
-        fig.add_hrect(y0=pl_last, y1=ph_last, fillcolor="#dcfce7", opacity=0.10,
-                      annotation_text="Structural Range", annotation_position="top left")
-
-    # Proximity zones
-    if call_breach>0:
-        fig.add_hrect(y0=call_breach-prox_pts, y1=call_breach+prox_pts,
-                      fillcolor="#fee2e2", opacity=0.20,
-                      annotation_text=f"Call proximity ±{prox_pts:.0f}",
-                      annotation_position="top right")
-    if put_breach>0:
-        fig.add_hrect(y0=put_breach-prox_pts, y1=put_breach+prox_pts,
-                      fillcolor="#fef9c3", opacity=0.20,
-                      annotation_text=f"Put proximity ±{prox_pts:.0f}",
-                      annotation_position="bottom right")
-
+                      annotation_position="right", annotation_font_color=colour)
     fig.update_layout(
-        height=400, margin=dict(l=0,r=220,t=20,b=20),
-        yaxis=dict(range=[y_min,y_max], title="Nifty Level", tickformat=",.0f"),
+        height=350, margin=dict(l=0, r=220, t=20, b=20),
+        yaxis=dict(range=[y_min, y_max], title="Nifty Level", tickformat=",.0f"),
         xaxis=dict(visible=False),
         plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("1H candle data unavailable — level lines only. Open Home page first to load candles.")
+
 else:
     st.info("Pivot levels not yet computed — open Home page first.")
 
