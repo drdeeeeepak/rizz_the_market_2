@@ -1,8 +1,5 @@
-# Home.py — premiumdecay v8 (27 Apr 2026)
-# SuperTrend MTF integrated: fetches 15m/30m/5m, passes to compute_all_signals.
-# Home score rescaled to 100 across 8 lenses (Option B).
-# ST cascade flip shown as kill switch banner.
-
+# Home.py — premiumdecay v5
+# Position Manager · Multi-Lens Integrated Assessment · Final Strike Suggestion
 import streamlit as st
 import datetime, pytz, json
 import pandas as pd
@@ -10,23 +7,25 @@ from pathlib import Path
 
 st.set_page_config(page_title="premiumdecay · Home", layout="wide", page_icon="📊")
 
+# ── Mode detection ────────────────────────────────────────────────────────────
 def _ist():
     return datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
 
 def _mode():
     n = _ist(); wd = n.weekday(); t = n.hour * 60 + n.minute
-    if wd >= 5:                  return "PLANNING"
-    if 555 <= t < 9*60+15:       return "PRE_MARKET"
+    if wd >= 5:             return "PLANNING"
+    if 555 <= t <= 930:     return "PRE_MARKET"
+    if 555 <= t <= 930:     return "PRE_MARKET"
     if 9*60+15 <= t <= 15*60+30: return "LIVE"
-    if 15*60+30 < t <= 18*60:    return "TRANSITION"
+    if 15*60+30 < t <= 18*60:   return "TRANSITION"
     return "PLANNING"
 
 MODE = _mode()
 _ML = {
-    "LIVE":       ("🟢", "LIVE",                      "#16a34a"),
-    "TRANSITION": ("🟡", "TRANSITION · EOD computing", "#d97706"),
-    "PRE_MARKET": ("🌅", "PRE-MARKET · Gap check",    "#7c3aed"),
-    "PLANNING":   ("🌙", "PLANNING MODE",              "#2563eb"),
+    "LIVE":       ("🟢", "LIVE",                     "#16a34a"),
+    "TRANSITION": ("🟡", "TRANSITION · EOD computing","#d97706"),
+    "PRE_MARKET": ("🌅", "PRE-MARKET · Gap check",   "#7c3aed"),
+    "PLANNING":   ("🌙", "PLANNING MODE",             "#2563eb"),
 }
 icon, mode_txt, mode_col = _ML.get(MODE, ("⚪","—","#94a3b8"))
 
@@ -41,9 +40,7 @@ st.caption("Asymmetric Iron Condor · Nifty 50 · Biweekly Tuesday · 5% OTM · 
 # ── Data load ─────────────────────────────────────────────────────────────────
 from data.live_fetcher import (
     get_nifty_spot, get_nifty_daily, get_top10_daily,
-    get_india_vix, get_vix_history, get_dual_expiry_chains,
-    get_near_far_expiries, get_nifty_1h_phase,
-    get_nifty_15m, get_nifty_30m, get_nifty_5m,
+    get_india_vix, get_vix_history, get_dual_expiry_chains, get_near_far_expiries,
 )
 from analytics.compute_signals import compute_all_signals, load_saved_signals
 import ui.components as ui
@@ -55,32 +52,6 @@ with st.spinner("Computing all signals…"):
     vix_live  = get_india_vix()
     vix_hist  = get_vix_history()
     chains    = get_dual_expiry_chains(spot if spot > 0 else 23000)
-
-    # 1H — used by Dow Theory phase engine + ST proxy resampling (2H/4H)
-    # Fetched regardless of mode — historical OHLCV available any time from Kite
-    nifty_1h = pd.DataFrame()
-    try:
-        nifty_1h = get_nifty_1h_phase()
-    except Exception as _e:
-        st.warning(f"1H data unavailable: {_e}")
-
-    # SuperTrend intraday TFs — only fetch during live session
-    nifty_30m = pd.DataFrame()
-    nifty_15m = pd.DataFrame()
-    nifty_5m  = pd.DataFrame()
-    if MODE == "LIVE":
-        try:
-            nifty_30m = get_nifty_30m()
-        except Exception as _e:
-            st.warning(f"30m data unavailable: {_e}")
-        try:
-            nifty_15m = get_nifty_15m()
-        except Exception as _e:
-            st.warning(f"15m data unavailable: {_e}")
-        try:
-            nifty_5m  = get_nifty_5m()
-        except Exception as _e:
-            pass   # 5m display-only, silent fail
 
 data_ok = not nifty_df.empty and "close" in nifty_df.columns and len(nifty_df) > 5
 if data_ok and spot == 0:
@@ -95,16 +66,11 @@ if not data_ok:
         st.warning("⚠️ No data. Check Kite token in sidebar.")
         sig = {}
 else:
-    sig = compute_all_signals(
-        nifty_df, stock_dfs, vix_live, vix_hist, chains, spot,
-        nifty_1h  = nifty_1h,
-        nifty_30m = nifty_30m,
-        nifty_15m = nifty_15m,
-        nifty_5m  = nifty_5m,
-    )
+    sig = compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot)
 
+import datetime, pytz
+sig["_saved_at"] = datetime.datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%-d %b %-I:%M %p IST")
 st.session_state["signals"] = sig
-st.session_state["nifty_1h"] = nifty_1h   # used by Dow Theory page for candlestick chart
 
 # ── Top metrics row ───────────────────────────────────────────────────────────
 near_exp, far_exp = get_near_far_expiries()
@@ -113,171 +79,147 @@ far_dte  = chains.get("far_dte",  7)
 atr14    = sig.get("atr14", 200)
 
 cols = st.columns(8)
-with cols[0]: ui.metric_card("NIFTY SPOT", f"{spot:,.0f}", color="blue")
-with cols[1]: ui.metric_card("INDIA VIX",  f"{vix_live:.1f}", color="red" if vix_live>20 else "amber" if vix_live>16 else "green")
-with cols[2]: ui.metric_card("ATR14",      f"{atr14:.0f} pts")
-with cols[3]: ui.metric_card("NEAR DTE",   f"{near_dte}d", sub=str(near_exp), color="red" if near_dte<=2 else "default")
-with cols[4]: ui.metric_card("FAR DTE",    f"{far_dte}d",  sub=str(far_exp),  color="green")
-with cols[5]: ui.metric_card("NET SKEW",   f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0)>0 else "amber")
-with cols[6]: ui.metric_card("REGIME",     sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
-with cols[7]: ui.metric_card("SIZE MULT",  f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0)>=1.0 else "red")
+with cols[0]: ui.metric_card("NIFTY SPOT",  f"{spot:,.0f}",              color="blue")
+with cols[1]: ui.metric_card("INDIA VIX",   f"{vix_live:.1f}",           color="red" if vix_live > 20 else "amber" if vix_live > 16 else "green")
+with cols[2]: ui.metric_card("ATR14",       f"{atr14:.0f} pts")
+with cols[3]: ui.metric_card("NEAR DTE",    f"{near_dte}d",              sub=str(near_exp), color="red" if near_dte <= 2 else "default")
+with cols[4]: ui.metric_card("FAR DTE",     f"{far_dte}d",               sub=str(far_exp),  color="green")
+with cols[5]: ui.metric_card("NET SKEW",    f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0) > 0 else "amber")
+with cols[6]: ui.metric_card("REGIME",      sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
+with cols[7]: ui.metric_card("SIZE MULT",   f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0) >= 1.0 else "red")
 
-if data_ok and not nifty_df.empty:
-    try:
-        last_ts = nifty_df.index[-1]
-        age_hrs = (datetime.datetime.now(pytz.utc) -
-                   (last_ts.tz_localize("Asia/Kolkata").tz_convert("UTC")
-                    if last_ts.tzinfo is None else last_ts.tz_convert("UTC"))
-                   ).total_seconds() / 3600
-        if age_hrs > 26:
-            st.warning(f"⚠️ Data is {age_hrs:.0f}h old — EOD job may have failed.")
-    except Exception: pass
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NIFTY HEALTH MONITOR
+# A — POSITION INPUT
 # ══════════════════════════════════════════════════════════════════════════════
-_structure    = sig.get("dow_structure",       "MIXED")
-_phase        = sig.get("dow_phase",           "MX")
-_narrative    = sig.get("dow_narrative",       "—")
-_score        = sig.get("dow_phase_score",     "WAIT")
-_score_label  = sig.get("dow_dow_phase_score_label", "Nifty Health Monitor")
-_ce_health    = sig.get("dow_ce_health",       "STRONG")
-_pe_health    = sig.get("dow_pe_health",       "STRONG")
-_ce_pts       = sig.get("dow_ce_health_pts",   0.0)
-_pe_pts       = sig.get("dow_pe_health_pts",   0.0)
-_call_breach  = sig.get("dow_call_breach",     0.0)
-_put_breach   = sig.get("dow_put_breach",      0.0)
-_call_prox    = sig.get("dow_call_prox_warn",  False)
-_put_prox     = sig.get("dow_put_prox_warn",   False)
-_retrace_pct  = sig.get("dow_retrace_pct",     0.0)
-_sessions     = sig.get("dow_sessions_in_phase", 0.0)
+st.subheader("📋 Position Input")
+st.caption("Enter your open IC legs here. Home page only — never on Pages 1-12.")
 
-_STRUCT_COL = {
-    "UPTREND": "#16a34a", "DOWNTREND": "#dc2626",
-    "MIXED_EXPANDING": "#d97706", "MIXED_CONTRACTING": "#d97706",
-    "CONSOLIDATING": "#64748b",
-}
-_SCORE_COL = {
-    "PRIME": "#16a34a", "GOOD": "#2563eb",
-    "WAIT": "#d97706", "AVOID": "#ea580c", "NO_TRADE": "#dc2626",
-}
-_HEALTH_COL = {
-    "STRONG": "#16a34a", "MODERATE": "#2563eb",
-    "WATCH": "#d97706", "ALERT": "#ea580c", "BREACH": "#dc2626",
-}
+with st.form("pos_form", clear_on_submit=False):
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        struct       = st.selectbox("Structure", ["Standard IC","Single Spread","IC with Calendar","Ratio","Diagonal","Custom"])
+        entry_credit = st.number_input("Entry credit (pts)", value=0.0, step=0.5, min_value=0.0)
+        mtm_pnl      = st.number_input("Current MtM P&L (pts, +ve=profit)", value=0.0, step=0.5)
+    with fc2:
+        ce_short = st.number_input("CE Short strike", value=0, step=50, min_value=0)
+        ce_wing  = st.number_input("CE Long wing",    value=0, step=50, min_value=0)
+        ce_lots  = st.number_input("CE lots",         value=1, step=1,  min_value=0)
+        ce_exp   = st.text_input( "CE Expiry",        value=str(far_exp))
+    with fc3:
+        pe_short = st.number_input("PE Short strike", value=0, step=50, min_value=0)
+        pe_wing  = st.number_input("PE Long wing",    value=0, step=50, min_value=0)
+        pe_lots  = st.number_input("PE lots",         value=1, step=1,  min_value=0)
+        pe_exp   = st.text_input( "PE Expiry",        value=str(far_exp))
+    submitted = st.form_submit_button("🔍 Analyse Position", use_container_width=True)
 
-struct_col = _STRUCT_COL.get(_structure, "#64748b")
-score_col  = _SCORE_COL.get(_score,     "#d97706")
+if submitted:
+    st.session_state.update({
+        "ce_short": int(ce_short), "ce_wing": int(ce_wing),
+        "pe_short": int(pe_short), "pe_wing": int(pe_wing),
+        "ce_lots":  int(ce_lots),  "pe_lots": int(pe_lots),
+        "ce_exp": ce_exp, "pe_exp": pe_exp,
+        "entry_credit": float(entry_credit), "mtm_pnl": float(mtm_pnl),
+        "structure": struct,
+    })
 
-st.markdown("### 🏥 Nifty Health Monitor")
-
-st.markdown(
-    f"<div style='background:#f0f9ff;border-left:4px solid {struct_col};"
-    f"padding:12px 16px;border-radius:6px;margin-bottom:8px;"
-    f"font-size:15px;color:#0f1724;font-weight:500;'>"
-    f"{_narrative}"
-    f"</div>",
-    unsafe_allow_html=True
-)
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    ui.metric_card(
-        _score_label, _score,
-        sub=f"Tuesday=Entry · Other=Health",
-        color=("green" if _score=="PRIME" else "blue" if _score=="GOOD" else
-               "amber" if _score=="WAIT" else "red")
-    )
-with c2:
-    ui.metric_card("Structure", _structure,
-                   color=("green" if _structure=="UPTREND" else
-                          "red" if _structure=="DOWNTREND" else "amber"))
-with c3:
-    ui.metric_card(
-        "CE Health", f"{_ce_health} · {_ce_pts:,.0f}pts",
-        color=("green" if _ce_health=="STRONG" else "blue" if _ce_health=="MODERATE" else
-               "amber" if _ce_health=="WATCH" else "red")
-    )
-with c4:
-    ui.metric_card(
-        "PE Health", f"{_pe_health} · {_pe_pts:,.0f}pts",
-        color=("green" if _pe_health=="STRONG" else "blue" if _pe_health=="MODERATE" else
-               "amber" if _pe_health=="WATCH" else "red")
-    )
-
-if _call_prox:
-    st.warning(f"⚠️ DOW: Spot approaching call breach level {_call_breach:,.0f} — CE leg proximity alert.")
-if _put_prox:
-    st.warning(f"⚠️ DOW: Spot approaching put breach level {_put_breach:,.0f} — PE leg proximity alert.")
+pos     = {k: st.session_state.get(k, 0) for k in
+           ["ce_short","ce_wing","pe_short","pe_wing","ce_lots","pe_lots","entry_credit","mtm_pnl"]}
+has_pos = pos["ce_short"] > 0 or pos["pe_short"] > 0
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# B — MASTER SCORE
+# B — MULTI-LENS INTEGRATED ASSESSMENT
 # ══════════════════════════════════════════════════════════════════════════════
+st.subheader("🔬 Multi-Lens Integrated Assessment")
+
 master      = sig.get("master_score", 0)
 verdict     = sig.get("master_verdict", "—")
 master_col  = sig.get("master_colour",  "#94a3b8")
 lens_scores = sig.get("_lens_scores", {})
-kills       = sig.get("kill_switches", {})
 
+# Kill switch banners — only hard ones
+kills = sig.get("kill_switches", {})
 if kills.get("RSI_DUAL_EXHAUSTION") or kills.get("K3"):
     st.error("🔴 RSI_DUAL_EXHAUSTION — Both timeframes exhausted. Flatten 1:1, +300 pts both sides.")
 if kills.get("RSI_REGIME_FLIP") or kills.get("K1"):
     st.error("🔴 RSI_REGIME_FLIP — Weekly RSI flipped zones. Check buffer vs 2×ATR.")
+if sig.get("BANKING_DAILY_COLLAPSE") or sig.get("sd6_collapse"):
+    st.error("🔴 BANKING_DAILY_COLLAPSE — 3 of 4 banks daily RSI <40. No new entry.")
+if sig.get("cr_hard_skip"):
+    st.error("🔴 HARD SKIP — INSIDE_BEAR + 0 put moats + Strong Down. Do not enter.")
+if sig.get("is_danger"):
+    st.error("🔴 VIX DANGER — Active spike territory. Max distance both sides, 50% size.")
+if sig.get("mp_initiative_both"):
+    st.error("🔴 INITIATIVE + INITIATIVE — Market Profile double confirmation. Strong defensive roll trigger.")
 
-c1, c2 = st.columns([1, 3])
-with c1:
+col_m, col_scores, col_detail = st.columns([1, 1, 2])
+
+with col_m:
     st.markdown(
-        f"<div style='background:{master_col};border-radius:12px;padding:20px;text-align:center;'>"
-        f"<div style='color:white;font-size:42px;font-weight:800;line-height:1;'>{master}</div>"
-        f"<div style='color:white;font-size:11px;font-weight:600;margin-top:4px;'>MASTER SCORE</div>"
-        f"<div style='color:white;font-size:13px;font-weight:700;margin-top:8px;'>{verdict}</div>"
-        f"</div>", unsafe_allow_html=True)
-with c2:
-    if lens_scores:
-        sc = st.columns(len(lens_scores))
-        for col, (name, pts) in zip(sc, lens_scores.items()):
-            with col: ui.metric_card(name, str(pts), sub="pts")
-    with st.expander("Full signal summary", expanded=False):
-        rows = [
-            ("DOW Structure",  _structure,                                            "Phase engine"),
-            ("DOW Phase",      _phase,                                                "Current phase"),
-            ("DOW Score",      _score,                                                _score_label),
-            ("ST Shape",       sig.get("st_ic_shape","—"),                            "SuperTrend MTF"),
-            ("ST PUT Band",    sig.get("st_put_stack",{}).get("band","—"),            "ST moat quality"),
-            ("ST CALL Band",   sig.get("st_call_stack",{}).get("band","—"),           "ST moat quality"),
-            ("Canary",         f"Day {sig.get('canary_level',0)} ({sig.get('canary_direction','—')})", "EMA"),
-            ("MTF Alignment",  sig.get("mtf_alignment","—"),                          "RSI weekly×daily"),
-            ("W Regime",       sig.get("weekly_regime","—"),                          "Weekly RSI"),
-            ("D Zone",         sig.get("daily_zone","—"),                             "Daily RSI"),
-            ("BB Regime",      sig.get("bb_regime","—"),                              "Bollinger"),
-            ("VIX State",      sig.get("vix_state","—"),                              "VIX"),
-            ("IVP",            f"{sig.get('ivp_1yr',50):.0f}% — {sig.get('ivp_zone','—')}", "IV pctile"),
-            ("VRP",            f"{sig.get('vrp',0):+.1f}%",                           "IV-HV20"),
-            ("MP Nesting",     sig.get("mp_nesting","—"),                             "Mkt Profile"),
-            ("Behaviour",      sig.get("mp_behaviour","—"),                           "R/I"),
-            ("Breadth",        f"{sig.get('breadth_score',50):.0f}% — {sig.get('breadth_label','—')}", "Stocks"),
-            ("GEX",            f"{sig.get('gex_total',0):+,.0f}",                    "OI chain"),
-            ("PCR",            f"{sig.get('pcr',1.0):.2f}",                          "Put/Call"),
-        ]
-        for label, value, note in rows:
-            st.markdown(
-                f"<div style='display:flex;gap:8px;margin-bottom:3px;font-size:11px;'>"
-                f"<span style='width:110px;color:#334155;font-weight:600;flex-shrink:0;'>{label}</span>"
-                f"<span style='flex:1;color:#0f1724;font-weight:600;'>{value}</span>"
-                f"<span style='color:#94a3b8;'>{note}</span>"
-                f"</div>", unsafe_allow_html=True)
+        f"<div style='background:{master_col};border-radius:12px;padding:24px;text-align:center;'>"
+        f"<p style='color:white;font-size:12px;margin:0;font-weight:700;letter-spacing:1px;'>MASTER SCORE</p>"
+        f"<p style='color:white;font-size:56px;font-weight:900;margin:6px 0;line-height:1;'>{master}</p>"
+        f"<p style='color:rgba(255,255,255,0.75);font-size:12px;margin:0;'>/ 100</p>"
+        f"</div>",
+        unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='background:{master_col}20;border:1.5px solid {master_col};border-radius:8px;"
+        f"padding:10px;margin-top:8px;text-align:center;'>"
+        f"<b style='color:{master_col};font-size:13px;'>{verdict}</b></div>",
+        unsafe_allow_html=True)
+
+with col_scores:
+    st.markdown("**Per-Lens Scores** (max 20 each)")
+    for lens, sc in lens_scores.items():
+        bar_w  = int(sc / 20 * 100)
+        bar_c  = "#16a34a" if sc >= 15 else "#d97706" if sc >= 8 else "#dc2626"
+        st.markdown(
+            f"<div style='margin-bottom:6px;'>"
+            f"<div style='display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;'>"
+            f"<span style='color:#334155;font-weight:600;'>{lens}</span>"
+            f"<span style='color:{bar_c};font-weight:700;'>{sc}/20</span></div>"
+            f"<div style='background:#e2e8f0;border-radius:4px;height:6px;'>"
+            f"<div style='background:{bar_c};width:{bar_w}%;height:6px;border-radius:4px;'></div>"
+            f"</div></div>",
+            unsafe_allow_html=True)
+
+with col_detail:
+    st.markdown("**Signal Summary — All Lenses**")
+    summary_rows = [
+        ("EMA Regime",     sig.get("cr_regime", sig.get("p2_regime","—")),             "Cluster + Stack"),
+        ("Canary",         f"Day {sig.get('canary_level',0)} ({sig.get('canary_direction','—')})", "EMA deterioration"),
+        ("MTF Alignment",  sig.get("mtf_alignment", sig.get("alignment","—")),          "RSI weekly × daily"),
+        ("W Regime",       sig.get("weekly_regime","—"),                                 "Weekly RSI"),
+        ("D Zone",         sig.get("daily_zone","—"),                                    "Daily RSI"),
+        ("BB Regime",      sig.get("bb_regime","—"),                                     "Bollinger"),
+        ("VIX State",      sig.get("vix_state","—"),                                     "VIX environment"),
+        ("IVP",            f"{sig.get('ivp_1yr',50):.0f}% — {sig.get('ivp_zone','—')}", "IV percentile"),
+        ("VRP",            f"{sig.get('vrp',0):+.1f}%",                                 "IV minus HV20"),
+        ("MP Nesting",     sig.get("mp_nesting","—"),                                    "Market Profile"),
+        ("Behaviour",      sig.get("mp_behaviour","—"),                                  "Responsive/Initiative"),
+        ("Breadth",        f"{sig.get('breadth_score',50):.0f}% — {sig.get('breadth_label','—')}", "Stock moat breadth"),
+        ("GEX",            f"{sig.get('gex_total',0):+,.0f}",                           "Options chain"),
+        ("PCR",            f"{sig.get('pcr',1.0):.2f}",                                  "Put/Call ratio"),
+    ]
+    for label, value, note in summary_rows:
+        st.markdown(
+            f"<div style='display:flex;gap:8px;margin-bottom:3px;font-size:11px;'>"
+            f"<span style='width:110px;color:#334155;font-weight:600;flex-shrink:0;'>{label}</span>"
+            f"<span style='flex:1;color:#0f1724;font-weight:600;'>{value}</span>"
+            f"<span style='color:#94a3b8;'>{note}</span>"
+            f"</div>", unsafe_allow_html=True)
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# C — FINAL STRIKE SUGGESTION
+# C — FINAL STRIKE SUGGESTION + DISTANCE TRANSPARENCY
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("🎯 Final Strike Suggestion")
-st.caption("MAX across all lenses per side · All lenses independent · Score max = 100 (8 lenses)")
+st.caption("Binding = MAX of strategy formula and MP biweekly anchor per side · All modifiers independent")
 
 from config import WING_DISTANCE
 fd_put  = sig.get("final_put_dist",  1200)
@@ -286,80 +228,125 @@ fpe     = sig.get("final_put_short",  int(spot - fd_put))
 fce     = sig.get("final_call_short", int(spot + fd_call))
 fpew    = sig.get("final_put_wing",   fpe  - WING_DISTANCE)
 fcew    = sig.get("final_call_wing",  fce  + WING_DISTANCE)
-sug_pe  = sig.get("suggested_pe_lens", "—")
-sug_ce  = sig.get("suggested_ce_lens", "—")
-
-# %OTM for final strikes
-pe_pct  = fd_put  / spot * 100 if spot > 0 else 0.0
-ce_pct  = fd_call / spot * 100 if spot > 0 else 0.0
+sug_pe_lens = sig.get("suggested_pe_lens", "—")
+sug_ce_lens = sig.get("suggested_ce_lens", "—")
+bind_flag_p = f"Driven by: {sug_pe_lens}"
+bind_flag_c = f"Driven by: {sug_ce_lens}"
 
 c1,c2,c3,c4 = st.columns(4)
-with c1: ui.metric_card("PE SHORT", f"{fpe:,}", sub=f"−{fd_put:,} pts · {pe_pct:.1f}% OTM · {sug_pe}", color="green")
-with c2: ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts beyond short")
-with c3: ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {ce_pct:.1f}% OTM · {sug_ce}", color="red")
-with c4: ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
+with c1:
+    ui.metric_card("PE SHORT", f"{fpe:,}", sub=f"−{fd_put:,} pts · {bind_flag_p}", color="green")
+with c2:
+    ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts beyond short")
+with c3:
+    ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {bind_flag_c}", color="red")
+with c4:
+    ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
 
-with st.expander("📊 All Lens Distances", expanded=True):
+# Lens table — each lens independently
+with st.expander("📊 All Lens Distances — each lens speaks independently", expanded=True):
     lens_table = sig.get("lens_table", {})
+    sug_pe_lens = sig.get("suggested_pe_lens","—")
+    sug_ce_lens = sig.get("suggested_ce_lens","—")
     if lens_table:
+        st.markdown("Each lens below has independently assessed the safe distance. **You decide which to use.** The suggested strike is the most conservative (furthest from spot) across all lenses.")
+        st.markdown("")
         import pandas as _pd
         rows = []
-        for ln, dists in lens_table.items():
-            pev = dists["pe"]; cev = dists["ce"]
-            # ⚠️ floor flag for ST row
-            pe_warn = " ⚠️" if ln == "SuperTrend MTF" and sig.get("st_pe_floor_applied") else ""
-            ce_warn = " ⚠️" if ln == "SuperTrend MTF" and sig.get("st_ce_floor_applied") else ""
+        for lens_name, dists in lens_table.items():
+            pe_v = dists["pe"]; ce_v = dists["ce"]
+            pe_pct = f"{pe_v/spot*100:.1f}%" if spot > 0 else "—"
+            ce_pct = f"{ce_v/spot*100:.1f}%" if spot > 0 else "—"
+            is_pe_max = lens_name == sug_pe_lens
+            is_ce_max = lens_name == sug_ce_lens
             rows.append({
-                "Lens":      ln,
-                "PE Dist":   f"{'⭐ ' if ln==sug_pe else ''}{pev:,} pts{pe_warn}",
-                "PE %OTM":   f"{pev/spot*100:.1f}%" if spot>0 else "—",
-                "PE Strike": f"~{int(spot-pev):,}" if spot>0 else "—",
-                "CE Dist":   f"{'⭐ ' if ln==sug_ce else ''}{cev:,} pts{ce_warn}",
-                "CE %OTM":   f"{cev/spot*100:.1f}%" if spot>0 else "—",
-                "CE Strike": f"~{int(spot+cev):,}" if spot>0 else "—",
+                "Lens":       lens_name,
+                "PE Dist":    f"{'⭐ ' if is_pe_max else ''}{pe_v:,} pts",
+                "PE % OTM":   pe_pct,
+                "PE Strike":  f"~{int(spot - pe_v):,}" if spot > 0 else "—",
+                "CE Dist":    f"{'⭐ ' if is_ce_max else ''}{ce_v:,} pts",
+                "CE % OTM":   ce_pct,
+                "CE Strike":  f"~{int(spot + ce_v):,}" if spot > 0 else "—",
             })
-        df_l = _pd.DataFrame(rows)
-        def hl(row):
-            s = [""] * len(row)
-            if "⭐" in str(row["PE Dist"]): s[1]=s[2]=s[3]="background-color:#dcfce7;font-weight:700"
-            if "⭐" in str(row["CE Dist"]): s[4]=s[5]=s[6]="background-color:#fee2e2;font-weight:700"
-            return s
-        st.dataframe(df_l.style.apply(hl, axis=1), use_container_width=True, hide_index=True)
-        st.caption("⭐ = most conservative. Green = PE driver. Red = CE driver. ⚠️ = ST floor applied (no structural wall found).")
+        df_lens = _pd.DataFrame(rows)
+        def hl_max(row):
+            styles = [""] * len(row)
+            if "⭐" in str(row["PE Dist"]): styles[1] = styles[2] = styles[3] = "background-color:#dcfce7;font-weight:700"
+            if "⭐" in str(row["CE Dist"]): styles[4] = styles[5] = styles[6] = "background-color:#fee2e2;font-weight:700"
+            return styles
+        st.dataframe(df_lens.style.apply(hl_max, axis=1),
+                     use_container_width=True, hide_index=True)
+        st.caption("⭐ = most conservative (suggested). Highlighted green = PE driver. Highlighted red = CE driver.")
 
 st.divider()
-st.caption("Each lens speaks independently. Suggested = most conservative. Lot size = 65. Score max = 100 across 8 lenses.")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# D — POSITION ANALYSIS (when strikes entered)
+# ══════════════════════════════════════════════════════════════════════════════
+if has_pos:
+    st.subheader("📍 Open Position Analysis")
+
+    ce_s = pos["ce_short"]; pe_s = pos["pe_short"]
+    ce_dist_live = ce_s - spot if ce_s > 0 else 0
+    pe_dist_live = spot - pe_s if pe_s > 0 else 0
+
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: ui.metric_card("CE BUFFER", f"{ce_dist_live:,.0f} pts",
+                              sub=f"Spot to CE short ({ce_s:,})",
+                              color="green" if ce_dist_live > 2*atr14 else "amber" if ce_dist_live > atr14 else "red")
+    with c2: ui.metric_card("PE BUFFER", f"{pe_dist_live:,.0f} pts",
+                              sub=f"PE short ({pe_s:,}) to spot",
+                              color="green" if pe_dist_live > 2*atr14 else "amber" if pe_dist_live > atr14 else "red")
+    with c3: ui.metric_card("CE vs 2×ATR", f"{ce_dist_live - 2*atr14:+,.0f} pts",
+                              sub=f"2×ATR = {2*atr14:.0f} pts",
+                              color="green" if ce_dist_live > 2*atr14 else "red")
+    with c4: ui.metric_card("PE vs 2×ATR", f"{pe_dist_live - 2*atr14:+,.0f} pts",
+                              sub=f"2×ATR = {2*atr14:.0f} pts",
+                              color="green" if pe_dist_live > 2*atr14 else "red")
+
+    # MtM P&L if entered
+    mtm = pos.get("mtm_pnl", 0)
+    credit = pos.get("entry_credit", 0)
+    if credit > 0:
+        pnl_pct = mtm / credit * 100 if credit else 0
+        st.info(f"Entry credit: {credit:.1f} pts · Current MtM: {mtm:+.1f} pts ({pnl_pct:+.0f}% of credit)")
+
+    # Kill switch check against open strikes
+    if ce_dist_live < 2 * atr14:
+        if kills.get("RSI_ZONE_SKIP") or kills.get("K2"):
+            st.error(f"🔴 RSI_ZONE_SKIP + CE buffer < 2×ATR ({ce_dist_live:.0f} pts). EXIT CE leg.")
+        if kills.get("RSI_REGIME_FLIP") or kills.get("K1"):
+            st.error(f"🔴 RSI_REGIME_FLIP + CE buffer < 2×ATR. EXIT CE leg.")
+    if pe_dist_live < 2 * atr14:
+        if kills.get("RSI_ZONE_SKIP") or kills.get("K2"):
+            st.error(f"🔴 RSI_ZONE_SKIP + PE buffer < 2×ATR ({pe_dist_live:.0f} pts). EXIT PE leg.")
+
+st.divider()
+st.caption("Each lens speaks independently. Suggested strike = most conservative across all lenses. Lot size = 65.")
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("---")
     st.markdown("**Session**")
     if st.button("🚪 Logout / Clear Token", use_container_width=True):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        # Clear all session state and cached Kite token
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        # Clear the access token file if it exists
         import os
-        for tp in [".kite_token","data/.kite_token", Path(__file__).parent/"data"/".kite_token"]:
+        token_paths = [
+            ".kite_token",
+            "data/.kite_token",
+            Path(__file__).parent / "data" / ".kite_token",
+        ]
+        for tp in token_paths:
             try:
-                if os.path.exists(str(tp)): os.remove(str(tp))
-            except Exception: pass
+                if os.path.exists(str(tp)):
+                    os.remove(str(tp))
+            except Exception:
+                pass
+        # Clear Streamlit cache
         st.cache_data.clear()
-        st.success("Logged out. Refresh to re-authenticate.")
+        st.success("Logged out. Refresh the page to re-authenticate.")
         st.rerun()
-    st.caption("Clears token and session.")
-
-    with st.expander("🔍 Dow Debug", expanded=False):
-        for k in ["dow_structure","dow_phase","dow_phase_score","dow_retrace_pct",
-                  "dow_sessions_in_phase","dow_ph_last","dow_pl_last",
-                  "dow_ce_health","dow_pe_health","dow_atr14_1h","dow_candles_used"]:
-            st.markdown(f"**{k}:** {sig.get(k,'—')}")
-
-    with st.expander("🔍 ST Debug", expanded=False):
-        for k in ["st_ic_shape","st_home_score","st_flip_tfs",
-                  "st_lens_pe_dist","st_lens_ce_dist",
-                  "st_lens_pe_pct","st_lens_ce_pct",
-                  "st_pe_floor_applied","st_ce_floor_applied"]:
-            st.markdown(f"**{k}:** {sig.get(k,'—')}")
-        put_stack = sig.get("st_put_stack", {})
-        call_stack = sig.get("st_call_stack", {})
-        if put_stack:
-            st.markdown(f"**PUT normalised:** {put_stack.get('normalised','—')} — {put_stack.get('band','—')}")
-        if call_stack:
-            st.markdown(f"**CALL normalised:** {call_stack.get('normalised','—')} — {call_stack.get('band','—')}")
+    st.caption("Clears token and session. Refresh to re-login via Kite.")
