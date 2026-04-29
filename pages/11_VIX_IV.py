@@ -5,17 +5,13 @@ from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
 
 st.set_page_config(page_title="P11 · VIX / IV", layout="wide")
-st_autorefresh(interval=60_000, key="p11")
+st_autorefresh(interval=900_000, key="p11")
 st.title("Page 11 — VIX / IV Framework")
 st.caption("India VIX state · IVP · VRP · No hard kills — all warnings advisory · Trader retains final authority")
 
-# ── Bootstrap: works without Home page ───────────────────────────────────────
-from page_utils import bootstrap_signals, show_page_header
-sig, spot, signals_ts = bootstrap_signals()
-show_page_header(spot, signals_ts)
+sig = st.session_state.get("signals", {})
 if not sig:
-    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
-    st.stop()
+    st.info("⬅️ Open **Home** page first."); st.stop()
 
 vix_live  = sig.get("vix", 0.0)
 state     = sig.get("vix_state", sig.get("vix_zone", "STABLE_NORMAL"))

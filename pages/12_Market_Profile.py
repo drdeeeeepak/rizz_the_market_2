@@ -7,17 +7,13 @@ import pandas as pd
 import ui.components as ui
 
 st.set_page_config(page_title="P12 · Market Profile", layout="wide")
-st_autorefresh(interval=60_000, key="p12")
+st_autorefresh(interval=900_000, key="p12")
 st.title("Page 12 — Market Profile Engine")
 st.caption("Volume Profile · Nesting · Responsive/Initiative · Day Type · Wed–Tue Cycle · Biweekly Tinge")
 
-# ── Bootstrap: works without Home page ───────────────────────────────────────
-from page_utils import bootstrap_signals, show_page_header
-sig, spot, signals_ts = bootstrap_signals()
-show_page_header(spot, signals_ts)
+sig = st.session_state.get("signals", {})
 if not sig:
-    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
-    st.stop()
+    st.info("⬅️ Open **Home** page first."); st.stop()
 
 nesting    = sig.get("mp_nesting",    "BALANCED")
 behaviour  = sig.get("mp_behaviour",  "NEUTRAL")

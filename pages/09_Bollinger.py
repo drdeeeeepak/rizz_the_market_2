@@ -6,17 +6,13 @@ from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
 
 st.set_page_config(page_title="P09 · Bollinger Bands", layout="wide")
-st_autorefresh(interval=60_000, key="p09")
+st_autorefresh(interval=900_000, key="p09")
 st.title("Page 09 — Bollinger Bands Framework")
 st.caption("Volatility state · Band regime · Walk detection · ATR-scaled modifiers · Independent modifier")
 
-# ── Bootstrap: works without Home page ───────────────────────────────────────
-from page_utils import bootstrap_signals, show_page_header
-sig, spot, signals_ts = bootstrap_signals()
-show_page_header(spot, signals_ts)
+sig = st.session_state.get("signals", {})
 if not sig:
-    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
-    st.stop()
+    st.info("⬅️ Open **Home** page first."); st.stop()
 
 bb_regime = sig.get("bb_regime", sig.get("bb_bb_regime", "NEUTRAL_WALK"))
 bw_pct    = sig.get("bw_pct",    sig.get("bb_bw_pct", 6.0))
