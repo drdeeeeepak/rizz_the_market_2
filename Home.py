@@ -102,6 +102,7 @@ else:
         nifty_15m = nifty_15m,
         nifty_5m  = nifty_5m,
     )
+    sig["_saved_at"] = datetime.datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%-d %b %-I:%M %p IST")
 
 st.session_state["signals"] = sig
 st.session_state["nifty_1h"] = nifty_1h   # used by Dow Theory page for candlestick chart
@@ -121,17 +122,6 @@ with cols[4]: ui.metric_card("FAR DTE",    f"{far_dte}d",  sub=str(far_exp),  co
 with cols[5]: ui.metric_card("NET SKEW",   f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0)>0 else "amber")
 with cols[6]: ui.metric_card("REGIME",     sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
 with cols[7]: ui.metric_card("SIZE MULT",  f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0)>=1.0 else "red")
-
-if data_ok and not nifty_df.empty:
-    try:
-        last_ts = nifty_df.index[-1]
-        age_hrs = (datetime.datetime.now(pytz.utc) -
-                   (last_ts.tz_localize("Asia/Kolkata").tz_convert("UTC")
-                    if last_ts.tzinfo is None else last_ts.tz_convert("UTC"))
-                   ).total_seconds() / 3600
-        if age_hrs > 26:
-            st.warning(f"⚠️ Data is {age_hrs:.0f}h old — EOD job may have failed.")
-    except Exception: pass
 
 st.divider()
 

@@ -18,32 +18,15 @@ st_autorefresh(interval=60_000, key="p01")
 st.title("Page 01 — EMA Entry Engine")
 st.caption("Cluster Regime · ATR Danger Zones · Moat Count · Momentum Score · EMA Lens Distance")
 
-# ── Auto-compute fallback ─────────────────────────────────────────────────
-sig = st.session_state.get("signals", {})
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    with st.spinner("Loading signals — please wait..."):
-        try:
-            from data.live_fetcher import (
-                get_nifty_spot, get_nifty_daily, get_top10_daily,
-                get_india_vix, get_vix_history, get_dual_expiry_chains,
-            )
-            from analytics.compute_signals import compute_all_signals
-            spot     = get_nifty_spot()
-            nifty_df = get_nifty_daily()
-            stock_dfs= get_top10_daily()
-            vix_live = get_india_vix()
-            vix_hist = get_vix_history()
-            chains   = get_dual_expiry_chains(spot)
-            if spot == 0 and not nifty_df.empty:
-                spot = float(nifty_df["close"].iloc[-1])
-            sig = compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot)
-            st.session_state["signals"] = sig
-        except Exception as e:
-            st.error(f"Could not load signals: {e}. Please open Home page first.")
-            st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
 atr14     = sig.get("atr14", 200)
-spot_est  = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
+spot_est  = spot
 regime    = sig.get("cr_regime", "INSIDE_BULL")
 base_mult = sig.get("cr_base_mult", 1.5)
 base_pts  = sig.get("cr_base_pts",  int(round(base_mult * atr14 / 50) * 50))

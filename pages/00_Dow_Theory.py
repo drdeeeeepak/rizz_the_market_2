@@ -14,13 +14,16 @@ import pandas as pd
 import ui.components as ui
 
 st.set_page_config(page_title="P00 · Dow Theory", layout="wide")
-st_autorefresh(interval=900_000, key="p00")
+st_autorefresh(interval=60_000, key="p00")
 st.title("Page 00 — Nifty Structure & Phase")
 st.caption("20-day 1H · N=3 · Single rolling window · Phase narrative · Nifty Health Monitor")
 
-sig = st.session_state.get("signals", {})
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first."); st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
 # ── Pull signals ──────────────────────────────────────────────────────────────
 structure    = sig.get("dow_structure",          "MIXED")

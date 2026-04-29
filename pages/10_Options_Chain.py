@@ -7,13 +7,16 @@ from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
 
 st.set_page_config(page_title="P10 · Options Chain", layout="wide")
-st_autorefresh(interval=900_000, key="p10")
+st_autorefresh(interval=60_000, key="p10")
 st.title("Page 10 — Options Chain Analysis Engine")
 st.caption("Greeks · Five Strike Models · Strike Synthesis · Most conservative per side is binding")
 
-sig = st.session_state.get("signals", {})
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first."); st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
 # ── Data fetch ────────────────────────────────────────────────────────────────
 # CHANGED: added get_nifty_futures import — required for futures premium/discount

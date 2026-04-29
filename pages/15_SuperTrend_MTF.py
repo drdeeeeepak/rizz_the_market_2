@@ -15,9 +15,11 @@ st_autorefresh(interval=60_000, key="p15")   # refresh every 60 seconds
 st.title("Page 15 — SuperTrend MTF")
 st.caption("SuperTrend (21,2) · Daily / 4H / 2H / 1H / 30m / 15m · 5m display-only · % CMP measuring unit")
 
-sig = st.session_state.get("signals", {})
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first — it loads all signals.")
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
 # ── Pull ST data from sig ────────────────────────────────────────────────────
