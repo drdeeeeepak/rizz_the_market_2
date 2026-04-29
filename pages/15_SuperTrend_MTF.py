@@ -1,6 +1,6 @@
-# pages/14_SuperTrend_MTF.py — premiumdecay Page 14
+# pages/15_SuperTrend_MTF.py — premiumdecay Page 15
 # SuperTrend MTF (21,2) · Six scored TFs + 5m display-only
-# Moat stack · Safe distance · Strike validation · Trajectory
+# Moat stack · Safe distance · Trajectory
 # 27 Apr 2026
 
 import streamlit as st
@@ -8,16 +8,18 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import plotly.graph_objects as go
 import ui.components as ui
+from page_utils import bootstrap_signals, show_page_header
 
 st.set_page_config(page_title="P15 · SuperTrend MTF", layout="wide")
-st_autorefresh(interval=60_000, key="p15")   # refresh every 60 seconds
+st_autorefresh(interval=60_000, key="p15")
 
 st.title("Page 15 — SuperTrend MTF")
 st.caption("SuperTrend (21,2) · Daily / 4H / 2H / 1H / 30m / 15m · 5m display-only · % CMP measuring unit")
 
-sig = st.session_state.get("signals", {})
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first — it loads all signals.")
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
 # ── Pull ST data from sig ────────────────────────────────────────────────────
@@ -32,9 +34,6 @@ home_score     = sig.get("st_home_score", 0)
 st_traj        = sig.get("st_structural_trajectory", {})
 it_traj        = sig.get("st_intraday_trajectory",   {})
 tf5m           = sig.get("st_tf_5m_display",   {})
-spot           = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
-if spot == 0:
-    spot = sig.get("st_lens_pe_strike", 0) + sig.get("st_lens_pe_dist", 0)
 
 st.divider()
 

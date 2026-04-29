@@ -12,15 +12,18 @@ import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import ui.components as ui
+from page_utils import bootstrap_signals, show_page_header
 
 st.set_page_config(page_title="P00 · Dow Theory", layout="wide")
-st_autorefresh(interval=900_000, key="p00")
+st_autorefresh(interval=60_000, key="p00")
 st.title("Page 00 — Nifty Structure & Phase")
 st.caption("20-day 1H · N=3 · Single rolling window · Phase narrative · Nifty Health Monitor")
 
-sig = st.session_state.get("signals", {})
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first."); st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
 # ── Pull signals ──────────────────────────────────────────────────────────────
 structure    = sig.get("dow_structure",          "MIXED")
@@ -49,8 +52,6 @@ ic_size      = sig.get("dow_ic_size",            "Full size")
 score_hist   = sig.get("dow_score_history",      [])
 candles_used = sig.get("dow_candles_used",       0)
 insufficient = sig.get("dow_insufficient_data",  False)
-
-spot = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
 
 _STRUCT_COL = {
     "UPTREND": "#16a34a", "DOWNTREND": "#dc2626",

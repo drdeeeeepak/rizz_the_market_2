@@ -7,13 +7,17 @@ import pandas as pd
 import ui.components as ui
 
 st.set_page_config(page_title="P05+06 · Nifty RSI Monitor", layout="wide")
-st_autorefresh(interval=900_000, key="p05")  # 15 min
+st_autorefresh(interval=60_000, key="p05")  # 15 min
 st.title("Pages 05+06 — Nifty RSI Monitor")
 st.caption("Weekly context · Daily execution · MTF Alignment · Kill Switches · Phase — updates every 15 min")
 
-sig = st.session_state.get("signals", {})
+# ── Bootstrap: works without Home page ───────────────────────────────────────
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first."); st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
 w_rsi   = sig.get("rsi_weekly", sig.get("weekly_rsi", 50))
 d_rsi   = sig.get("rsi_daily",  sig.get("daily_rsi",  50))

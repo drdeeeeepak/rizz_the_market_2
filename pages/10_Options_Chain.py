@@ -7,22 +7,22 @@ from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
 
 st.set_page_config(page_title="P10 · Options Chain", layout="wide")
-st_autorefresh(interval=900_000, key="p10")
+st_autorefresh(interval=60_000, key="p10")
 st.title("Page 10 — Options Chain Analysis Engine")
 st.caption("Greeks · Five Strike Models · Strike Synthesis · Most conservative per side is binding")
 
-sig = st.session_state.get("signals", {})
+# ── Bootstrap: works without Home page ───────────────────────────────────────
+from page_utils import bootstrap_signals, show_page_header
+sig, spot, signals_ts = bootstrap_signals()
+show_page_header(spot, signals_ts)
 if not sig:
-    st.info("⬅️ Open **Home** page first."); st.stop()
+    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
+    st.stop()
 
-# ── Data fetch ────────────────────────────────────────────────────────────────
-# CHANGED: added get_nifty_futures import — required for futures premium/discount
-from data.live_fetcher import get_nifty_spot, get_dual_expiry_chains, get_nifty_futures
+from data.live_fetcher import get_nifty_spot, get_dual_expiry_chains
 from analytics.options_chain import OptionsChainEngine
 
-spot          = get_nifty_spot()
-futures_price = get_nifty_futures()   # ← NEW: live Nifty futures LTP
-
+spot = get_nifty_spot()
 if spot == 0:
     from data.live_fetcher import get_nifty_daily
     df_t = get_nifty_daily()
@@ -45,13 +45,7 @@ net_skew = sig.get("net_skew", 0.0)
 va_mult  = sig.get("mp_buf_mult", 0.75)
 
 oc_eng = OptionsChainEngine()
-# CHANGED: futures_price now passed — enables real futures premium calculation
-oc_sig = oc_eng.signals(
-    df_chain, spot, dte,
-    atr14=atr14,
-    va_buf_mult=va_mult,
-    futures_price=futures_price,
-)
+oc_sig = oc_eng.signals(df_chain, spot, dte, atr14=atr14, va_buf_mult=va_mult)
 
 # ── Banners ───────────────────────────────────────────────────────────────────
 if sig.get("migration_detected"):
@@ -146,8 +140,8 @@ ui.simple_technical(
 )
 st.markdown("")
 
-models     = oc_sig.get("models", {})
-synthesis  = oc_sig.get("synthesis", {})
+models = oc_sig.get("models", {})
+synthesis = oc_sig.get("synthesis", {})
 binding_ce = synthesis.get("binding_ce", 0)
 binding_pe = synthesis.get("binding_pe", 0)
 call_wall  = oc_sig.get("call_wall", 0)
@@ -169,25 +163,21 @@ if models:
         is_bind_ce = ce == binding_ce
         is_bind_pe = pe == binding_pe
         rows.append({
-            "Method":       MODEL_LABELS.get(key, key),
-            "CE Suggested": f"{'★ ' if is_bind_ce else ''}{ce:,}",
-            "CE Dist":      f"{ce - spot:+,.0f}" if ce > 0 else "—",
-            "PE Suggested": f"{'★ ' if is_bind_pe else ''}{pe:,}",
-            "PE Dist":      f"{pe - spot:+,.0f}" if pe > 0 else "—",
-            "Note":         m.get("note", ""),
+            "Method":      MODEL_LABELS.get(key, key),
+            "CE Suggested":f"{'★ ' if is_bind_ce else ''}{ce:,}",
+            "CE Dist":     f"{ce-spot:+,.0f}" if ce > 0 else "—",
+            "PE Suggested":f"{'★ ' if is_bind_pe else ''}{pe:,}",
+            "PE Dist":     f"{pe-spot:+,.0f}" if pe > 0 else "—",
+            "Note":        m.get("note",""),
         })
-    # Binding summary row
-    ce_vs_wall = (f"{'✅ Above wall' if binding_ce > call_wall else '⚠️ BELOW wall — wrong side'}"
-                  if call_wall else "—")
-    pe_vs_wall = (f"{'✅ Below wall' if binding_pe < put_wall else '⚠️ ABOVE wall — wrong side'}"
-                  if put_wall else "—")
+    # Add binding row
+    ce_vs_wall = f"{'✅ Above wall' if binding_ce > call_wall else '⚠️ BELOW wall — wrong side'}" if call_wall else "—"
+    pe_vs_wall = f"{'✅ Below wall' if binding_pe < put_wall else '⚠️ ABOVE wall — wrong side'}" if put_wall else "—"
     rows.append({
-        "Method":       "★ BINDING (Most Conservative)",
-        "CE Suggested": f"{binding_ce:,}",
-        "CE Dist":      f"{binding_ce - spot:+,.0f}",
-        "PE Suggested": f"{binding_pe:,}",
-        "PE Dist":      f"{binding_pe - spot:+,.0f}",
-        "Note":         f"CE: {ce_vs_wall} | PE: {pe_vs_wall}",
+        "Method": "★ BINDING (Most Conservative)",
+        "CE Suggested": f"{binding_ce:,}", "CE Dist": f"{binding_ce-spot:+,.0f}",
+        "PE Suggested": f"{binding_pe:,}", "PE Dist": f"{binding_pe-spot:+,.0f}",
+        "Note": f"CE: {ce_vs_wall} | PE: {pe_vs_wall}"
     })
 
     df_m = pd.DataFrame(rows)
@@ -197,13 +187,14 @@ if models:
         return [""] * len(row)
     st.dataframe(df_m.style.apply(hl_binding, axis=1), use_container_width=True, hide_index=True)
 
+    # Binding strike callout
     st.markdown("")
     c1, c2, c3, c4 = st.columns(4)
     with c1: ui.metric_card("BINDING CE SHORT", f"{binding_ce:,}",
-                              sub=f"Driven by: {synthesis.get('binding_ce_model', '—')}",
+                              sub=f"Driven by: {synthesis.get('binding_ce_model','—')}",
                               color="red")
     with c2: ui.metric_card("BINDING PE SHORT", f"{binding_pe:,}",
-                              sub=f"Driven by: {synthesis.get('binding_pe_model', '—')}",
+                              sub=f"Driven by: {synthesis.get('binding_pe_model','—')}",
                               color="green")
     with c3: ui.metric_card("CALL WALL", f"{call_wall:,}" if call_wall else "—",
                               sub="CE must be above this", color="red")
@@ -244,13 +235,13 @@ with c1: ui.metric_card("GEX TOTAL", f"{total_gex:+,.0f}",
 with c2: ui.metric_card("GEX FLIP LEVEL", f"{flip_lvl:,}" if flip_lvl else "—",
                           sub="Dealers switch to amplifying above")
 with c3: ui.metric_card("GEX ENVIRONMENT", gex_env,
-                          color="green" if gex_env == "PINNING" else "red")
-with c4: ui.metric_card("CALL WALL INTEGRITY", wall_int.get("call_integrity", "—"),
-                          color="green" if wall_int.get("call_integrity") == "SOLID" else "amber")
-with c5: ui.metric_card("PUT WALL INTEGRITY", wall_int.get("put_integrity", "—"),
-                          color="green" if wall_int.get("put_integrity") == "SOLID" else "amber")
-with c6: ui.metric_card("GEX vs CALL WALL", verdict.get("ce_gex_relationship", "—"),
-                          color="green" if verdict.get("ce_gex_relationship") == "DOUBLE_BARRIER" else
-                                "red"   if verdict.get("ce_gex_relationship") == "GAP_DANGER" else "default")
+                          color="green" if gex_env=="PINNING" else "red")
+with c4: ui.metric_card("CALL WALL INTEGRITY", wall_int.get("call_integrity","—"),
+                          color="green" if wall_int.get("call_integrity")=="SOLID" else "amber")
+with c5: ui.metric_card("PUT WALL INTEGRITY", wall_int.get("put_integrity","—"),
+                          color="green" if wall_int.get("put_integrity")=="SOLID" else "amber")
+with c6: ui.metric_card("GEX vs CALL WALL", verdict.get("ce_gex_relationship","—"),
+                          color="green" if verdict.get("ce_gex_relationship")=="DOUBLE_BARRIER" else
+                                "red" if verdict.get("ce_gex_relationship")=="GAP_DANGER" else "default")
 
 st.caption("🔗 Full wall analysis, OI velocity, strike writeups, and cross-expiry synthesis → Page 10B")

@@ -9,7 +9,7 @@ from analytics.geometric_edge import GeometricEdgeScanner
 from data.live_fetcher import get_nifty500_breadth
 
 st.set_page_config(page_title="P13 · Geometric Edge", layout="wide")
-st_autorefresh(interval=300_000, key="p13_refresh")   # 5-min refresh (EOD scan)
+st_autorefresh(interval=60_000, key="p13_refresh")
 
 st.title("Page 13 — Geometric Edge Scanner")
 st.caption(
@@ -17,6 +17,11 @@ st.caption(
     "4 daily scans (11am, 1:30pm, 3:15pm, EOD) · "
     "Conviction scoring · Separate from options system"
 )
+
+# ── Spot header ──────────────────────────────────────────────────────────────
+from page_utils import bootstrap_signals, show_page_header
+_sig, _spot, _ts = bootstrap_signals()
+show_page_header(_spot, _ts)
 
 eng = GeometricEdgeScanner()
 
