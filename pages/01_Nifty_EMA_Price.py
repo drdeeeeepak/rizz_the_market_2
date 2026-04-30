@@ -38,12 +38,15 @@ if _is_live():
         _df = get_nifty_daily_live()
         if not _df.empty:
             sig = {**sig, **EMAEngine().signals(_df)}
+            # Use the engine's close (same spot used for moat count) for display consistency
+            spot_est = float(_df.iloc[-1]["close"])
             signals_ts = "LIVE"
     except Exception as _e:
         st.caption(f"Live EMA unavailable: {_e}")
+else:
+    spot_est = spot
 
 atr14     = sig.get("atr14", 200)
-spot_est  = spot
 regime    = sig.get("cr_regime", "INSIDE_BULL")
 base_mult = sig.get("cr_base_mult", 1.5)
 base_pts  = sig.get("cr_base_pts",  int(round(base_mult * atr14 / 50) * 50))
@@ -108,17 +111,23 @@ ui.simple_technical(
 )
 
 ema_v = sig.get("cr_ema_vals", {})
-if ema_v:
+if ema_v and spot_est > 0:
     st.markdown("**EMA Levels**")
-    cols_e = st.columns(6)
-    for i, p in enumerate([8, 16, 30, 60, 120, 200]):
-        v = ema_v.get(p, 0)
-        diff = round(float(spot_est - v), 0) if spot_est > 0 and v > 0 else 0
-        side = "below" if diff > 0 else "above"
+    # Build items sorted by value so SPOT card appears in the correct position
+    _items = [(p, ema_v[p]) for p in [8, 16, 30, 60, 120, 200] if ema_v.get(p, 0) > 0]
+    _items.append(("SPOT", spot_est))
+    _items.sort(key=lambda x: x[1])
+    cols_e = st.columns(len(_items))
+    for i, (label, v) in enumerate(_items):
         with cols_e[i]:
-            ui.metric_card(f"EMA{p}", f"{v:,.0f}",
-                           sub=f"{abs(diff):,.0f} pts {side} spot" if diff != 0 else "at spot",
-                           color="green" if v < spot_est else "red" if v > spot_est else "default")
+            if label == "SPOT":
+                ui.metric_card("▶ SPOT", f"{v:,.0f}", sub="Current price", color="blue")
+            else:
+                diff = round(spot_est - float(v), 0)
+                side = "below" if diff > 0 else "above"
+                ui.metric_card(f"EMA{label}", f"{v:,.0f}",
+                               sub=f"{abs(diff):,.0f} pts {side} spot" if diff != 0 else "at spot",
+                               color="green" if v < spot_est else "red" if v > spot_est else "default")
 
 st.divider()
 
