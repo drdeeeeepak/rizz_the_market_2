@@ -358,9 +358,16 @@ def get_india_vix() -> float:
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
     try:
+        # Try token-based (same pattern as Nifty spot — most reliable)
+        quote = kite.quote([f"NSE:{INDIA_VIX_TOKEN}"])
+        for key in [f"NSE:{INDIA_VIX_TOKEN}", str(INDIA_VIX_TOKEN)]:
+            if key in quote:
+                return float(quote[key]["last_price"])
+        # Fallback: symbol with space (may fail on some Kite versions)
         quote = kite.quote(["NSE:INDIA VIX"])
-        for key in ["NSE:INDIA VIX", str(INDIA_VIX_TOKEN), f"NSE:{INDIA_VIX_TOKEN}"]:
-            if key in quote: return float(quote[key]["last_price"])
+        for key in ["NSE:INDIA VIX", str(INDIA_VIX_TOKEN)]:
+            if key in quote:
+                return float(quote[key]["last_price"])
         return 0.0
     except Exception as e:
         log.error("VIX fetch: %s", e); return 0.0

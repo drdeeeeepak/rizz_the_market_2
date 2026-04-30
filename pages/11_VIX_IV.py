@@ -16,7 +16,9 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
-vix_live  = sig.get("vix", 0.0)
+from data.live_fetcher import get_india_vix as _get_vix
+_live_vix = _get_vix()
+vix_live  = _live_vix if _live_vix > 0 else sig.get("vix", 0.0)
 state     = sig.get("vix_state", sig.get("vix_zone", "STABLE_NORMAL"))
 sma_200   = sig.get("vix_sma_200", 13.0)
 sma_50    = sig.get("vix_sma_50",  13.0)

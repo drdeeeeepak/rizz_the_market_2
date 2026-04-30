@@ -215,6 +215,7 @@ def compute_all_signals(
         vix_sig = VixIVRegimeEngine().signals(
             nifty_df.copy(), vix_hist, vix_live, sig.get("atm_iv", 12.0)
         )
+        sig["vix"]                 = vix_live
         sig["vix_state"]           = vix_sig.get("vix_state", "STABLE_NORMAL")
         sig["vix_zone"]            = sig["vix_state"]
         sig["ivp_1yr"]             = vix_sig["ivp_1yr"]
