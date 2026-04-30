@@ -312,6 +312,18 @@ src_data = [
                    f"EMA8 slope: {ema8_slope:+.1f} pts/day (40% weight)\n"
                    f"State: {mom_state}",
     },
+    {
+        "source":  "Source 3 — Spot Drift from Tuesday Close",
+        "what":    (f"Anchor available — {factor_a_pct:.1f}% of Tuesday ATR moved"
+                    if tue_anchor_available else
+                    "Tuesday anchor not yet set — use the button below to activate"),
+        "pe_lvl":  src3_pe,
+        "ce_lvl":  src3_ce,
+        "detail":  (f"Tuesday close: {tue_close:,.0f} · Tuesday ATR: {tue_atr:.0f}\n"
+                    f"Distance: {factor_a_pct:.1f}% of Tuesday ATR14\n"
+                    f"Mean reversion: Factor B (2-day return direction) determines if signal softens")
+                   if tue_anchor_available else "No anchor file yet.",
+    },
 ]
 
 LEVEL_COLOUR = {0: "#16a34a", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
