@@ -22,6 +22,43 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import (
+            get_nifty_daily_live, get_nifty_1h_phase,
+            get_nifty_30m, get_nifty_15m, get_nifty_5m, get_nifty_spot as _gs,
+        )
+        from analytics.compute_signals import load_saved_signals
+        from analytics.supertrend import SuperTrendEngine
+        _df    = get_nifty_daily_live()
+        _1h    = get_nifty_1h_phase()
+        _30m   = get_nifty_30m()
+        _15m   = get_nifty_15m()
+        _5m    = get_nifty_5m()
+        _spot  = _gs() or spot
+        _saved = load_saved_signals()
+        if not _df.empty and not _1h.empty and _spot > 0:
+            _st = SuperTrendEngine().signals(
+                df_daily=_df, df_1h=_1h, df_30m=_30m, df_15m=_15m, df_5m=_5m,
+                spot=_spot,
+                prev_put_norm_eod=_saved.get("st_put_norm_eod"),
+                prev_call_norm_eod=_saved.get("st_call_norm_eod"),
+                open_put_norm=st.session_state.get("st_open_put_norm"),
+                open_call_norm=st.session_state.get("st_open_call_norm"),
+            )
+            sig = {**sig, **{f"st_{k}": v for k, v in _st.items()}}
+            sig["st_ic_shape"] = _st.get("ic_shape", "SYMMETRIC")
+            spot = _spot
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live SuperTrend unavailable: {_e}")
+
 # ── Pull ST data from sig ────────────────────────────────────────────────────
 put_stack      = sig.get("st_put_stack",  {})
 call_stack     = sig.get("st_call_stack", {})

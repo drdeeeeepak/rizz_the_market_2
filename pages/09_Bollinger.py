@@ -17,6 +17,41 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_nifty_daily_live, get_india_vix
+        from analytics.bollinger import BollingerOptionsEngine
+        from config import BB_VIX_DIV_VIX, BB_VIX_DIV_BW
+        _df  = get_nifty_daily_live()
+        _vix = get_india_vix()
+        if not _df.empty:
+            _bb  = BollingerOptionsEngine().signals(_df)
+            _atr = sig.get("atr14", 200)
+            sig  = {**sig, **{f"bb_{k}": v for k, v in _bb.items()}}
+            sig["bb_regime"] = _bb["regime"]
+            sig["bw_pct"]    = _bb["bw_pct"]
+            if _vix > BB_VIX_DIV_VIX and _bb["bw_pct"] < BB_VIX_DIV_BW:
+                _divp = max(100, round(0.5 * _atr / 50) * 50)
+                sig["bb_vix_divergence"] = True
+                sig["bb_distance_put"]   = _divp
+                sig["bb_distance_call"]  = _divp
+            else:
+                sig["bb_vix_divergence"] = False
+                sig["bb_distance_put"]   = _bb.get("bb_distance_put", 0)
+                sig["bb_distance_call"]  = _bb.get("bb_distance_call", 0)
+            sig["bb_walk_up_count"]   = _bb.get("walk_up_count", 0)
+            sig["bb_walk_down_count"] = _bb.get("walk_down_count", 0)
+            sig["bb_kill_switches"]   = _bb.get("kill_switches", {})
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live Bollinger unavailable: {_e}")
+
 bb_regime = sig.get("bb_regime", sig.get("bb_bb_regime", "NEUTRAL_WALK"))
 bw_pct    = sig.get("bw_pct",    sig.get("bb_bw_pct", 6.0))
 walk_up   = sig.get("bb_walk_up_count", 0)

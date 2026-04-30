@@ -25,6 +25,29 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_nifty_1h_phase, get_nifty_spot as _gs
+        from analytics.dow_theory import DowTheoryEngine
+        _1h    = get_nifty_1h_phase()
+        _spot  = _gs() or spot
+        if not _1h.empty and _spot > 0:
+            _dow = DowTheoryEngine().signals(_1h, _spot)
+            sig = {**sig, **{f"dow_{k}": v for k, v in _dow.items()}}
+            sig["dow_structure"]  = _dow.get("structure",  sig.get("dow_structure",  "MIXED"))
+            sig["dow_phase"]      = _dow.get("phase",      sig.get("dow_phase",      "MX"))
+            sig["dow_narrative"]  = _dow.get("narrative",  sig.get("dow_narrative",  ""))
+            sig["dow_phase_score"]= _dow.get("phase_score",sig.get("dow_phase_score","WAIT"))
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live Dow Theory unavailable: {_e}")
+
 # ── Pull signals ──────────────────────────────────────────────────────────────
 structure    = sig.get("dow_structure",          "MIXED")
 phase        = sig.get("dow_phase",              "MX")

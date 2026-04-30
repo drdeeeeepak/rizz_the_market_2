@@ -31,6 +31,22 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_top10_daily_live
+        from analytics.constituent_ema import ConstituentEMAEngine
+        _cema = ConstituentEMAEngine().signals(get_top10_daily_live())
+        sig = {**sig, **_cema}
+        signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live Constituent EMA unavailable: {_e}")
+
 canary_data = sig.get("constituent_canary", {})
 per         = sig.get("constituent_per_stock", {})
 breadth     = sig.get("constituent_breadth", {})

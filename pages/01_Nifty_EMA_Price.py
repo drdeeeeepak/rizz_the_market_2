@@ -25,6 +25,23 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_nifty_daily_live
+        from analytics.ema import EMAEngine
+        _df = get_nifty_daily_live()
+        if not _df.empty:
+            sig = {**sig, **EMAEngine().signals(_df)}
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live EMA unavailable: {_e}")
+
 atr14     = sig.get("atr14", 200)
 spot_est  = spot
 regime    = sig.get("cr_regime", "INSIDE_BULL")

@@ -18,6 +18,47 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_nifty_daily_live, get_nifty_spot as _gs
+        from analytics.market_profile import MarketProfileEngine
+        _df   = get_nifty_daily_live()
+        _spot = _gs() or spot
+        if not _df.empty and _spot > 0:
+            _mp = MarketProfileEngine().signals(
+                _df, _spot,
+                near_dte=sig.get("near_dte", 7),
+                far_dte=sig.get("far_dte",   14),
+                net_skew=sig.get("net_skew",  0.0),
+                atr14=sig.get("atr14",        200.0),
+            )
+            sig["mp_nesting"]         = _mp["nesting_state"]
+            sig["mp_behaviour"]       = _mp.get("price_behaviour", "NEUTRAL")
+            sig["weekly_vah"]         = _mp["weekly_vah"]
+            sig["weekly_poc"]         = _mp["weekly_poc"]
+            sig["weekly_val"]         = _mp["weekly_val"]
+            sig["mp_responsive"]      = _mp["responsive"]
+            sig["mp_ce_anchor"]       = _mp["ce_strike_anchor"]
+            sig["mp_pe_anchor"]       = _mp["pe_strike_anchor"]
+            sig["mp_kills"]           = _mp.get("mp_kills", _mp.get("kill_switches", {}))
+            sig["mp_day_type"]        = _mp.get("day_type",     "NORMAL")
+            sig["mp_cycle_day"]       = _mp.get("cycle_day",    "")
+            sig["mp_cycle_action"]    = _mp.get("cycle_action", "")
+            sig["mp_va_ratio"]        = _mp.get("va_ratio",    1.0)
+            sig["mp_buffer_pts"]      = _mp.get("buffer_pts",  150)
+            sig["mp_dte_factor"]      = _mp.get("dte_factor",  1.0)
+            sig["mp_ce_biwkly_dist"]  = _mp.get("ce_biwkly_dist", 400)
+            sig["mp_pe_biwkly_dist"]  = _mp.get("pe_biwkly_dist", 400)
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live Market Profile unavailable: {_e}")
+
 nesting    = sig.get("mp_nesting",    "BALANCED")
 behaviour  = sig.get("mp_behaviour",  "NEUTRAL")
 day_type   = sig.get("mp_day_type",   "NORMAL")
