@@ -340,15 +340,46 @@ for s in src_data:
                     st.caption(f"Anchor set: {tue_anchor_date} · close {tue_close:,.0f} · ATR {tue_atr:.0f}")
                 else:
                     st.warning("Tuesday anchor not set. Set it now to activate Source 3.")
-                if spot > 0 and atr14 > 0:
-                    import datetime as _dt
-                    _today = str(_dt.date.today())
-                    if st.button("📌 Set Tuesday Anchor from today's data", key="set_anchor"):
-                        _result = _write_anchor_now(spot, atr14, _today)
-                        if _result is True:
-                            st.success(f"Anchor saved — close {spot:,.0f} · ATR {atr14:.0f} · date {_today}. Refresh to activate.")
+                if st.button("📌 Set Anchor from last Tuesday (or prior trading day if holiday)", key="set_anchor"):
+                    try:
+                        import datetime as _dt, numpy as _np
+                        from data.live_fetcher import get_nifty_daily
+                        _df = get_nifty_daily()
+                        if _df.empty:
+                            st.error("Could not fetch Nifty daily data.")
                         else:
-                            st.error(f"Failed: {_result}")
+                            # Find the most recent Tuesday in the calendar
+                            _today = _dt.date.today()
+                            _days_since_tue = (_today.weekday() - 1) % 7
+                            _last_tue = _today - _dt.timedelta(days=_days_since_tue)
+                            # Walk backwards from that Tuesday to find the nearest
+                            # actual trading day present in the dataframe
+                            _trading_dates = set(_df.index.date)
+                            _anchor_date = None
+                            for _offset in range(7):
+                                _candidate = _last_tue - _dt.timedelta(days=_offset)
+                                if _candidate in _trading_dates:
+                                    _anchor_date = _candidate
+                                    break
+                            if _anchor_date is None:
+                                st.error("Could not find a trading day on or before last Tuesday.")
+                            else:
+                                _hist = _df[_df.index.date <= _anchor_date].tail(15)
+                                _tue_close = float(_hist["close"].iloc[-1])
+                                _h = _hist["high"].values
+                                _l = _hist["low"].values
+                                _c = _hist["close"].values
+                                _tr = [max(_h[i]-_l[i], abs(_h[i]-_c[i-1]), abs(_l[i]-_c[i-1]))
+                                       for i in range(1, len(_hist))]
+                                _atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr))
+                                _label = str(_anchor_date)
+                                _result = _write_anchor_now(_tue_close, _atr, _label)
+                                if _result is True:
+                                    st.success(f"Anchor set — {_label} · close {_tue_close:,.0f} · ATR {_atr:.0f}. Refresh to activate.")
+                                else:
+                                    st.error(f"Failed to write: {_result}")
+                    except Exception as _ex:
+                        st.error(f"Error: {_ex}")
         with c2:
             col = LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
             st.markdown(
