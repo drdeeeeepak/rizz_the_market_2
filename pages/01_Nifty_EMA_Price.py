@@ -200,14 +200,14 @@ MOAT_COLOUR = {
 
 col1, col2 = st.columns(2)
 with col1:
-    ui.metric_card("PUT MOATS (PE side)", f"{put_moats:.1f}",
+    ui.metric_card("PUT MOATS (PE side)", f"{put_moats:g}",
                    sub=f"{put_label.capitalize()} → {put_pts:+,} pts",
                    color=MOAT_COLOUR.get(put_label, "default"))
     for lbl, val in detail_p:
         st.caption(f"  {lbl}: {val:,.0f}")
 
 with col2:
-    ui.metric_card("CALL MOATS (CE side)", f"{call_moats:.1f}",
+    ui.metric_card("CALL MOATS (CE side)", f"{call_moats:g}",
                    sub=f"{call_label.capitalize()} → {call_pts:+,} pts",
                    color=MOAT_COLOUR.get(call_label, "default"))
     for lbl, val in detail_c:
@@ -272,6 +272,20 @@ with col2:
                    sub="← threatened" if mom_ce_pts > 0 else "← safe leg, +0",
                    color="red" if mom_ce_pts > 0 else "green")
 
+import pandas as pd
+mom_ref = pd.DataFrame([
+    ["STRONG_DOWN",   "+100 pts", "+0 pts",   "PE is the threatened leg. Market moving down fast."],
+    ["MODERATE_DOWN", "+50 pts",  "+0 pts",   "PE under mild pressure."],
+    ["FLAT",          "+0 pts",   "+0 pts",   "No conviction. Safe leg gets no extra distance."],
+    ["TRANSITIONING", "+75 pts",  "+75 pts",  "EMA3 and EMA8 disagree — both sides get extra room."],
+    ["MODERATE_UP",   "+0 pts",   "+50 pts",  "CE under mild pressure."],
+    ["STRONG_UP",     "+0 pts",   "+100 pts", "CE is the threatened leg. Market moving up fast."],
+], columns=["Momentum State", "PE Adj", "CE Adj", "Meaning"])
+with st.expander("Momentum adjustment reference", expanded=False):
+    st.dataframe(mom_ref, use_container_width=True, hide_index=True)
+    st.caption("Only the threatened leg gets extra distance. FLAT = +0 both sides is correct — "
+               "no momentum means no bias, moats are reliable as-is.")
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -280,10 +294,14 @@ st.divider()
 ui.section_header("EMA Lens Distance — This Page's Output",
                   "Base pts + Moat pts + Momentum pts = EMA lens · Capped at 3.0× ATR14 · Other lenses produce their own")
 
-pe_dist = sig.get("cr_pe_dist_pts", int(round(base_mult * atr14 / 50) * 50))
-ce_dist = sig.get("cr_ce_dist_pts", int(round(base_mult * atr14 / 50) * 50))
-cap_applied_pe = sig.get("cr_cap_applied_pe", False)
-cap_applied_ce = sig.get("cr_cap_applied_ce", False)
+# Recompute totals using the live-corrected moat pts (not stale sig values)
+_cap_pts   = int(round(3.0 * atr14 / 50) * 50)
+_pe_raw    = base_pts + put_pts  + mom_pe_pts
+_ce_raw    = base_pts + call_pts + mom_ce_pts
+pe_dist    = int(round(min(_pe_raw, _cap_pts) / 50) * 50)
+ce_dist    = int(round(min(_ce_raw, _cap_pts) / 50) * 50)
+cap_applied_pe = _pe_raw > _cap_pts
+cap_applied_ce = _ce_raw > _cap_pts
 
 def pct_otm(dist, spot):
     return f"{dist/spot*100:.1f}% OTM" if spot > 0 else ""
