@@ -74,9 +74,9 @@ def bootstrap_signals() -> tuple[dict, float, str]:
     # ── Live spot (independent 60s TTL — always fresh) ──────────────────────
     spot = get_nifty_spot()
     if spot == 0:
-        spot = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
-    if spot == 0:
         spot = float(sig.get("spot", 0))
+    if spot == 0:
+        spot = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
 
     # ── Signals timestamp ───────────────────────────────────────────────────
     ts_str = sig.get("_saved_at", "")

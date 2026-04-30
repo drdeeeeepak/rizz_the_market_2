@@ -17,6 +17,27 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+import datetime, pytz
+def _is_live():
+    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_live():
+    try:
+        from data.live_fetcher import get_nifty_daily_live, get_top10_daily_live
+        from analytics.rsi_engine import RSIEngine
+        _nifty_df   = get_nifty_daily_live()
+        _stock_dfs  = get_top10_daily_live()
+        if not _nifty_df.empty:
+            _eng = RSIEngine()
+            _rsi_nifty = _eng.signals(_nifty_df)
+            _rsi_stocks = _eng.stock_signals(_stock_dfs)
+            sig = {**sig, **_rsi_nifty, **_rsi_stocks}
+            signals_ts = "LIVE"
+    except Exception as _e:
+        st.caption(f"Live RSI unavailable: {_e}")
+
 per  = sig.get("per_stock", {})
 nifty_w_rsi = sig.get("rsi_weekly", sig.get("weekly_rsi", 50))
 

@@ -63,14 +63,42 @@ def get_nifty_spot() -> float:
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
     try:
+        # Try token-based quote first
         quote = kite.quote([f"NSE:{NIFTY_INDEX_TOKEN}"])
         for key in [str(NIFTY_INDEX_TOKEN), f"NSE:{NIFTY_INDEX_TOKEN}"]:
             if key in quote:
                 return float(quote[key]["last_price"])
-        log.warning("Spot key not found. Keys: %s", list(quote.keys())[:5])
+        # Fallback: try by trading symbol
+        quote2 = kite.quote(["NSE:NIFTY 50"])
+        for key in ["NSE:NIFTY 50", "NIFTY 50"]:
+            if key in quote2:
+                return float(quote2[key]["last_price"])
+        log.warning("Spot key not found. Keys: %s | %s", list(quote.keys())[:5], list(quote2.keys())[:5])
         return 0.0
     except Exception as e:
         log.error("Spot fetch failed: %s", e); return 0.0
+
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_nifty_daily_live(days: int = 400) -> pd.DataFrame:
+    """Same as get_nifty_daily but with short TTL for live RSI during market hours."""
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        to_date   = date.today()
+        from_date = to_date - timedelta(days=days)
+        data = kite.historical_data(
+            NIFTY_INDEX_TOKEN,
+            from_date.strftime("%Y-%m-%d"),
+            to_date.strftime("%Y-%m-%d"),
+            "day"
+        )
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        return df[["open", "high", "low", "close", "volume"]]
+    except Exception as e:
+        log.error("Nifty daily live fetch failed: %s", e); return pd.DataFrame()
 
 
 # ─── Nifty daily OHLCV ───────────────────────────────────────────────────────
@@ -276,6 +304,30 @@ def get_nifty_5m(days: int = ST_5M_DAYS) -> pd.DataFrame:
 
 
 # ─── Top 10 stocks daily ──────────────────────────────────────────────────────
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_top10_daily_live(days: int = 400) -> dict[str, pd.DataFrame]:
+    """Same as get_top10_daily but with short TTL for live RSI during market hours."""
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    result = {}
+    to_date   = date.today()
+    from_date = to_date - timedelta(days=days)
+    for symbol, token in TOP_10_TOKENS.items():
+        try:
+            data = kite.historical_data(
+                token, from_date.strftime("%Y-%m-%d"),
+                to_date.strftime("%Y-%m-%d"), "day"
+            )
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            result[symbol] = df[["open", "high", "low", "close", "volume"]]
+        except Exception as e:
+            log.warning("Stock live fetch %s: %s", symbol, e)
+            result[symbol] = pd.DataFrame()
+    return result
+
 
 @st.cache_data(ttl=TTL_DAILY, show_spinner=False)
 def get_top10_daily(days: int = 400) -> dict[str, pd.DataFrame]:

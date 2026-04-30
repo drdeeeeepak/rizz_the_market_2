@@ -49,6 +49,7 @@ def compute_all_signals(
     nifty_5m:   pd.DataFrame = None,   # 5m for ST display only
 ) -> dict:
     sig = {}
+    sig["spot"] = spot   # always store so bootstrap_signals() fallback works
 
     # ── Pages 1+2: EMA ────────────────────────────────────────────────────
     try:
