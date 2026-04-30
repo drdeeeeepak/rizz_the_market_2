@@ -128,36 +128,37 @@ if mom_state == "STRONG_UP":   src2_ce = 3; src2_pe = 0
 elif mom_state == "MODERATE_UP": src2_ce = 2; src2_pe = 0
 elif mom_state == "TRANSITIONING": src2_pe = 2; src2_ce = 2
 
-# Source 3 — Tuesday anchor
-ANCHOR_FILE = Path("data/tuesday_anchors.json")
+# Source 3 — Tuesday anchor: auto-computed from cached daily data
+# Uses last Tuesday, or last trading day before it if Tuesday was a holiday
+import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
-if ANCHOR_FILE.exists():
-    try:
-        anchors = json.loads(ANCHOR_FILE.read_text())
-        nifty_anchor = anchors.get("NIFTY", anchors.get("nifty", {}))
-        tue_close = nifty_anchor.get("close", 0.0)
-        tue_atr   = nifty_anchor.get("atr",   atr14)
-        tue_anchor_date = nifty_anchor.get("date", "")
-        tue_anchor_available = tue_close > 0
-    except Exception:
-        pass
-
-def _write_anchor_now(close_val: float, atr_val: float, label: str):
-    try:
-        import numpy as _np
-        existing = {}
-        if ANCHOR_FILE.exists():
-            try: existing = json.loads(ANCHOR_FILE.read_text())
-            except Exception: pass
-        existing["NIFTY"] = {"close": close_val, "atr": round(atr_val, 1),
-                              "date": label}
-        ANCHOR_FILE.parent.mkdir(exist_ok=True)
-        ANCHOR_FILE.write_text(json.dumps(existing, indent=2))
-        return True
-    except Exception as _e:
-        return str(_e)
+try:
+    from data.live_fetcher import get_nifty_daily
+    _daily = get_nifty_daily()
+    if not _daily.empty:
+        _today = _dt.date.today()
+        _days_since_tue = (_today.weekday() - 1) % 7
+        _last_tue = _today - _dt.timedelta(days=_days_since_tue)
+        _trading_dates = set(_daily.index.date)
+        _anchor_date = None
+        for _offset in range(7):
+            _candidate = _last_tue - _dt.timedelta(days=_offset)
+            if _candidate in _trading_dates:
+                _anchor_date = _candidate
+                break
+        if _anchor_date:
+            _hist = _daily[_daily.index.date <= _anchor_date].tail(15)
+            tue_close = float(_hist["close"].iloc[-1])
+            _h, _l, _c = _hist["high"].values, _hist["low"].values, _hist["close"].values
+            _tr = [max(_h[i]-_l[i], abs(_h[i]-_c[i-1]), abs(_l[i]-_c[i-1]))
+                   for i in range(1, len(_hist))]
+            tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr))
+            tue_anchor_date = str(_anchor_date)
+            tue_anchor_available = True
+except Exception:
+    pass
 
 spot_now = spot
 src3_pe = src3_ce = 0
@@ -334,52 +335,10 @@ for s in src_data:
         with c1:
             st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
             st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;'>{s['detail']}</pre>", unsafe_allow_html=True)
-            # Source 3 anchor management
+            # Source 3 anchor info
             if "Source 3" in s["source"]:
                 if tue_anchor_available:
-                    st.caption(f"Anchor set: {tue_anchor_date} · close {tue_close:,.0f} · ATR {tue_atr:.0f}")
-                else:
-                    st.warning("Tuesday anchor not set. Set it now to activate Source 3.")
-                if st.button("📌 Set Anchor from last Tuesday (or prior trading day if holiday)", key="set_anchor"):
-                    try:
-                        import datetime as _dt, numpy as _np
-                        from data.live_fetcher import get_nifty_daily
-                        _df = get_nifty_daily()
-                        if _df.empty:
-                            st.error("Could not fetch Nifty daily data.")
-                        else:
-                            # Find the most recent Tuesday in the calendar
-                            _today = _dt.date.today()
-                            _days_since_tue = (_today.weekday() - 1) % 7
-                            _last_tue = _today - _dt.timedelta(days=_days_since_tue)
-                            # Walk backwards from that Tuesday to find the nearest
-                            # actual trading day present in the dataframe
-                            _trading_dates = set(_df.index.date)
-                            _anchor_date = None
-                            for _offset in range(7):
-                                _candidate = _last_tue - _dt.timedelta(days=_offset)
-                                if _candidate in _trading_dates:
-                                    _anchor_date = _candidate
-                                    break
-                            if _anchor_date is None:
-                                st.error("Could not find a trading day on or before last Tuesday.")
-                            else:
-                                _hist = _df[_df.index.date <= _anchor_date].tail(15)
-                                _tue_close = float(_hist["close"].iloc[-1])
-                                _h = _hist["high"].values
-                                _l = _hist["low"].values
-                                _c = _hist["close"].values
-                                _tr = [max(_h[i]-_l[i], abs(_h[i]-_c[i-1]), abs(_l[i]-_c[i-1]))
-                                       for i in range(1, len(_hist))]
-                                _atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr))
-                                _label = str(_anchor_date)
-                                _result = _write_anchor_now(_tue_close, _atr, _label)
-                                if _result is True:
-                                    st.success(f"Anchor set — {_label} · close {_tue_close:,.0f} · ATR {_atr:.0f}. Refresh to activate.")
-                                else:
-                                    st.error(f"Failed to write: {_result}")
-                    except Exception as _ex:
-                        st.error(f"Error: {_ex}")
+                    st.caption(f"Anchor: {tue_anchor_date} · close {tue_close:,.0f} · ATR {tue_atr:.0f}")
         with c2:
             col = LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
             st.markdown(
