@@ -58,6 +58,50 @@ ema3_slope = sig.get("cr_mom_ema3_slope", 0.0)
 ema8_slope = sig.get("cr_mom_ema8_slope", 0.0)
 ema_vals   = sig.get("cr_ema_vals", {})
 
+# Recompute moat counts from current spot — same fix as P01 (stale sig values
+# are wrong when spot has moved since EOD compute)
+from analytics.ema import MOAT_SET, MOAT_CLUSTER_DIST, ATR_BIWEEKLY_MULT, moat_label_and_pts as _mlab
+
+def _rcp(spot_v, ev, atr_v, slope_v=0.0):
+    fl = spot_v - atr_v * ATR_BIWEEKLY_MULT
+    cs = sorted([(p, ev[p]) for p in MOAT_SET if fl < ev.get(p, 0) < spot_v],
+                key=lambda x: x[1], reverse=True)
+    mg, cnt, det = [], 0.0, []
+    for p, v in cs:
+        if mg and abs(v - mg[-1][1]) <= MOAT_CLUSTER_DIST:
+            pp, pv = mg[-1]; mg[-1] = (f"{pp}+{p}", pv)
+        else:
+            mg.append((p, v))
+    for lb, v in mg:
+        if str(lb) == "8" and slope_v < 0:
+            cnt += 0.5; det.append((f"EMA{lb}(deg)", round(v, 0)))
+        else:
+            cnt += 1.0; det.append((f"EMA{lb}", round(v, 0)))
+    return cnt, det
+
+def _rcc(spot_v, ev, atr_v):
+    cl = spot_v + atr_v * ATR_BIWEEKLY_MULT
+    cs = sorted([(p, ev[p]) for p in MOAT_SET if spot_v < ev.get(p, 0) < cl],
+                key=lambda x: x[1])
+    mg = []
+    for p, v in cs:
+        if mg and abs(v - mg[-1][1]) <= MOAT_CLUSTER_DIST:
+            pp, pv = mg[-1]; mg[-1] = (f"{pp}+{p}", pv)
+        else:
+            mg.append((p, v))
+    return float(len(mg)), [(f"EMA{lb}", round(v, 0)) for lb, v in mg]
+
+if ema_vals and spot > 0:
+    put_moats,  _detail_p = _rcp(spot, ema_vals, atr14, ema3_slope)
+    call_moats, _detail_c = _rcc(spot, ema_vals, atr14)
+else:
+    put_moats  = sig.get("cr_put_moats",  2)
+    call_moats = sig.get("cr_call_moats", 2)
+    _detail_p  = sig.get("cr_put_moat_detail",  [])
+    _detail_c  = sig.get("cr_call_moat_detail", [])
+put_label,  _ = _mlab(put_moats)
+call_label, _ = _mlab(call_moats)
+
 # For three-source display — legacy canary is single-source, we display what we have
 # Source 1 approximation from existing canary logic
 e3  = sig.get("ema3",  ema_vals.get(3,  0))
@@ -140,6 +184,23 @@ st.markdown(
     f"</div>"
     f"</div>",
     unsafe_allow_html=True)
+
+with st.expander("Cluster Regime Reference", expanded=False):
+    _reg_rows = [
+        ["STRONG_BULL",     "Spot above fast, fast above slow",              "1:2 CE further", "Full",   "Full bullish stack — strong PE floor, CE needs room"],
+        ["BULL_COMPRESSED", "Spot above fast, fast penetrating slow",        "1:2 CE further", "75%",    "Fast cluster compressing into slow — mild CE caution"],
+        ["INSIDE_BULL",     "Spot pulled back inside fast cluster",          "1:1 Symmetric",  "75%",    "Pullback in uptrend — both sides equal distance"],
+        ["RECOVERING",      "Spot above fast, but fast still below slow",    "1:1 Symmetric",  "75%",    "Bounce — slow cluster is significant overhead ceiling"],
+        ["INSIDE_BEAR",     "Fast crossed below slow, spot between them",    "1:1 Symmetric",  "50%",    "Structure deteriorating — both legs uncertain"],
+        ["BEAR_COMPRESSED", "Spot below fast, fast penetrating slow upward", "2:1 PE further", "75%",    "Downside pressure — PE needs extra room"],
+        ["STRONG_BEAR",     "Spot below fast, fast below slow",              "2:1 PE further", "62.5%",  "Full bearish stack — PE fully exposed"],
+    ]
+    _reg_df = pd.DataFrame(_reg_rows,
+        columns=["Regime", "EMA Structure", "IC Shape", "Size", "Hold Note"])
+    def _hl_reg(val):
+        return "background-color:#dbeafe;font-weight:700" if val == regime else ""
+    st.dataframe(_reg_df.style.map(_hl_reg, subset=["Regime"]),
+                 use_container_width=True, hide_index=True)
 
 st.title("Page 02 — EMA Hold Monitor")
 st.caption("Three-Source Canary · PE and CE independently · Live Moat Status · Hold / Watch / Prepare / Act")
@@ -257,33 +318,18 @@ MOAT_COLOUR = {"fortress":"green","strong":"green","adequate":"amber","thin":"re
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    ui.metric_card("PUT MOATS REMAINING", f"{put_moats:.1f}",
+    ui.metric_card("PUT MOATS REMAINING", f"{put_moats:g}",
                    sub=put_label.capitalize(),
                    color=MOAT_COLOUR.get(put_label, "default"))
-    detail_p = sig.get("cr_put_moat_detail", [])
-    if detail_p:
-        st.caption("Active moats: " + " | ".join(f"{lbl}: {val:,.0f}" for lbl, val in detail_p))
-        # Clustering alert
-        if len(detail_p) >= 2:
-            vals = [v for _, v in detail_p]
-            for i in range(len(vals)-1):
-                if abs(vals[i] - vals[i+1]) <= 50:
-                    st.warning("⚠️ Moat clustering detected — adjacent moats within 50 pts count as ONE.")
-                    break
+    if _detail_p:
+        st.caption("Active moats: " + " | ".join(f"{lbl}: {val:,.0f}" for lbl, val in _detail_p))
 
 with col2:
-    ui.metric_card("CALL MOATS REMAINING", f"{call_moats:.1f}",
+    ui.metric_card("CALL MOATS REMAINING", f"{call_moats:g}",
                    sub=call_label.capitalize(),
                    color=MOAT_COLOUR.get(call_label, "default"))
-    detail_c = sig.get("cr_call_moat_detail", [])
-    if detail_c:
-        st.caption("Active moats: " + " | ".join(f"{lbl}: {val:,.0f}" for lbl, val in detail_c))
-        if len(detail_c) >= 2:
-            vals = [v for _, v in detail_c]
-            for i in range(len(vals)-1):
-                if abs(vals[i] - vals[i+1]) <= 50:
-                    st.warning("⚠️ Moat clustering — adjacent moats within 50 pts count as ONE.")
-                    break
+    if _detail_c:
+        st.caption("Active moats: " + " | ".join(f"{lbl}: {val:,.0f}" for lbl, val in _detail_c))
 
 with col3:
     MOM_COLOUR_MAP = {
@@ -352,14 +398,14 @@ col1, col2 = st.columns(2)
 with col1:
     ui.alert_box(
         f"PE (Put Side) — {action_pe}",
-        f"Moats: {put_moats:.1f} ({put_label}) · Canary: {CANARY_LABEL.get(pe_canary,'—')}\n"
+        f"Moats: {put_moats:g} ({put_label}) · Canary: {CANARY_LABEL.get(pe_canary,'—')}\n"
         f"Put side action: {action_pe}",
         level=level_pe
     )
 with col2:
     ui.alert_box(
         f"CE (Call Side) — {action_ce}",
-        f"Moats: {call_moats:.1f} ({call_label}) · Canary: {CANARY_LABEL.get(ce_canary,'—')}\n"
+        f"Moats: {call_moats:g} ({call_label}) · Canary: {CANARY_LABEL.get(ce_canary,'—')}\n"
         f"Call side action: {action_ce}",
         level=level_ce
     )
