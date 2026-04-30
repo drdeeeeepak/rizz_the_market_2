@@ -222,6 +222,30 @@ st.divider()
 ui.section_header("Section 1 — Position Canary Dashboard",
                   "PE canary and CE canary independently · Overall = higher of the two")
 
+with st.expander("What is the Canary? — Reference", expanded=False):
+    st.markdown(
+        "**The canary is an early warning system for your open IC position.**\n\n"
+        "Named after the 'canary in a coal mine' — it detects when the EMA structure "
+        "protecting your short strikes is starting to erode, **before** it becomes a loss event. "
+        "Three independent sources vote. PE and CE are assessed separately. "
+        "The overall canary = the higher (worse) of the two sides."
+    )
+    _can_ref = pd.DataFrame([
+        ["✅ SINGING",    "Day 0", "HOLD",    "All 3 sources clear. EMA walls intact. No action needed."],
+        ["🟡 Canary Day 1","Day 1", "WATCH",   "One source flagging. Check again at EOD. No panic."],
+        ["⚠️ Canary Day 2","Day 2", "WATCH",   "Two sources or escalating source. Active monitoring — check moat count."],
+        ["🔴 Canary Day 3","Day 3", "PREPARE", "Structure weakening. Prepare your roll/exit strikes now. Know the plan."],
+        ["🔴 Canary Day 4","Day 4", "ACT",     "EMA structure has shifted. Roll or exit. Do not wait for tomorrow."],
+    ], columns=["Level", "Day", "Action", "What it means"])
+    st.dataframe(_can_ref, use_container_width=True, hide_index=True)
+    st.markdown("**Three sources that vote:**")
+    _src_ref = pd.DataFrame([
+        ["Source 1", "EMA Proximity",           "EMA3 vs EMA8 gap shrinking. Fires BEFORE the crossover — gives you advance notice."],
+        ["Source 2", "Momentum Acceleration",   "3-day rolling deceleration of EMA slopes. Detects when the move toward your strike is picking up speed."],
+        ["Source 3", "Spot Drift from Tuesday", "How far spot has moved from Tuesday's close relative to ATR. Large drift = leg getting closer to short strike."],
+    ], columns=["Source", "Name", "What it detects"])
+    st.dataframe(_src_ref, use_container_width=True, hide_index=True)
+
 CANARY_COLOUR = {0: "green", 1: "amber", 2: "amber", 3: "red", 4: "red"}
 CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 
