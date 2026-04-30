@@ -137,12 +137,61 @@ st.divider()
 ui.section_header("Component 2 — Moat Count",
                   "EMA walls between spot and short strikes · Fixed point adjustment per moat label")
 
-put_moats  = sig.get("cr_put_moats",      2.0)
-call_moats = sig.get("cr_call_moats",     2.0)
-put_label  = sig.get("cr_put_moat_label", "adequate")
-call_label = sig.get("cr_call_moat_label","adequate")
-put_pts    = sig.get("cr_put_moat_pts",   100)
-call_pts   = sig.get("cr_call_moat_pts",  100)
+# Always recompute moat counts from current spot_est + stored EMA values.
+# sig["cr_put_moats"] is from EOD and can be stale if spot has moved since
+# then — this recalculation is pure arithmetic, no API call needed.
+from analytics.ema import (
+    MOAT_SET, MOAT_CLUSTER_DIST, ATR_BIWEEKLY_MULT, moat_label_and_pts
+)
+
+def _recount_put(spot_v, ema_vals_v, atr_v, ema3_slope_v=0.0):
+    floor = spot_v - atr_v * ATR_BIWEEKLY_MULT
+    cands = sorted(
+        [(p, ema_vals_v[p]) for p in MOAT_SET if floor < ema_vals_v.get(p, 0) < spot_v],
+        key=lambda x: x[1], reverse=True
+    )
+    merged, count, detail = [], 0.0, []
+    for p, v in cands:
+        if merged and abs(v - merged[-1][1]) <= MOAT_CLUSTER_DIST:
+            prev_p, prev_v = merged[-1]; merged[-1] = (f"{prev_p}+{p}", prev_v)
+        else:
+            merged.append((p, v))
+    for lbl, v in merged:
+        is_e8 = str(lbl) == "8"
+        if is_e8 and ema3_slope_v < 0:
+            count += 0.5; detail.append((f"EMA{lbl}(degraded)", round(v, 0)))
+        else:
+            count += 1.0; detail.append((f"EMA{lbl}", round(v, 0)))
+    return count, detail
+
+def _recount_call(spot_v, ema_vals_v, atr_v):
+    ceil = spot_v + atr_v * ATR_BIWEEKLY_MULT
+    cands = sorted(
+        [(p, ema_vals_v[p]) for p in MOAT_SET if spot_v < ema_vals_v.get(p, 0) < ceil],
+        key=lambda x: x[1]
+    )
+    merged, detail = [], []
+    for p, v in cands:
+        if merged and abs(v - merged[-1][1]) <= MOAT_CLUSTER_DIST:
+            prev_p, prev_v = merged[-1]; merged[-1] = (f"{prev_p}+{p}", prev_v)
+        else:
+            merged.append((p, v))
+    detail = [(f"EMA{lbl}", round(v, 0)) for lbl, v in merged]
+    return float(len(merged)), detail
+
+_ema_v    = sig.get("cr_ema_vals", {})
+_atr      = sig.get("atr14", 200)
+_e3slope  = sig.get("cr_mom_ema3_slope", sig.get("cr_mom_ema8_slope", 0.0))
+
+if _ema_v and spot_est > 0:
+    put_moats,  detail_p = _recount_put(spot_est,  _ema_v, _atr, _e3slope)
+    call_moats, detail_c = _recount_call(spot_est, _ema_v, _atr)
+else:
+    put_moats,  detail_p = sig.get("cr_put_moats",  0.0), sig.get("cr_put_moat_detail",  [])
+    call_moats, detail_c = sig.get("cr_call_moats", 0.0), sig.get("cr_call_moat_detail", [])
+
+put_label,  put_pts  = moat_label_and_pts(put_moats)
+call_label, call_pts = moat_label_and_pts(call_moats)
 
 MOAT_COLOUR = {
     "fortress": "green", "strong": "green",
@@ -154,19 +203,15 @@ with col1:
     ui.metric_card("PUT MOATS (PE side)", f"{put_moats:.1f}",
                    sub=f"{put_label.capitalize()} → {put_pts:+,} pts",
                    color=MOAT_COLOUR.get(put_label, "default"))
-    detail_p = sig.get("cr_put_moat_detail", [])
-    if detail_p:
-        for lbl, val in detail_p:
-            st.caption(f"  {lbl}: {val:,.0f}")
+    for lbl, val in detail_p:
+        st.caption(f"  {lbl}: {val:,.0f}")
 
 with col2:
     ui.metric_card("CALL MOATS (CE side)", f"{call_moats:.1f}",
                    sub=f"{call_label.capitalize()} → {call_pts:+,} pts",
                    color=MOAT_COLOUR.get(call_label, "default"))
-    detail_c = sig.get("cr_call_moat_detail", [])
-    if detail_c:
-        for lbl, val in detail_c:
-            st.caption(f"  {lbl}: {val:,.0f}")
+    for lbl, val in detail_c:
+        st.caption(f"  {lbl}: {val:,.0f}")
 
 import pandas as pd
 moat_ref = pd.DataFrame([
