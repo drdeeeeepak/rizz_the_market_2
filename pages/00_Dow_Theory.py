@@ -112,16 +112,16 @@ st.markdown("")
 c1, c2 = st.columns(2)
 with c1:
     ui.metric_card(
-        "CE HEALTH (Vulnerable in DOWNTREND)",
+        "CE HEALTH — Call leg room",
         f"{ce_health} — {ce_pts:,.0f} pts",
-        sub=f"Distance from spot to structural LH/HH",
+        sub="Spot → nearest structural high (LH/HH). Less room = CE more exposed.",
         color=_HEALTH_COL.get(ce_health, "default")
     )
 with c2:
     ui.metric_card(
-        "PE HEALTH (Vulnerable in UPTREND)",
+        "PE HEALTH — Put leg room",
         f"{pe_health} — {pe_pts:,.0f} pts",
-        sub=f"Distance from spot to structural LL/HL",
+        sub="Spot → nearest structural low (HL/LL). Less room = PE more exposed.",
         color=_HEALTH_COL.get(pe_health, "default")
     )
 

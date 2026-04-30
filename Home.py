@@ -107,6 +107,9 @@ else:
 st.session_state["signals"] = sig
 st.session_state["nifty_1h"] = nifty_1h   # used by Dow Theory page for candlestick chart
 
+from page_utils import show_page_header
+show_page_header(spot, sig.get("_saved_at", "—"))
+
 # ── Top metrics row ───────────────────────────────────────────────────────────
 near_exp, far_exp = get_near_far_expiries()
 near_dte = chains.get("near_dte", 0)

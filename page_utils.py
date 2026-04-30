@@ -106,8 +106,13 @@ def bootstrap_signals() -> tuple[dict, float, str]:
 
 
 def show_page_header(spot: float, signals_ts: str, page_key: str = "") -> None:
-    """Renders the live spot + signals timestamp caption at the top of every page."""
+    """Renders spot + signals timestamp + refresh button at the top of every page."""
     spot_str = f"{spot:,.0f}" if spot > 0 else "—"
-    st.caption(
-        f"⏱  Spot: **{spot_str}**  ·  Signals: {signals_ts}"
-    )
+    c1, c2 = st.columns([10, 1])
+    with c1:
+        st.caption(f"⏱  Spot: **{spot_str}**  ·  Signals: {signals_ts}")
+    with c2:
+        if st.button("↻", key="hdr_refresh", help="Clear cache · reload spot + VIX from Kite"):
+            st.cache_data.clear()
+            st.session_state.pop("signals", None)
+            st.rerun()
