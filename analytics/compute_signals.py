@@ -124,6 +124,28 @@ def compute_all_signals(
                     "lead_warning": False, "constituent_pe_mod": 0,
                     "constituent_ce_mod": 0})
 
+    # ── Tuesday anchor: save NIFTY entry (stocks saved by ConstituentEMAEngine) ──
+    if date.today().weekday() == 1 and not nifty_df.empty:
+        try:
+            from analytics.constituent_ema import _load_anchors, _save_anchors
+            import numpy as _np
+            _df = nifty_df.copy()
+            _h, _l, _c = _df["high"].values, _df["low"].values, _df["close"].values
+            _tr = [max(_h[i]-_l[i], abs(_h[i]-_c[i-1]), abs(_l[i]-_c[i-1]))
+                   for i in range(1, len(_df))]
+            _atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr))
+            _anchors = _load_anchors()
+            _anchors["NIFTY"] = {
+                "close": float(_df["close"].iloc[-1]),
+                "atr":   round(_atr, 1),
+                "date":  str(date.today()),
+            }
+            _save_anchors(_anchors)
+            log.info("Tuesday NIFTY anchor saved: close=%.0f atr=%.1f",
+                     _anchors["NIFTY"]["close"], _anchors["NIFTY"]["atr"])
+        except Exception as e:
+            log.error("Tuesday NIFTY anchor: %s", e)
+
     # ── Pages 5-8: RSI ─────────────────────────────────────────────────────
     try:
         rsi_eng = RSIEngine()

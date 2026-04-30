@@ -132,15 +132,32 @@ elif mom_state == "TRANSITIONING": src2_pe = 2; src2_ce = 2
 ANCHOR_FILE = Path("data/tuesday_anchors.json")
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
+tue_anchor_date = ""
 if ANCHOR_FILE.exists():
     try:
         anchors = json.loads(ANCHOR_FILE.read_text())
         nifty_anchor = anchors.get("NIFTY", anchors.get("nifty", {}))
         tue_close = nifty_anchor.get("close", 0.0)
         tue_atr   = nifty_anchor.get("atr",   atr14)
+        tue_anchor_date = nifty_anchor.get("date", "")
         tue_anchor_available = tue_close > 0
     except Exception:
         pass
+
+def _write_anchor_now(close_val: float, atr_val: float, label: str):
+    try:
+        import numpy as _np
+        existing = {}
+        if ANCHOR_FILE.exists():
+            try: existing = json.loads(ANCHOR_FILE.read_text())
+            except Exception: pass
+        existing["NIFTY"] = {"close": close_val, "atr": round(atr_val, 1),
+                              "date": label}
+        ANCHOR_FILE.parent.mkdir(exist_ok=True)
+        ANCHOR_FILE.write_text(json.dumps(existing, indent=2))
+        return True
+    except Exception as _e:
+        return str(_e)
 
 spot_now = spot
 src3_pe = src3_ce = 0
@@ -295,16 +312,6 @@ src_data = [
                    f"EMA8 slope: {ema8_slope:+.1f} pts/day (40% weight)\n"
                    f"State: {mom_state}",
     },
-    {
-        "source":  "Source 3 — Spot Drift from Tuesday Close",
-        "what":    f"{'Anchor available — ' + str(round(factor_a_pct,1)) + '% of Tuesday ATR moved' if tue_anchor_available else 'Tuesday anchor not yet set — will activate after first Tuesday EOD'}",
-        "pe_lvl":  src3_pe,
-        "ce_lvl":  src3_ce,
-        "detail":  (f"Tuesday close: {tue_close:,.0f} · Tuesday ATR: {tue_atr:.0f}\n"
-                    f"Distance: {factor_a_pct:.1f}% of Tuesday ATR14\n"
-                    f"Mean reversion: Factor B (2-day return direction) determines if signal softens")
-                   if tue_anchor_available else "Anchor writes to data/tuesday_anchors.json at EOD Tuesday",
-    },
 ]
 
 LEVEL_COLOUR = {0: "#16a34a", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
@@ -315,6 +322,21 @@ for s in src_data:
         with c1:
             st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
             st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;'>{s['detail']}</pre>", unsafe_allow_html=True)
+            # Source 3 anchor management
+            if "Source 3" in s["source"]:
+                if tue_anchor_available:
+                    st.caption(f"Anchor set: {tue_anchor_date} · close {tue_close:,.0f} · ATR {tue_atr:.0f}")
+                else:
+                    st.warning("Tuesday anchor not set. Set it now to activate Source 3.")
+                if spot > 0 and atr14 > 0:
+                    import datetime as _dt
+                    _today = str(_dt.date.today())
+                    if st.button("📌 Set Tuesday Anchor from today's data", key="set_anchor"):
+                        _result = _write_anchor_now(spot, atr14, _today)
+                        if _result is True:
+                            st.success(f"Anchor saved — close {spot:,.0f} · ATR {atr14:.0f} · date {_today}. Refresh to activate.")
+                        else:
+                            st.error(f"Failed: {_result}")
         with c2:
             col = LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
             st.markdown(
