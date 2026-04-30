@@ -283,8 +283,6 @@ mom_ref = pd.DataFrame([
 ], columns=["Momentum State", "PE Adj", "CE Adj", "Meaning"])
 with st.expander("Momentum adjustment reference", expanded=False):
     st.dataframe(mom_ref, use_container_width=True, hide_index=True)
-    st.caption("Only the threatened leg gets extra distance. FLAT = +0 both sides is correct — "
-               "no momentum means no bias, moats are reliable as-is.")
 
 st.divider()
 
