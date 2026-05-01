@@ -292,25 +292,44 @@ with c2: ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts 
 with c3: ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {ce_pct:.1f}% OTM · {sug_ce}", color="red")
 with c4: ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
 
-# Canary pill — quick status from signals
-_can_lvl = sig.get("canary", 0)
-_e3_h = sig.get("ema3", sig.get("cr_ema_vals", {}).get(3, 0))
-_e8_h = sig.get("ema8", sig.get("cr_ema_vals", {}).get(8, 0))
-_atr_h = sig.get("cr_atr14", sig.get("atr14", 200)) or 200
-_gap_pct_h = abs(_e3_h - _e8_h) / _atr_h * 100 if _e3_h and _e8_h else 0
-_can_dir_h = "BULL" if _e3_h > _e8_h else "BEAR"
-_gap_day_h = 0 if _gap_pct_h > 55 else 1 if _gap_pct_h > 35 else 2 if _gap_pct_h > 15 else 3 if _gap_pct_h > 2 else 4
-_pill_col  = {0:"#16a34a",1:"#d97706",2:"#d97706",3:"#ea580c",4:"#dc2626"}.get(_can_lvl,"#94a3b8")
-_pill_lbl  = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}.get(_can_lvl,"—")
+# Canary pill — computed from src1 (gap) + src2 (momentum), both directions
+_mscore = sig.get("cr_mom_score", 0.0)
+_e3_h   = sig.get("ema3", sig.get("cr_ema_vals", {}).get(3, 0))
+_e8_h   = sig.get("ema8", sig.get("cr_ema_vals", {}).get(8, 0))
+_atr_h  = sig.get("cr_atr14", sig.get("atr14", 200)) or 200
+_gap_pct_h  = abs(_e3_h - _e8_h) / _atr_h * 100 if _e3_h and _e8_h else 0
+_can_dir_h  = "BULL" if _e3_h > _e8_h else "BEAR"
+_gap_day_h  = 0 if _gap_pct_h > 55 else 1 if _gap_pct_h > 35 else 2 if _gap_pct_h > 15 else 3 if _gap_pct_h > 2 else 4
+
+# src2 pe/ce from momentum score (same logic as Page 02)
+def _s2h(s):
+    if -5 <= s <= 5:  return 0, 0
+    elif s > 0:       return (0,4) if s>32 else (1,3) if s>20 else (2,2) if s>11 else (3,1)
+    else:
+        a = abs(s);   return (4,0) if a>32 else (3,1) if a>20 else (2,2) if a>11 else (1,3)
+_s2_pe_h, _s2_ce_h = _s2h(_mscore)
+
+# src1 effective per direction
+_s1_pe_h = _gap_day_h if _can_dir_h == "BEAR" else 0
+_s1_ce_h = _gap_day_h if _can_dir_h == "BULL" else 0
+
+_can_pe_h = max(_s1_pe_h, _s2_pe_h)
+_can_ce_h = max(_s1_ce_h, _s2_ce_h)
+_can_lvl  = max(_can_pe_h, _can_ce_h)
+_can_side = "CE" if _can_ce_h >= _can_pe_h else "PE"
+
+# Color = direction (BEAR=red, BULL=green), brightness = canary level
+_dir_base = "#dc2626" if _can_dir_h == "BEAR" else "#16a34a"
+_pill_col = {0: _dir_base, 1:"#d97706", 2:"#d97706", 3:"#ea580c", 4:"#dc2626"}.get(_can_lvl, "#94a3b8")
+_pill_lbl = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}.get(_can_lvl, "—")
 st.markdown(
     f"<div style='display:inline-block;padding:4px 14px;border-radius:20px;"
     f"background:{_pill_col};margin-bottom:8px;'>"
-    f"<span style='color:white;font-size:11px;font-weight:700;'>CANARY · {_pill_lbl}</span>"
-    f"<span style='color:rgba(255,255,255,0.8);font-size:10px;'> · {_can_dir_h} · Gap {_gap_pct_h:.0f}% ATR</span>"
+    f"<span style='color:white;font-size:11px;font-weight:700;'>CANARY · {_pill_lbl} · {_can_dir_h}</span>"
+    f"<span style='color:rgba(255,255,255,0.8);font-size:10px;'> · {_can_side} driven · Gap {_gap_pct_h:.0f}% ATR · Src1+Src2</span>"
     f"</div>", unsafe_allow_html=True)
 
 # Skew bar with gap Rule 1 override
-_mscore = sig.get("cr_mom_score", 0.0)
 if _gap_day_h >= 3:
     _skew_h = "EXIT heavy side"; _skew_c = "#dc2626"; _forced_h = f" · Gap Day {_gap_day_h} — structure broken"
 elif _gap_day_h == 2:
