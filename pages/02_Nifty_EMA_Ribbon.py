@@ -162,18 +162,25 @@ except Exception:
 
 spot_now = spot
 src3_pe = src3_ce = 0
-factor_a_pct = factor_b = 0.0
-if tue_anchor_available and tue_close > 0 and tue_atr > 0 and spot_now > 0:
-    move      = spot_now - tue_close
-    factor_a_pct = abs(move) / tue_atr * 100
-    # Factor B not easily computable without yesterday's spot — show distance only
-    if   factor_a_pct < 20: base3 = 0
-    elif factor_a_pct < 40: base3 = 1
-    elif factor_a_pct < 60: base3 = 2
-    elif factor_a_pct < 80: base3 = 3
-    else:                    base3 = 4
-    if move > 0:  src3_ce = base3
-    else:         src3_pe = base3
+pe_sold = ce_sold = 0
+drift_pct = 0.0
+# Source 3: expiry close = Tuesday close (or last trading day before Tuesday if holiday)
+# PE sold 4% below expiry close, CE sold 3.5% above expiry close (rounded to nearest 50-pt strike)
+# Canary triggers based on % drift from expiry close toward the sold strike
+if tue_anchor_available and tue_close > 0 and spot_now > 0:
+    pe_sold   = int(round(tue_close * 0.96  / 50) * 50)
+    ce_sold   = int(round(tue_close * 1.035 / 50) * 50)
+    drift_pct = (spot_now - tue_close) / tue_close * 100
+    # CE side: sold at +3.5% → canary thresholds at +1.5%, +2.0%, +2.5%, +3.0%
+    if   drift_pct >= 3.0: src3_ce = 4
+    elif drift_pct >= 2.5: src3_ce = 3
+    elif drift_pct >= 2.0: src3_ce = 2
+    elif drift_pct >= 1.5: src3_ce = 1
+    # PE side: sold at -4.0% → canary thresholds at -2.0%, -2.5%, -3.0%, -3.5%
+    if   drift_pct <= -3.5: src3_pe = 4
+    elif drift_pct <= -3.0: src3_pe = 3
+    elif drift_pct <= -2.5: src3_pe = 2
+    elif drift_pct <= -2.0: src3_pe = 1
 
 # Overall PE and CE canary (max across sources)
 pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
@@ -260,7 +267,7 @@ with st.expander("What is the Canary? — Reference", expanded=False):
     _src_ref = pd.DataFrame([
         ["Source 1", "EMA Proximity",           "EMA3 vs EMA8 gap shrinking. Fires BEFORE the crossover — gives you advance notice."],
         ["Source 2", "Momentum Acceleration",   "3-day rolling deceleration of EMA slopes. Detects when the move toward your strike is picking up speed."],
-        ["Source 3", "Spot Drift from Tuesday", "How far spot has moved from Tuesday's close relative to ATR. Large drift = leg getting closer to short strike."],
+        ["Source 3", "Spot Drift from Expiry Close", "% drift of spot from Tuesday (expiry) close. PE sold 4% below, CE sold 3.5% above. Canary fires 2% before the sold strike."],
     ], columns=["Source", "Name", "What it detects"])
     st.dataframe(_src_ref, use_container_width=True, hide_index=True)
 
@@ -314,16 +321,18 @@ src_data = [
                    f"State: {mom_state}",
     },
     {
-        "source":  "Source 3 — Spot Drift from Tuesday Close",
-        "what":    (f"Anchor available — {factor_a_pct:.1f}% of Tuesday ATR moved"
+        "source":  "Source 3 — Spot Drift from Expiry Close",
+        "what":    (f"Drift: {drift_pct:+.2f}% from expiry close · PE sold {pe_sold:,} · CE sold {ce_sold:,}"
                     if tue_anchor_available else
-                    "Tuesday anchor not yet set — use the button below to activate"),
+                    "Expiry anchor not yet available"),
         "pe_lvl":  src3_pe,
         "ce_lvl":  src3_ce,
-        "detail":  (f"Tuesday close: {tue_close:,.0f} · Tuesday ATR: {tue_atr:.0f}\n"
-                    f"Distance: {factor_a_pct:.1f}% of Tuesday ATR14\n"
-                    f"Mean reversion: Factor B (2-day return direction) determines if signal softens")
-                   if tue_anchor_available else "No anchor file yet.",
+        "detail":  (f"Expiry close: {tue_close:,.0f} ({tue_anchor_date})\n"
+                    f"PE sold at −4.0% → {pe_sold:,}  |  CE sold at +3.5% → {ce_sold:,}\n"
+                    f"Drift from expiry: {drift_pct:+.2f}%\n"
+                    f"PE triggers: −2%(D1) −2.5%(D2) −3%(D3) −3.5%(D4)\n"
+                    f"CE triggers: +1.5%(D1) +2%(D2) +2.5%(D3) +3%(D4)")
+                   if tue_anchor_available else "No expiry anchor available.",
     },
 ]
 
@@ -338,7 +347,7 @@ for s in src_data:
             # Source 3 anchor info
             if "Source 3" in s["source"]:
                 if tue_anchor_available:
-                    st.caption(f"Anchor: {tue_anchor_date} · close {tue_close:,.0f} · ATR {tue_atr:.0f}")
+                    st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
         with c2:
             col = LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
             st.markdown(

@@ -311,14 +311,48 @@ with st.expander("📊 All Lens Distances", expanded=True):
                 "CE %OTM":   f"{cev/spot*100:.1f}%" if spot>0 else "—",
                 "CE Strike": f"~{int(spot+cev):,}" if spot>0 else "—",
             })
+        # Expiry Drift row — Tuesday (expiry) close: PE sold 4% below, CE sold 3.5% above
+        try:
+            import datetime as _dt_ed, numpy as _np_ed
+            from data.live_fetcher import get_nifty_daily as _gnd_ed
+            _daily_ed = _gnd_ed()
+            if not _daily_ed.empty:
+                _today_ed = _dt_ed.date.today()
+                _days_since_tue_ed = (_today_ed.weekday() - 1) % 7
+                _last_tue_ed = _today_ed - _dt_ed.timedelta(days=_days_since_tue_ed)
+                _trading_ed = set(_daily_ed.index.date)
+                _anchor_ed = None
+                for _off in range(7):
+                    _cand = _last_tue_ed - _dt_ed.timedelta(days=_off)
+                    if _cand in _trading_ed:
+                        _anchor_ed = _cand; break
+                if _anchor_ed:
+                    _exp_close = float(_daily_ed[_daily_ed.index.date <= _anchor_ed]["close"].iloc[-1])
+                    _pe_sold = int(round(_exp_close * 0.96  / 50) * 50)
+                    _ce_sold = int(round(_exp_close * 1.035 / 50) * 50)
+                    _pe_d = int(spot - _pe_sold) if spot > 0 else 0
+                    _ce_d = int(_ce_sold - spot) if spot > 0 else 0
+                    if _pe_d > 0 and _ce_d > 0:
+                        rows.append({
+                            "Lens":      f"Expiry Drift ({str(_anchor_ed)})",
+                            "PE Dist":   f"{_pe_d:,} pts",
+                            "PE %OTM":   f"{_pe_d/spot*100:.1f}%" if spot>0 else "—",
+                            "PE Strike": f"{_pe_sold:,}",
+                            "CE Dist":   f"{_ce_d:,} pts",
+                            "CE %OTM":   f"{_ce_d/spot*100:.1f}%" if spot>0 else "—",
+                            "CE Strike": f"{_ce_sold:,}",
+                        })
+        except Exception:
+            pass
         df_l = _pd.DataFrame(rows)
         def hl(row):
             s = [""] * len(row)
             if "⭐" in str(row["PE Dist"]): s[1]=s[2]=s[3]="background-color:#dcfce7;font-weight:700"
             if "⭐" in str(row["CE Dist"]): s[4]=s[5]=s[6]="background-color:#fee2e2;font-weight:700"
+            if "Expiry Drift" in str(row["Lens"]): s[0]=s[1]=s[2]=s[3]=s[4]=s[5]=s[6]="background-color:#fef9c3;"
             return s
         st.dataframe(df_l.style.apply(hl, axis=1), use_container_width=True, hide_index=True)
-        st.caption("⭐ = most conservative. Green = PE driver. Red = CE driver. ⚠️ = ST floor applied (no structural wall found).")
+        st.caption("⭐ = most conservative. Green = PE driver. Red = CE driver. ⚠️ = ST floor applied. 🟡 Expiry Drift = sold strikes (PE −4%, CE +3.5% from expiry close).")
 
 st.divider()
 st.caption("Each lens speaks independently. Suggested = most conservative. Lot size = 65. Score max = 100 across 8 lenses.")
