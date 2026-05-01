@@ -292,6 +292,19 @@ with c2: ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts 
 with c3: ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {ce_pct:.1f}% OTM · {sug_ce}", color="red")
 with c4: ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
 
+_mscore = sig.get("cr_mom_score", 0.0)
+if abs(_mscore) > 20:
+    _skew_h = "1:2 CE heavy — sell more calls" if _mscore > 0 else "2:1 PE heavy — sell more puts"
+    _skew_c = "#16a34a" if _mscore > 0 else "#dc2626"
+else:
+    _skew_h = "1:1 Balanced — no directional edge"
+    _skew_c = "#d97706"
+st.markdown(
+    f"<div style='padding:8px 14px;border-radius:6px;background:{_skew_c}18;border-left:3px solid {_skew_c};margin-bottom:8px;'>"
+    f"<span style='font-size:11px;font-weight:700;color:{_skew_c};'>MOMENTUM SKEW · {_skew_h}</span>"
+    f"<span style='font-size:10px;color:#64748b;'> · Score {_mscore:+.1f}% ATR/day</span>"
+    f"</div>", unsafe_allow_html=True)
+
 with st.expander("📊 All Lens Distances", expanded=True):
     lens_table = sig.get("lens_table", {})
     if lens_table:

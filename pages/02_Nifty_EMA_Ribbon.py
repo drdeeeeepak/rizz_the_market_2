@@ -119,14 +119,41 @@ elif gap_pct < 5:                                 src1 = 2
 elif gap_pct < 15:                                src1 = 1
 else:                                             src1 = 0
 
-# Source 2 — momentum acceleration (would need previous day's score; approximate from state)
-src2_map = {"STRONG_DOWN": 4, "MODERATE_DOWN": 3, "TRANSITIONING": 2,
-            "FLAT": 1, "MODERATE_UP": 0, "STRONG_UP": 0}
-src2_pe = src2_map.get(mom_state, 0)
-src2_ce = src2_map.get({"STRONG_UP": "STRONG_UP", "MODERATE_UP": "MODERATE_UP"}.get(mom_state, "FLAT"), 0)
-if mom_state == "STRONG_UP":   src2_ce = 3; src2_pe = 0
-elif mom_state == "MODERATE_UP": src2_ce = 2; src2_pe = 0
-elif mom_state == "TRANSITIONING": src2_pe = 2; src2_ce = 2
+# Source 2 — Momentum % of ATR/day · PE + CE = 4, except flat zone = 0 + 0
+def _src2_levels(score):
+    if -5.0 <= score <= 5.0:  return 0, 0          # flat: both singing (amber)
+    elif score > 0:                                  # bullish
+        if   score > 32: return 0, 4
+        elif score > 20: return 1, 3
+        elif score > 11: return 2, 2
+        else:            return 3, 1                # 5–11%
+    else:                                            # bearish
+        s = abs(score)
+        if   s > 32: return 4, 0
+        elif s > 20: return 3, 1
+        elif s > 11: return 2, 2
+        else:        return 1, 3                    # 5–11%
+
+src2_pe, src2_ce = _src2_levels(mom_score)
+
+# Color overrides for Source 2 cards
+if src2_pe == 0 and src2_ce == 0:                  # flat: amber both
+    src2_pe_col = src2_ce_col = "#d97706"
+elif src2_pe == 2 and src2_ce == 2 and mom_score > 0:  # bullish 11-20%: CE real, PE light
+    src2_pe_col = "#86efac"; src2_ce_col = "#16a34a"
+elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 11-20%: PE real, CE light
+    src2_pe_col = "#dc2626"; src2_ce_col = "#fca5a5"
+else:
+    src2_pe_col = src2_ce_col = None               # use standard LEVEL_COLOUR
+
+# Skew recommendation
+if abs(mom_score) > 20:
+    if mom_score > 0:
+        skew_label  = "1:2 CE heavy"; skew_note = "sell more calls · maximize CE premium"; skew_col = "#16a34a"
+    else:
+        skew_label  = "2:1 PE heavy"; skew_note = "sell more puts · maximize PE premium";  skew_col = "#dc2626"
+else:
+    skew_label = "1:1 Balanced"; skew_note = "no directional edge · balanced condor"; skew_col = "#d97706"
 
 # Source 3 — Tuesday anchor: auto-computed from cached daily data
 # Uses last Tuesday, or last trading day before it if Tuesday was a holiday
@@ -312,13 +339,19 @@ src_data = [
                    f"Gap {gap_pct:.1f}% ATR → {'>15%=Clear, 5-15%=Day1, <5%=Day2, Cross=Day3, EMA8/16 close=Day4'}",
     },
     {
-        "source":  "Source 2 — Momentum Acceleration (3-day rolling)",
-        "what":    f"Momentum state: {mom_state} (Score: {mom_score:+.1f}%). Rolling 3-day deceleration check.",
-        "pe_lvl":  src2_pe,
-        "ce_lvl":  src2_ce,
-        "detail":  f"EMA3 slope: {ema3_slope:+.1f} pts/day (60% weight)\n"
-                   f"EMA8 slope: {ema8_slope:+.1f} pts/day (40% weight)\n"
-                   f"State: {mom_state}",
+        "source":      "Source 2 — Momentum Score (% of ATR/day)",
+        "what":        f"Score: {mom_score:+.1f}% of ATR/day · IC Shape: {skew_label}",
+        "pe_lvl":      src2_pe,
+        "ce_lvl":      src2_ce,
+        "pe_col":      src2_pe_col,
+        "ce_col":      src2_ce_col,
+        "detail":      f"EMA3 slope: {ema3_slope:+.1f} pts/day (60% weight)\n"
+                       f"EMA8 slope: {ema8_slope:+.1f} pts/day (40% weight)\n"
+                       f"Combined score: {mom_score:+.1f}% ATR/day\n"
+                       f"Thresholds: >32%(D0/D4) 20-32%(D1/D3) 11-20%(D2/D2) 5-11%(D3/D1) flat±5%=0/0",
+        "skew_label":  skew_label,
+        "skew_note":   skew_note,
+        "skew_col":    skew_col,
     },
     {
         "source":  "Source 3 — Spot Drift from Expiry Close",
@@ -344,23 +377,29 @@ for s in src_data:
         with c1:
             st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
             st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;'>{s['detail']}</pre>", unsafe_allow_html=True)
-            # Source 3 anchor info
-            if "Source 3" in s["source"]:
-                if tue_anchor_available:
-                    st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
+            if "Source 3" in s["source"] and tue_anchor_available:
+                st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
         with c2:
-            col = LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
+            col = s.get("pe_col") or LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
             st.markdown(
                 f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
                 f"<div style='font-size:9px;color:{col};font-weight:700;'>PE LEVEL</div>"
                 f"<div style='font-size:18px;font-weight:900;color:{col};'>{CANARY_ICON.get(s['pe_lvl'],'')} {CANARY_LABEL.get(s['pe_lvl'],'—')}</div>"
                 f"</div>", unsafe_allow_html=True)
         with c3:
-            col = LEVEL_COLOUR.get(s["ce_lvl"], "#94a3b8")
+            col = s.get("ce_col") or LEVEL_COLOUR.get(s["ce_lvl"], "#94a3b8")
             st.markdown(
                 f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
                 f"<div style='font-size:9px;color:{col};font-weight:700;'>CE LEVEL</div>"
                 f"<div style='font-size:18px;font-weight:900;color:{col};'>{CANARY_ICON.get(s['ce_lvl'],'')} {CANARY_LABEL.get(s['ce_lvl'],'—')}</div>"
+                f"</div>", unsafe_allow_html=True)
+        if "skew_label" in s:
+            sc = s["skew_col"]
+            st.markdown(
+                f"<div style='margin-top:8px;padding:8px 14px;border-radius:6px;"
+                f"background:{sc}18;border-left:3px solid {sc};'>"
+                f"<span style='font-size:11px;font-weight:700;color:{sc};'>IC SHAPE · {s['skew_label']}</span>"
+                f"<span style='font-size:10px;color:#334155;'> — {s['skew_note']}</span>"
                 f"</div>", unsafe_allow_html=True)
 
 st.divider()
