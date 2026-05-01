@@ -223,9 +223,9 @@ overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
 
 # ── Canary colour palettes ──────────────────────────────────────────────────
 # PE = green gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
-PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#4ade80", 4:"#86efac"}
+PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#bbf7d0", 4:"#dcfce7"}
 # CE = red gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
-CE_RED   = {0:"#7f1d1d", 1:"#991b1b", 2:"#dc2626", 3:"#f87171", 4:"#fca5a5"}
+CE_RED   = {0:"#7f1d1d", 1:"#991b1b", 2:"#dc2626", 3:"#fecaca", 4:"#fee2e2"}
 # Text: white on deep shades, dark on light shades
 def _txt(lvl): return "#1e293b" if lvl >= 3 else "white"
 # Both singing → amber
