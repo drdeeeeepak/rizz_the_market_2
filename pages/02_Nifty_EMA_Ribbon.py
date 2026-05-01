@@ -244,6 +244,7 @@ CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
                  3: "Canary Day 3", 4: "Canary Day 4"}
 CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
 CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
+CANARY_HEADER_COLOUR = {0: "#d97706", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
 overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
 overall_label  = CANARY_LABEL.get(overall_canary, "Canary Day 4")
 
