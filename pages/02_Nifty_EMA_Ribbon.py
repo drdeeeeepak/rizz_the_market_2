@@ -291,7 +291,7 @@ with st.expander("Cluster Regime Reference", expanded=False):
     def _hl_reg(val):
         return "background-color:#dbeafe;font-weight:700" if val == regime else ""
     st.dataframe(_reg_df.style.map(_hl_reg, subset=["Regime"]),
-                 use_container_width=True, hide_index=True)
+                 width="stretch", hide_index=True)
 
 st.title("Page 02 — EMA Hold Monitor")
 st.caption("Three-Source Canary · PE and CE independently · Live Moat Status · Hold / Watch / Prepare / Act")
@@ -328,14 +328,14 @@ with st.expander("What is the Canary? — Reference", expanded=False):
         ["🔴 Canary Day 3","Day 3", "PREPARE", "Structure weakening. Prepare your roll/exit strikes now. Know the plan."],
         ["🔴 Canary Day 4","Day 4", "ACT",     "EMA structure has shifted. Roll or exit. Do not wait for tomorrow."],
     ], columns=["Level", "Day", "Action", "What it means"])
-    st.dataframe(_can_ref, use_container_width=True, hide_index=True)
+    st.dataframe(_can_ref, width="stretch", hide_index=True)
     st.markdown("**Three sources that vote:**")
     _src_ref = pd.DataFrame([
         ["Source 1", "EMA Proximity",           "EMA3 vs EMA8 gap shrinking. Fires BEFORE the crossover — gives you advance notice."],
         ["Source 2", "Momentum Acceleration",   "3-day rolling deceleration of EMA slopes. Detects when the move toward your strike is picking up speed."],
         ["Source 3", "Spot Drift from Expiry Close", "% drift of spot from Tuesday (expiry) close. PE sold 4% below, CE sold 3.5% above. Canary fires 2% before the sold strike."],
     ], columns=["Source", "Name", "What it detects"])
-    st.dataframe(_src_ref, use_container_width=True, hide_index=True)
+    st.dataframe(_src_ref, width="stretch", hide_index=True)
 
 CANARY_ICON = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 
@@ -615,5 +615,5 @@ with st.expander("Hold Table Reference — full grid", expanded=False):
         ["0 moats",   "Day 2–4", "ACT",     "Exit or roll immediately"],
     ]
     df_ref = pd.DataFrame(ref_rows, columns=["Moats", "Canary Day", "Action", "Note"])
-    st.dataframe(df_ref, use_container_width=True, hide_index=True)
+    st.dataframe(df_ref, width="stretch", hide_index=True)
     st.caption("Applied per side independently. CE and PE each get their own action. More severe = page recommendation.")

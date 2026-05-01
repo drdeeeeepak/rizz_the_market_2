@@ -159,4 +159,4 @@ with st.expander("BandWidth Reference Table", expanded=False):
         if "4% to 7%" in str(val) and 4 <= bw_pct <= 7: return "background-color:#dcfce7;font-weight:700"
         if "10%" in str(val) and bw_pct > 10: return "background-color:#fef3c7;font-weight:700"
         return ""
-    st.dataframe(df_ref.style.map(hl_bw, subset=["BW%"]), use_container_width=True, hide_index=True)
+    st.dataframe(df_ref.style.map(hl_bw, subset=["BW%"]), width="stretch", hide_index=True)

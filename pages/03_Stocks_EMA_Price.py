@@ -197,7 +197,7 @@ if per:
     styled = (df_t[display_cols].style
               .map(colour_moat_col, subset=["Put Moats", "Call Moats"])
               .map(colour_mom, subset=["Momentum"]))
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width="stretch", hide_index=True)
 
     st.caption("Note: No canary shown here — canary is a hold monitor signal and lives on Page 04 only.")
 else:
@@ -295,4 +295,4 @@ rows_mod = [
     ["Final constituent CE modifier",f"{ce_total:+} pts",         "IT drag only — capped at +100 pts"],
 ]
 df_mod = pd.DataFrame(rows_mod, columns=["Item", "Value", "Note"])
-st.dataframe(df_mod, use_container_width=True, hide_index=True)
+st.dataframe(df_mod, width="stretch", hide_index=True)

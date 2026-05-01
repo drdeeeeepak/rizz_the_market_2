@@ -132,7 +132,7 @@ def hl_state(val):
     if val == state: return "background-color:#dbeafe;font-weight:700"
     return ""
 st.dataframe(df_states.style.map(hl_state, subset=["State"]),
-             use_container_width=True, hide_index=True)
+             width="stretch", hide_index=True)
 
 st.divider()
 
@@ -159,7 +159,7 @@ df_ivp = pd.DataFrame(IVP_DATA, columns=["IVP Range","Zone","Action"])
 def hl_ivp(val):
     if val == ivp_zone: return "background-color:#dbeafe;font-weight:700"
     return ""
-st.dataframe(df_ivp.style.map(hl_ivp, subset=["Zone"]), use_container_width=True, hide_index=True)
+st.dataframe(df_ivp.style.map(hl_ivp, subset=["Zone"]), width="stretch", hide_index=True)
 
 st.divider()
 

@@ -222,7 +222,7 @@ moat_ref = pd.DataFrame([
     ["0",   "Exposed",  "+350 pts", "No EMA protection at all on this side."],
 ], columns=["Moat Count", "Label", "Adjustment", "Reasoning"])
 with st.expander("Moat adjustment reference", expanded=False):
-    st.dataframe(moat_ref, use_container_width=True, hide_index=True)
+    st.dataframe(moat_ref, width="stretch", hide_index=True)
     st.caption("Clustering rule: moats within 50 pts of each other = ONE moat. "
                "Degraded rule: EMA8 put-side moat with negative slope = 0.5 moat.")
 
@@ -282,7 +282,7 @@ mom_ref = pd.DataFrame([
     ["STRONG_UP",     "+0 pts",   "+100 pts", "CE is the threatened leg. Market moving up fast."],
 ], columns=["Momentum State", "PE Adj", "CE Adj", "Meaning"])
 with st.expander("Momentum adjustment reference", expanded=False):
-    st.dataframe(mom_ref, use_container_width=True, hide_index=True)
+    st.dataframe(mom_ref, width="stretch", hide_index=True)
 
 st.divider()
 

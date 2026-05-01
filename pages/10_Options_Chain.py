@@ -198,7 +198,7 @@ if models:
         if "BINDING" in str(row["Method"]):
             return ["background-color:#dbeafe;font-weight:700"] * len(row)
         return [""] * len(row)
-    st.dataframe(df_m.style.apply(hl_binding, axis=1), use_container_width=True, hide_index=True)
+    st.dataframe(df_m.style.apply(hl_binding, axis=1), width="stretch", hide_index=True)
 
     st.markdown("")
     c1, c2, c3, c4 = st.columns(4)

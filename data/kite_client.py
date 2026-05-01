@@ -258,7 +258,7 @@ def _show_login_ui(kite) -> None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.link_button("🔑 Login with Kite (Zerodha)", kite.login_url(),
-                        use_container_width=True, type="primary")
+                        width="stretch", type="primary")
         st.markdown("""
         <p style='text-align:center;color:#94a3b8;font-size:11px;margin-top:14px;'>
         After login, your token is automatically saved to GitHub<br>

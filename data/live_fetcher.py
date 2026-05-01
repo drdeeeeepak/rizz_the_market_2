@@ -73,7 +73,8 @@ def get_nifty_spot() -> float:
         for key in ["NSE:NIFTY 50", "NIFTY 50"]:
             if key in quote2:
                 return float(quote2[key]["last_price"])
-        log.warning("Spot key not found. Keys: %s | %s", list(quote.keys())[:5], list(quote2.keys())[:5])
+        if quote or quote2:  # only warn when API returned something but key was unexpected
+            log.warning("Spot key not found. Keys: %s | %s", list(quote.keys())[:5], list(quote2.keys())[:5])
         return 0.0
     except Exception as e:
         log.error("Spot fetch failed: %s", e); return 0.0

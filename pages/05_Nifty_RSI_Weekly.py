@@ -118,7 +118,7 @@ with st.expander("Weekly Regime Reference Table", expanded=False):
         if val == w_reg: return "background-color:#dbeafe;font-weight:700"
         return ""
     st.dataframe(df_ref.style.map(hl_regime, subset=["Regime"]),
-                 use_container_width=True, hide_index=True)
+                 width="stretch", hide_index=True)
 
 st.divider()
 

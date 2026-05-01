@@ -210,7 +210,7 @@ if not far_sc.empty:
         styled = styled.map(style_velocity, subset=["pe_velocity_label","ce_velocity_label"])
     if ce_s or pe_s:
         styled = styled.apply(hl_strikes, axis=1)
-    st.dataframe(styled, use_container_width=True, height=380)
+    st.dataframe(styled, width="stretch", height=380)
 
     # Quick wall summary
     if "pe_oi" in far_sc.columns:
@@ -328,7 +328,7 @@ with st.sidebar:
     st.subheader("Your IC Strikes")
     ce_in = st.number_input("CE Short Strike", value=int(st.session_state.get("ce_short",0)), step=50)
     pe_in = st.number_input("PE Short Strike", value=int(st.session_state.get("pe_short",0)), step=50)
-    if st.button("Set strikes", use_container_width=True):
+    if st.button("Set strikes", width="stretch"):
         st.session_state["ce_short"] = ce_in
         st.session_state["pe_short"] = pe_in
         st.rerun()

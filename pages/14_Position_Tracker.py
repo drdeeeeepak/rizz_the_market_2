@@ -228,7 +228,7 @@ for i, ps in enumerate(pos_summaries):
 # Manual refresh button
 col_ref, col_time, _ = st.columns([1, 2, 5])
 with col_ref:
-    if st.button("🔄 Refresh P&L", use_container_width=True,
+    if st.button("🔄 Refresh P&L", width="stretch",
                  help="Fetch latest LTP for all live legs and recalculate P&L"):
         st.cache_data.clear()
         st.rerun()
@@ -307,7 +307,7 @@ def _render_single_leg(tab_idx, pos, leg_id, leg, label, default_dirn, positions
         # Buttons
         btn1, btn2, btn3 = st.columns(3)
         with btn1:
-            if st.button("💾 Save leg", key=f"{key_pfx}_save", use_container_width=True):
+            if st.button("💾 Save leg", key=f"{key_pfx}_save", width="stretch"):
                 positions[tab_idx]["legs"][leg_id].update({
                     "active":        True,
                     "booked":        False,
@@ -328,7 +328,7 @@ def _render_single_leg(tab_idx, pos, leg_id, leg, label, default_dirn, positions
                                                    step=0.5, min_value=0.0,
                                                    key=f"{key_pfx}_exitquick",
                                                    label_visibility="collapsed")
-                if st.button("📦 Book", key=f"{key_pfx}_book", use_container_width=True,
+                if st.button("📦 Book", key=f"{key_pfx}_book", width="stretch",
                              help="Mark leg as closed at exit premium"):
                     positions[tab_idx]["legs"][leg_id].update({
                         "booked":       True,
@@ -340,7 +340,7 @@ def _render_single_leg(tab_idx, pos, leg_id, leg, label, default_dirn, positions
 
         with btn3:
             if is_active:
-                if st.button("🗑 Remove", key=f"{key_pfx}_del", use_container_width=True):
+                if st.button("🗑 Remove", key=f"{key_pfx}_del", width="stretch"):
                     positions[tab_idx]["legs"][leg_id] = empty_leg(leg_id)
                     positions[tab_idx]["legs"][leg_id]["type"]      = leg_id.split("_")[0]
                     positions[tab_idx]["legs"][leg_id]["direction"]  = default_dirn

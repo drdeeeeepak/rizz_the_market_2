@@ -189,7 +189,7 @@ if per:
     styled = (df_t[display_cols].style
               .map(colour_overall, subset=["Overall", "PE Side", "CE Side"])
               .map(colour_src, subset=["S1 PE", "S2 PE", "S3 PE"]))
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width="stretch", hide_index=True)
 
 st.divider()
 
@@ -220,7 +220,7 @@ if per:
             ["PE Canary Overall",                d.get("canary_pe_level", 0), "Max of three sources on PE side"],
         ]
         df_pe = pd.DataFrame(src_rows_pe, columns=["Source", "Level", "What It Measures"])
-        st.dataframe(df_pe, use_container_width=True, hide_index=True)
+        st.dataframe(df_pe, width="stretch", hide_index=True)
 
     with col2:
         st.markdown(f"**{stock_choice} — CE Side Canary: {canary_text(d.get('canary_ce_level', 0))}**")
@@ -231,7 +231,7 @@ if per:
             ["CE Canary Overall",                d.get("canary_ce_level", 0), "Max of three sources on CE side"],
         ]
         df_ce = pd.DataFrame(src_rows_ce, columns=["Source", "Level", "What It Measures"])
-        st.dataframe(df_ce, use_container_width=True, hide_index=True)
+        st.dataframe(df_ce, width="stretch", hide_index=True)
 
     # Context for selected stock
     st.markdown(f"**{stock_choice} — Current State**")
@@ -294,7 +294,7 @@ if per:
 
     styled_m = df_m[["Stock", "Put Moats (eff.)", "Moat EMA Levels", "Clustering Alert"]].style\
         .map(colour_moat_eff, subset=["Put Moats (eff.)"])
-    st.dataframe(styled_m, use_container_width=True, hide_index=True)
+    st.dataframe(styled_m, width="stretch", hide_index=True)
 
 st.divider()
 
@@ -360,7 +360,7 @@ ref_data = [
 df_ref = pd.DataFrame(ref_data,
                       columns=["Group Canary", "Breadth Score", "Recommendation", "Note"])
 st.caption("Group Action Reference Table")
-st.dataframe(df_ref, use_container_width=True, hide_index=True)
+st.dataframe(df_ref, width="stretch", hide_index=True)
 
 st.divider()
 st.caption(

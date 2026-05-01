@@ -415,7 +415,7 @@ with st.expander("📊 All Lens Distances", expanded=True):
             if "⭐" in str(row["CE Dist"]): s[4]=s[5]=s[6]="background-color:#fee2e2;font-weight:700"
             if "Expiry Drift" in str(row["Lens"]): s[0]=s[1]=s[2]=s[3]=s[4]=s[5]=s[6]="background-color:#fef9c3;"
             return s
-        st.dataframe(df_l.style.apply(hl, axis=1), use_container_width=True, hide_index=True)
+        st.dataframe(df_l.style.apply(hl, axis=1), width="stretch", hide_index=True)
         st.caption("⭐ = most conservative. Green = PE driver. Red = CE driver. ⚠️ = ST floor applied. 🟡 Expiry Drift = sold strikes (PE −4%, CE +3.5% from expiry close).")
 
 st.divider()
@@ -424,7 +424,7 @@ st.caption("Each lens speaks independently. Suggested = most conservative. Lot s
 with st.sidebar:
     st.markdown("---")
     st.markdown("**Session**")
-    if st.button("🚪 Logout / Clear Token", use_container_width=True):
+    if st.button("🚪 Logout / Clear Token", width="stretch"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         import os
         for tp in [".kite_token","data/.kite_token", Path(__file__).parent/"data"/".kite_token"]:

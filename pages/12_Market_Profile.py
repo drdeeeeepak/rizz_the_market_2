@@ -165,7 +165,7 @@ with col2:
         fig.update_layout(height=300, margin=dict(l=0,r=120,t=20,b=0),
                           yaxis_title="Nifty Level",
                           plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("VA levels not yet computed — run Home page first.")
 
@@ -243,7 +243,7 @@ with st.expander("Nesting + Moat Count Combined Action Table", expanded=False):
     def hl_nesting(val):
         if nesting in str(val): return "background-color:#dbeafe;font-weight:700"
         return ""
-    st.dataframe(df_n.style.map(hl_nesting, subset=["Nesting"]), use_container_width=True, hide_index=True)
+    st.dataframe(df_n.style.map(hl_nesting, subset=["Nesting"]), width="stretch", hide_index=True)
 
 st.divider()
 

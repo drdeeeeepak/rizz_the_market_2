@@ -195,6 +195,9 @@ class MarketProfileEngine(BaseStrategy):
         days_since_wed = (today.weekday() - 2) % 7   # Wed=2
         last_wed = today - timedelta(days=days_since_wed)
         start    = pd.Timestamp(last_wed)
+        # Match timezone of index if tz-aware
+        if df.index.tz is not None:
+            start = start.tz_localize(df.index.tz)
         window   = df[df.index >= start]
         return window if not window.empty else df.tail(5)
 

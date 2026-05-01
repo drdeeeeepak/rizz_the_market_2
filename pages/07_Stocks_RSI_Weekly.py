@@ -129,7 +129,7 @@ if per:
     styled = (df_t.style
               .map(colour_w_rsi, subset=["W RSI"])
               .map(colour_dw, subset=["D-W Div"]))
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=380)
+    st.dataframe(styled, width="stretch", hide_index=True, height=380)
 else:
     st.info("No stock data available.")
 
@@ -161,7 +161,7 @@ def hl_active(val):
     if "YES" in str(val): return "color:#dc2626;font-weight:700"
     return "color:#16a34a"
 st.dataframe(df_sig.style.map(hl_active, subset=["Active"]),
-             use_container_width=True, hide_index=True)
+             width="stretch", hide_index=True)
 
 st.divider()
 
@@ -186,7 +186,7 @@ for new_name, legacy, trigger, pe_mod, ce_mod in DSIG_ROWS:
                       "Trigger": trigger, "PE Mod": pe_mod, "CE Mod": ce_mod})
 df_dsig = pd.DataFrame(dsig_rows)
 st.dataframe(df_dsig.style.map(hl_active, subset=["Active"]),
-             use_container_width=True, hide_index=True)
+             width="stretch", hide_index=True)
 
 st.divider()
 

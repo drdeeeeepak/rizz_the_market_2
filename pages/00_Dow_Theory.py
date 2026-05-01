@@ -185,7 +185,7 @@ if score_hist:
         df_hist.style
             .map(_colour_score,  subset=["Score"])
             .map(_colour_health, subset=["CE Health","PE Health"]),
-        use_container_width=True, hide_index=True
+        width="stretch", hide_index=True
     )
     st.caption(
         f"PRIME = ideal entry zone · GOOD = acceptable · WAIT = not yet · "
@@ -379,7 +379,7 @@ if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
                    type="category"),
         plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption(
         f"Last 10 trading days · {len(df_chart)} candles of 1H OHLCV · "
         f"▼ = pivot high · ▲ = pivot low · green band = structural range · "
@@ -414,7 +414,7 @@ elif ph_last > 0 and pl_last > 0:
         xaxis=dict(visible=False),
         plot_bgcolor="#f8f9fb", paper_bgcolor="#f8f9fb", showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption("1H candle data unavailable — level lines only. Open Home page first to load candles.")
 
 else:
@@ -448,6 +448,6 @@ def hl_current(val):
 
 st.dataframe(
     df_ref.style.map(hl_current, subset=["Phase"]),
-    use_container_width=True, hide_index=True
+    width="stretch", hide_index=True
 )
 st.caption("Highlighted row = current phase. Phase codes: UT=Uptrend, DT=Downtrend, MX=Mixed, SC=Consolidating.")
