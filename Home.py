@@ -292,17 +292,38 @@ with c2: ui.metric_card("PE WING",  f"{fpew:,}", sub=f"−{WING_DISTANCE:,} pts 
 with c3: ui.metric_card("CE SHORT", f"{fce:,}", sub=f"+{fd_call:,} pts · {ce_pct:.1f}% OTM · {sug_ce}", color="red")
 with c4: ui.metric_card("CE WING",  f"{fcew:,}", sub=f"+{WING_DISTANCE:,} pts beyond short")
 
+# Canary pill — quick status from signals
+_can_lvl = sig.get("canary", 0)
+_e3_h = sig.get("ema3", sig.get("cr_ema_vals", {}).get(3, 0))
+_e8_h = sig.get("ema8", sig.get("cr_ema_vals", {}).get(8, 0))
+_atr_h = sig.get("cr_atr14", sig.get("atr14", 200)) or 200
+_gap_pct_h = abs(_e3_h - _e8_h) / _atr_h * 100 if _e3_h and _e8_h else 0
+_can_dir_h = "BULL" if _e3_h > _e8_h else "BEAR"
+_gap_day_h = 0 if _gap_pct_h > 55 else 1 if _gap_pct_h > 35 else 2 if _gap_pct_h > 15 else 3 if _gap_pct_h > 2 else 4
+_pill_col  = {0:"#16a34a",1:"#d97706",2:"#d97706",3:"#ea580c",4:"#dc2626"}.get(_can_lvl,"#94a3b8")
+_pill_lbl  = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}.get(_can_lvl,"—")
+st.markdown(
+    f"<div style='display:inline-block;padding:4px 14px;border-radius:20px;"
+    f"background:{_pill_col};margin-bottom:8px;'>"
+    f"<span style='color:white;font-size:11px;font-weight:700;'>CANARY · {_pill_lbl}</span>"
+    f"<span style='color:rgba(255,255,255,0.8);font-size:10px;'> · {_can_dir_h} · Gap {_gap_pct_h:.0f}% ATR</span>"
+    f"</div>", unsafe_allow_html=True)
+
+# Skew bar with gap Rule 1 override
 _mscore = sig.get("cr_mom_score", 0.0)
-if abs(_mscore) > 20:
-    _skew_h = "1:2 CE heavy — sell more calls" if _mscore > 0 else "2:1 PE heavy — sell more puts"
-    _skew_c = "#16a34a" if _mscore > 0 else "#dc2626"
+if _gap_day_h >= 3:
+    _skew_h = "EXIT heavy side"; _skew_c = "#dc2626"; _forced_h = f" · Gap Day {_gap_day_h} — structure broken"
+elif _gap_day_h == 2:
+    _skew_h = "1:1 Forced"; _skew_c = "#ea580c"; _forced_h = f" · Gap Day 2 ({_gap_pct_h:.0f}% ATR) override"
+elif abs(_mscore) > 20:
+    _skew_h = "2:1 PE heavy" if _mscore > 0 else "1:2 CE heavy"
+    _skew_c = "#16a34a" if _mscore > 0 else "#dc2626"; _forced_h = ""
 else:
-    _skew_h = "1:1 Balanced — no directional edge"
-    _skew_c = "#d97706"
+    _skew_h = "1:1 Balanced"; _skew_c = "#d97706"; _forced_h = ""
 st.markdown(
     f"<div style='padding:8px 14px;border-radius:6px;background:{_skew_c}18;border-left:3px solid {_skew_c};margin-bottom:8px;'>"
-    f"<span style='font-size:11px;font-weight:700;color:{_skew_c};'>MOMENTUM SKEW · {_skew_h}</span>"
-    f"<span style='font-size:10px;color:#64748b;'> · Score {_mscore:+.1f}% ATR/day</span>"
+    f"<span style='font-size:11px;font-weight:700;color:{_skew_c};'>IC SHAPE · {_skew_h}</span>"
+    f"<span style='font-size:10px;color:#64748b;'> · Score {_mscore:+.1f}% ATR/day{_forced_h}</span>"
     f"</div>", unsafe_allow_html=True)
 
 with st.expander("📊 All Lens Distances", expanded=True):

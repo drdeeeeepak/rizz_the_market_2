@@ -111,13 +111,13 @@ e30 = sig.get("ema30", ema_vals.get(30, 0))
 gap_pts = abs(e3 - e8) if e3 and e8 else 0
 gap_pct = gap_pts / atr14 * 100 if atr14 > 0 else 0
 
-# Source 1 level approximation
-if e16 > 0 and e8 > 0 and abs(e8 - e16) < 30:  src1 = 4
-elif e8 < e16 and e3 < e8:                       src1 = 3
-elif e3 < e8:                                     src1 = 2 if gap_pct < 5 else 1
-elif gap_pct < 5:                                 src1 = 2
-elif gap_pct < 15:                                src1 = 1
-else:                                             src1 = 0
+# Source 1 — EMA3/EMA8 gap · thresholds: 55/35/15 % of ATR
+# Direction: BULL = CE threatened · BEAR = PE threatened
+if   gap_pct > 55: src1 = 0   # Singing — structure wide, safe
+elif gap_pct > 35: src1 = 1   # Stable trend
+elif gap_pct > 15: src1 = 2   # Compressing — flatten skew to 1:1
+elif gap_pct >  2: src1 = 3   # Cross imminent — exit heavy side
+else:              src1 = 4   # Cross — close all
 
 # Source 2 — Momentum % of ATR/day · PE + CE = 4, except flat zone = 0 + 0
 def _src2_levels(score):
@@ -146,14 +146,21 @@ elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 11-20%: PE real
 else:
     src2_pe_col = src2_ce_col = None               # use standard LEVEL_COLOUR
 
-# Skew recommendation
+# Skew from momentum (bullish = PE heavy, bearish = CE heavy — sell more on the SAFE side)
+skew_forced = False
 if abs(mom_score) > 20:
     if mom_score > 0:
-        skew_label  = "1:2 CE heavy"; skew_note = "sell more calls · maximize CE premium"; skew_col = "#16a34a"
+        skew_label = "2:1 PE heavy"; skew_note = "market rising — sell more puts, CE exposure light"; skew_col = "#16a34a"
     else:
-        skew_label  = "2:1 PE heavy"; skew_note = "sell more puts · maximize PE premium";  skew_col = "#dc2626"
+        skew_label = "1:2 CE heavy"; skew_note = "market falling — sell more calls, PE exposure light"; skew_col = "#dc2626"
 else:
     skew_label = "1:1 Balanced"; skew_note = "no directional edge · balanced condor"; skew_col = "#d97706"
+
+# Rule 1: Gap overrides skew at Day 2+
+if src1 >= 3:
+    skew_label = "EXIT heavy side"; skew_note = f"Gap Day {src1} ({gap_pct:.0f}% ATR) — structure broken"; skew_col = "#dc2626"; skew_forced = True
+elif src1 == 2:
+    skew_label = "1:1 Forced"; skew_note = f"Gap Day 2 ({gap_pct:.0f}% ATR) — overrides momentum skew"; skew_col = "#ea580c"; skew_forced = True
 
 # Source 3 — Tuesday anchor: auto-computed from cached daily data
 # Uses last Tuesday, or last trading day before it if Tuesday was a holiday
@@ -313,9 +320,11 @@ def canary_card(side, level, driving_src):
                    sub=f"Driver: {driving_src} · {action}", color=color)
 
 col1, col2 = st.columns(2)
-pe_driver = "Source 1" if src1 >= src2_pe and src1 >= src3_pe else \
+src1_pe_eff = src1 if can_dir == "BEAR" else 0
+src1_ce_eff = src1 if can_dir == "BULL" else 0
+pe_driver = "Source 1" if src1_pe_eff >= src2_pe and src1_pe_eff >= src3_pe else \
             "Source 2" if src2_pe >= src3_pe else "Source 3"
-ce_driver = "Source 1" if src1 >= src2_ce and src1 >= src3_ce else \
+ce_driver = "Source 1" if src1_ce_eff >= src2_ce and src1_ce_eff >= src3_ce else \
             "Source 2" if src2_ce >= src3_ce else "Source 3"
 
 with col1: canary_card("PE (Put Side)", pe_canary, pe_driver)
@@ -329,14 +338,53 @@ st.divider()
 ui.section_header("Section 2 — Three Source Breakdown",
                   "Diagnostic layer — see exactly which source is driving the canary and why")
 
+# ── Verdict block: synthesises the interplay of all three sources ─────────────
+_vc_lvl  = max(pe_canary, ce_canary)
+_vc_side = "CE" if ce_canary >= pe_canary else "PE"
+_vc_drv  = ce_driver if ce_canary >= pe_canary else pe_driver
+_vc_col  = CANARY_HEADER_COLOUR.get(_vc_lvl, "#94a3b8")
+
+if _vc_lvl == 0:
+    _verdict_main = "All three sources are clear. EMA structure intact, no drift pressure. Hold with confidence."
+else:
+    _verdict_main = (f"{_vc_drv} is driving {_vc_side} to {CANARY_LABEL.get(_vc_lvl)} — "
+                     f"{CANARY_ACTION.get(_vc_lvl,'WATCH')} on the {_vc_side} side.")
+
+if src1 >= 3:
+    _rule1_text = f"Rule 1 — Gap Day {src1} ({gap_pct:.0f}% ATR): exit the heavy side immediately. Skew irrelevant."
+    _rule1_col  = "#dc2626"
+elif src1 == 2:
+    _rule1_text = f"Rule 1 — Gap Day 2 ({gap_pct:.0f}% ATR): skew overridden — flatten to 1:1 regardless of momentum."
+    _rule1_col  = "#ea580c"
+else:
+    _rule1_text = f"Rule 1 — Gap Day {src1} ({gap_pct:.0f}% ATR, {can_dir}): {skew_label} skew stands."
+    _rule1_col  = "#16a34a"
+
+if _vc_lvl > 0:
+    _rule2_text = f"Rule 2 — Harshest signal wins: {_vc_drv} overrides all other sources at {CANARY_LABEL.get(_vc_lvl)}."
+    _rule2_col  = _vc_col
+else:
+    _rule2_text = "Rule 2 — No source firing. Max() across all sources = Singing."
+    _rule2_col  = "#16a34a"
+
+st.markdown(
+    f"<div style='border-left:4px solid {_vc_col};padding:10px 16px;border-radius:0 6px 6px 0;"
+    f"background:{_vc_col}10;margin-bottom:10px;'>"
+    f"<div style='font-size:12px;font-weight:700;color:{_vc_col};margin-bottom:4px;'>VERDICT</div>"
+    f"<div style='font-size:12px;color:#1e293b;margin-bottom:6px;'>{_verdict_main}</div>"
+    f"<div style='font-size:11px;color:{_rule1_col};margin-bottom:2px;'>{_rule1_text}</div>"
+    f"<div style='font-size:11px;color:{_rule2_col};'>{_rule2_text}</div>"
+    f"</div>", unsafe_allow_html=True)
+
 src_data = [
     {
         "source":  "Source 1 — EMA Proximity",
-        "what":    f"EMA3 vs EMA8 gap: {gap_pts:.0f} pts ({gap_pct:.1f}% of ATR). Fires BEFORE crossover.",
-        "pe_lvl":  src1 if can_dir == "BEAR" else 0,
-        "ce_lvl":  src1 if can_dir == "BULL" else 0,
-        "detail":  f"EMA3={e3:,.0f} · EMA8={e8:,.0f} · EMA16={e16:,.0f} · EMA30={e30:,.0f}\n"
-                   f"Gap {gap_pct:.1f}% ATR → {'>15%=Clear, 5-15%=Day1, <5%=Day2, Cross=Day3, EMA8/16 close=Day4'}",
+        "what":    f"EMA3/EMA8 gap: {gap_pts:.0f} pts ({gap_pct:.2f}% ATR) · Direction: {can_dir}",
+        "pe_lvl":  src1_pe_eff,
+        "ce_lvl":  src1_ce_eff,
+        "detail":  f"EMA3={e3:,.0f} · EMA8={e8:,.0f} · Gap={gap_pts:.0f} pts ({gap_pct:.2f}% ATR)\n"
+                   f"Thresholds: >55%=Singing · 35-55%=Day1 · 15-35%=Day2 · <15%=Day3 · <2%=Day4(Cross)\n"
+                   f"Rule 1: Gap Day 2+ overrides momentum skew",
     },
     {
         "source":      "Source 2 — Momentum Score (% of ATR/day)",
