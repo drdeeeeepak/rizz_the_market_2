@@ -320,13 +320,24 @@ _can_side = "CE" if _can_ce_h >= _can_pe_h else "PE"
 
 # Color = direction (BEAR=red, BULL=green), brightness = canary level
 _dir_base = "#dc2626" if _can_dir_h == "BEAR" else "#16a34a"
-_pill_col = {0: _dir_base, 1:"#d97706", 2:"#d97706", 3:"#ea580c", 4:"#dc2626"}.get(_can_lvl, "#94a3b8")
-_pill_lbl = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}.get(_can_lvl, "—")
+_PE_G = {0:"#14532d",1:"#15803d",2:"#16a34a",3:"#4ade80",4:"#86efac"}
+_CE_R = {0:"#7f1d1d",1:"#991b1b",2:"#dc2626",3:"#f87171",4:"#fca5a5"}
+_lbl  = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}
+_both_h = (_can_pe_h == 0 and _can_ce_h == 0)
+_pe_bg = "#d97706" if _both_h else _PE_G.get(_can_pe_h,"#94a3b8")
+_ce_bg = "#d97706" if _both_h else _CE_R.get(_can_ce_h,"#94a3b8")
+_pe_tx = "#1e293b" if (not _both_h and _can_pe_h >= 3) else "white"
+_ce_tx = "#1e293b" if (not _both_h and _can_ce_h >= 3) else "white"
 st.markdown(
-    f"<div style='display:inline-block;padding:4px 14px;border-radius:20px;"
-    f"background:{_pill_col};margin-bottom:8px;'>"
-    f"<span style='color:white;font-size:11px;font-weight:700;'>CANARY · {_pill_lbl} · {_can_dir_h}</span>"
-    f"<span style='color:rgba(255,255,255,0.8);font-size:10px;'> · {_can_side} driven · Gap {_gap_pct_h:.0f}% ATR · Src1+Src2</span>"
+    f"<div style='display:flex;gap:6px;margin-bottom:8px;'>"
+    f"<div style='flex:1;background:{_pe_bg};border-radius:8px;padding:8px 14px;'>"
+    f"<div style='color:{_pe_tx};font-size:9px;font-weight:700;opacity:0.85;'>PE · PUT SIDE · Src1+Src2</div>"
+    f"<div style='color:{_pe_tx};font-size:13px;font-weight:900;'>{_lbl.get(_can_pe_h,'—')} · {_can_dir_h}</div>"
+    f"</div>"
+    f"<div style='flex:1;background:{_ce_bg};border-radius:8px;padding:8px 14px;text-align:right;'>"
+    f"<div style='color:{_ce_tx};font-size:9px;font-weight:700;opacity:0.85;'>CE · CALL SIDE · Src1+Src2</div>"
+    f"<div style='color:{_ce_tx};font-size:13px;font-weight:900;'>{_lbl.get(_can_ce_h,'—')} · Gap {_gap_pct_h:.0f}%</div>"
+    f"</div>"
     f"</div>", unsafe_allow_html=True)
 
 # Skew bar with gap Rule 1 override

@@ -221,25 +221,57 @@ pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
 ce_canary = max(src1 if can_dir == "BULL" else 0, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
 
-# ── Page header colour ─────────────────────────────────────────────────────
-CANARY_HEADER_COLOUR = {0: "#16a34a", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
-CANARY_LABEL = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
-                3: "Canary Day 3", 4: "Canary Day 4"}
-CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
+# ── Canary colour palettes ──────────────────────────────────────────────────
+# PE = green gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
+PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#4ade80", 4:"#86efac"}
+# CE = red gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
+CE_RED   = {0:"#7f1d1d", 1:"#991b1b", 2:"#dc2626", 3:"#f87171", 4:"#fca5a5"}
+# Text: white on deep shades, dark on light shades
+def _txt(lvl): return "#1e293b" if lvl >= 3 else "white"
+# Both singing → amber
+BOTH_AMBER = "#d97706"
 
-hdr_col = CANARY_HEADER_COLOUR.get(overall_canary, "#94a3b8")
-overall_label  = CANARY_LABEL.get(overall_canary, "—")
+# ── Driver attribution (needed by header) ────────────────────────────────────
+src1_pe_eff = src1 if can_dir == "BEAR" else 0
+src1_ce_eff = src1 if can_dir == "BULL" else 0
+pe_driver = "Source 1" if src1_pe_eff >= src2_pe and src1_pe_eff >= src3_pe else \
+            "Source 2" if src2_pe >= src3_pe else "Source 3"
+ce_driver = "Source 1" if src1_ce_eff >= src2_ce and src1_ce_eff >= src3_ce else \
+            "Source 2" if src2_ce >= src3_ce else "Source 3"
+
+# ── Page header colour ───────────────────────────────────────────────────────
+CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
+                 3: "Canary Day 3", 4: "Canary Day 4"}
+CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
 overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
 
+_both_singing = (pe_canary == 0 and ce_canary == 0)
+_pe_hdr = BOTH_AMBER if _both_singing else PE_GREEN.get(pe_canary, "#94a3b8")
+_ce_hdr = BOTH_AMBER if _both_singing else CE_RED.get(ce_canary, "#94a3b8")
+_pe_txt = "white" if _both_singing else _txt(pe_canary)
+_ce_txt = "white" if _both_singing else _txt(ce_canary)
+_act_col = {0:"#d97706",1:"#d97706",2:"#d97706",3:"#ea580c",4:"#dc2626"}.get(overall_canary,"#94a3b8")
+if _both_singing: _act_col = "#d97706"
+
 st.markdown(
-    f"<div style='background:{hdr_col};border-radius:8px;padding:12px 18px;"
-    f"display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
-    f"<div>"
-    f"<div style='color:white;font-size:11px;font-weight:700;letter-spacing:1px;'>EMA HOLD MONITOR · {overall_label}</div>"
-    f"<div style='color:rgba(255,255,255,0.8);font-size:10px;font-family:monospace;'>Regime: {regime}</div>"
+    f"<div style='display:flex;border-radius:8px;overflow:hidden;margin-bottom:12px;gap:2px;'>"
+    # PE side
+    f"<div style='background:{_pe_hdr};flex:1;padding:10px 16px;'>"
+    f"<div style='color:{_pe_txt};font-size:9px;font-weight:700;opacity:0.9;'>PE · PUT SIDE</div>"
+    f"<div style='color:{_pe_txt};font-size:15px;font-weight:900;'>{CANARY_ICON.get(pe_canary,'')} {CANARY_LABEL.get(pe_canary,'—')}</div>"
+    f"<div style='color:{_pe_txt};font-size:9px;opacity:0.8;'>{pe_driver}</div>"
     f"</div>"
-    f"<div style='background:white;border-radius:6px;padding:6px 16px;'>"
-    f"<div style='color:{hdr_col};font-size:18px;font-weight:900;'>{overall_action}</div>"
+    # Centre action
+    f"<div style='background:{_act_col};padding:10px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:90px;'>"
+    f"<div style='color:white;font-size:8px;font-weight:700;letter-spacing:1px;text-align:center;'>EMA HOLD MONITOR</div>"
+    f"<div style='color:white;font-size:18px;font-weight:900;'>{overall_action}</div>"
+    f"<div style='color:rgba(255,255,255,0.75);font-size:8px;font-family:monospace;'>{regime}</div>"
+    f"</div>"
+    # CE side
+    f"<div style='background:{_ce_hdr};flex:1;padding:10px 16px;text-align:right;'>"
+    f"<div style='color:{_ce_txt};font-size:9px;font-weight:700;opacity:0.9;'>CE · CALL SIDE</div>"
+    f"<div style='color:{_ce_txt};font-size:15px;font-weight:900;'>{CANARY_ICON.get(ce_canary,'')} {CANARY_LABEL.get(ce_canary,'—')}</div>"
+    f"<div style='color:{_ce_txt};font-size:9px;opacity:0.8;'>{ce_driver}</div>"
     f"</div>"
     f"</div>",
     unsafe_allow_html=True)
@@ -305,30 +337,27 @@ with st.expander("What is the Canary? — Reference", expanded=False):
     ], columns=["Source", "Name", "What it detects"])
     st.dataframe(_src_ref, use_container_width=True, hide_index=True)
 
-CANARY_COLOUR = {0: "green", 1: "amber", 2: "amber", 3: "red", 4: "red"}
-CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
+CANARY_ICON = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 
-def canary_card(side, level, driving_src):
-    icon = CANARY_ICON.get(level, "⚪")
+def canary_card(side, level, driving_src, is_pe=True):
+    palette = PE_GREEN if is_pe else CE_RED
+    bg  = BOTH_AMBER if _both_singing else palette.get(level, "#94a3b8")
+    txt = "white" if (_both_singing or level < 3) else "#1e293b"
+    icon  = CANARY_ICON.get(level, "⚪")
     label = CANARY_LABEL.get(level, "—")
-    action_map = {0: "Hold — structure intact", 1: "Watch — check again at EOD",
-                  2: "Active monitoring — check moats", 3: "Prepare roll plan now",
-                  4: "Act now — roll or exit"}
-    action = action_map.get(level, "—")
-    color  = CANARY_COLOUR.get(level, "default")
-    ui.metric_card(f"{side} CANARY", f"{icon} {label}",
-                   sub=f"Driver: {driving_src} · {action}", color=color)
+    action_map = {0:"Hold — structure intact", 1:"Watch — EOD check",
+                  2:"Monitor moats actively", 3:"Prepare roll plan now", 4:"Act now — roll or exit"}
+    st.markdown(
+        f"<div style='background:{bg};border-radius:8px;padding:12px 16px;'>"
+        f"<div style='color:{txt};font-size:9px;font-weight:700;opacity:0.85;'>{side}</div>"
+        f"<div style='color:{txt};font-size:16px;font-weight:900;margin:2px 0;'>{icon} {label}</div>"
+        f"<div style='color:{txt};font-size:10px;opacity:0.85;'>Driver: {driving_src}</div>"
+        f"<div style='color:{txt};font-size:10px;opacity:0.75;'>{action_map.get(level,'—')}</div>"
+        f"</div>", unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
-src1_pe_eff = src1 if can_dir == "BEAR" else 0
-src1_ce_eff = src1 if can_dir == "BULL" else 0
-pe_driver = "Source 1" if src1_pe_eff >= src2_pe and src1_pe_eff >= src3_pe else \
-            "Source 2" if src2_pe >= src3_pe else "Source 3"
-ce_driver = "Source 1" if src1_ce_eff >= src2_ce and src1_ce_eff >= src3_ce else \
-            "Source 2" if src2_ce >= src3_ce else "Source 3"
-
-with col1: canary_card("PE (Put Side)", pe_canary, pe_driver)
-with col2: canary_card("CE (Call Side)", ce_canary, ce_driver)
+with col1: canary_card("PE · PUT SIDE", pe_canary, pe_driver, is_pe=True)
+with col2: canary_card("CE · CALL SIDE", ce_canary, ce_driver, is_pe=False)
 
 st.divider()
 
