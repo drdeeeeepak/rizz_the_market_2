@@ -245,6 +245,7 @@ CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
 CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
 CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
+overall_label  = CANARY_LABEL.get(overall_canary, "Canary Day 4")
 
 _both_singing = (pe_canary == 0 and ce_canary == 0)
 _pe_hdr = BOTH_AMBER if _both_singing else PE_GREEN.get(pe_canary, "#94a3b8")
