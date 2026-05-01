@@ -332,7 +332,7 @@ st.markdown(
     f"<div style='display:flex;gap:6px;margin-bottom:8px;'>"
     f"<div style='flex:1;background:{_pe_bg};border-radius:8px;padding:8px 14px;'>"
     f"<div style='color:{_pe_tx};font-size:9px;font-weight:700;opacity:0.85;'>PE · PUT SIDE · Src1+Src2</div>"
-    f"<div style='color:{_pe_tx};font-size:13px;font-weight:900;'>{_lbl.get(_can_pe_h,'—')} · {_can_dir_h}</div>"
+    f"<div style='color:{_pe_tx};font-size:13px;font-weight:900;'>{_lbl.get(_can_pe_h,'—')} · Gap {_gap_pct_h:.0f}%</div>"
     f"</div>"
     f"<div style='flex:1;background:{_ce_bg};border-radius:8px;padding:8px 14px;text-align:right;'>"
     f"<div style='color:{_ce_tx};font-size:9px;font-weight:700;opacity:0.85;'>CE · CALL SIDE · Src1+Src2</div>"

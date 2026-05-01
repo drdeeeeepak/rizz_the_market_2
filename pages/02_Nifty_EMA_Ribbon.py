@@ -139,10 +139,10 @@ src2_pe, src2_ce = _src2_levels(mom_score)
 # Color overrides for Source 2 cards
 if src2_pe == 0 and src2_ce == 0:                  # flat: amber both
     src2_pe_col = src2_ce_col = "#d97706"
-elif src2_pe == 2 and src2_ce == 2 and mom_score > 0:  # bullish 11-20%: CE real, PE light
-    src2_pe_col = "#86efac"; src2_ce_col = "#16a34a"
-elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 11-20%: PE real, CE light
-    src2_pe_col = "#dc2626"; src2_ce_col = "#fca5a5"
+elif src2_pe == 2 and src2_ce == 2 and mom_score > 0:  # bullish 2/2: PE light green, CE real red
+    src2_pe_col = "#bbf7d0"; src2_ce_col = "#dc2626"
+elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 2/2: PE real green, CE light red
+    src2_pe_col = "#16a34a"; src2_ce_col = "#fecaca"
 else:
     src2_pe_col = src2_ce_col = None               # use standard LEVEL_COLOUR
 
@@ -458,14 +458,14 @@ for s in src_data:
             if "Source 3" in s["source"] and tue_anchor_available:
                 st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
         with c2:
-            col = s.get("pe_col") or LEVEL_COLOUR.get(s["pe_lvl"], "#94a3b8")
+            col = s.get("pe_col") or PE_GREEN.get(s["pe_lvl"], "#94a3b8")
             st.markdown(
                 f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
                 f"<div style='font-size:9px;color:{col};font-weight:700;'>PE LEVEL</div>"
                 f"<div style='font-size:18px;font-weight:900;color:{col};'>{CANARY_ICON.get(s['pe_lvl'],'')} {CANARY_LABEL.get(s['pe_lvl'],'—')}</div>"
                 f"</div>", unsafe_allow_html=True)
         with c3:
-            col = s.get("ce_col") or LEVEL_COLOUR.get(s["ce_lvl"], "#94a3b8")
+            col = s.get("ce_col") or CE_RED.get(s["ce_lvl"], "#94a3b8")
             st.markdown(
                 f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
                 f"<div style='font-size:9px;color:{col};font-weight:700;'>CE LEVEL</div>"
