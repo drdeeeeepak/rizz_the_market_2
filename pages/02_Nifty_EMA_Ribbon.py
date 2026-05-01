@@ -140,9 +140,9 @@ src2_pe, src2_ce = _src2_levels(mom_score)
 if src2_pe == 0 and src2_ce == 0:                  # flat: amber both
     src2_pe_col = src2_ce_col = "#d97706"
 elif src2_pe == 2 and src2_ce == 2 and mom_score > 0:  # bullish 2/2: PE light green, CE real red
-    src2_pe_col = "#bbf7d0"; src2_ce_col = "#dc2626"
+    src2_pe_col = "#bbf7d0"; src2_ce_col = "#dc2626"   # CE_RED[1]
 elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 2/2: PE real green, CE light red
-    src2_pe_col = "#16a34a"; src2_ce_col = "#fecaca"
+    src2_pe_col = "#16a34a"; src2_ce_col = "#fca5a5"   # CE_RED[3]
 else:
     src2_pe_col = src2_ce_col = None               # use standard LEVEL_COLOUR
 
@@ -225,7 +225,7 @@ overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
 # PE = green gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
 PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#bbf7d0", 4:"#dcfce7"}
 # CE = red gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
-CE_RED   = {0:"#7f1d1d", 1:"#991b1b", 2:"#dc2626", 3:"#fecaca", 4:"#fee2e2"}
+CE_RED   = {0:"#b91c1c", 1:"#dc2626", 2:"#ef4444", 3:"#fca5a5", 4:"#fee2e2"}
 # Text: white on deep shades, dark on light shades
 def _txt(lvl): return "#1e293b" if lvl >= 3 else "white"
 # Both singing → amber
@@ -447,34 +447,37 @@ src_data = [
     },
 ]
 
-LEVEL_COLOUR = {0: "#16a34a", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
+# colours that need dark text (light backgrounds)
+_LIGHT_COLS = {"#bbf7d0", "#dcfce7", "#fca5a5", "#fecaca", "#fee2e2"}
+
+def _src_card(label, lvl, palette, bg_override=None):
+    bg = bg_override if bg_override else (BOTH_AMBER if _both_singing else palette.get(lvl, "#94a3b8"))
+    if _both_singing or bg_override == "#d97706":
+        txt = "white"
+    elif bg_override and bg_override in _LIGHT_COLS:
+        txt = "#1e293b"
+    else:
+        txt = _txt(lvl)
+    icon = CANARY_ICON.get(lvl, "⚪")
+    lbl  = CANARY_LABEL.get(lvl, "—")
+    st.markdown(
+        f"<div style='background:{bg};border-radius:8px;padding:10px 16px;margin-bottom:6px;'>"
+        f"<div style='color:{txt};font-size:9px;font-weight:700;opacity:0.85;'>{label}</div>"
+        f"<div style='color:{txt};font-size:15px;font-weight:900;margin:2px 0;'>{icon} {lbl}</div>"
+        f"</div>", unsafe_allow_html=True)
 
 for s in src_data:
     with st.expander(f"{s['source']} — PE: {CANARY_LABEL.get(s['pe_lvl'],'—')} | CE: {CANARY_LABEL.get(s['ce_lvl'],'—')}", expanded=True):
-        c1, c2, c3 = st.columns([2, 1, 1])
-        with c1:
-            st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
-            st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;'>{s['detail']}</pre>", unsafe_allow_html=True)
-            if "Source 3" in s["source"] and tue_anchor_available:
-                st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
-        with c2:
-            col = s.get("pe_col") or PE_GREEN.get(s["pe_lvl"], "#94a3b8")
-            st.markdown(
-                f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
-                f"<div style='font-size:9px;color:{col};font-weight:700;'>PE LEVEL</div>"
-                f"<div style='font-size:18px;font-weight:900;color:{col};'>{CANARY_ICON.get(s['pe_lvl'],'')} {CANARY_LABEL.get(s['pe_lvl'],'—')}</div>"
-                f"</div>", unsafe_allow_html=True)
-        with c3:
-            col = s.get("ce_col") or CE_RED.get(s["ce_lvl"], "#94a3b8")
-            st.markdown(
-                f"<div style='border:2px solid {col};border-radius:6px;padding:10px;text-align:center;'>"
-                f"<div style='font-size:9px;color:{col};font-weight:700;'>CE LEVEL</div>"
-                f"<div style='font-size:18px;font-weight:900;color:{col};'>{CANARY_ICON.get(s['ce_lvl'],'')} {CANARY_LABEL.get(s['ce_lvl'],'—')}</div>"
-                f"</div>", unsafe_allow_html=True)
+        st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
+        st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;margin-bottom:8px;'>{s['detail']}</pre>", unsafe_allow_html=True)
+        if "Source 3" in s["source"] and tue_anchor_available:
+            st.caption(f"Expiry anchor: {tue_anchor_date} · close {tue_close:,.0f} · PE sold {pe_sold:,} · CE sold {ce_sold:,}")
+        _src_card("PE · PUT SIDE",  s["pe_lvl"], PE_GREEN, s.get("pe_col"))
+        _src_card("CE · CALL SIDE", s["ce_lvl"], CE_RED,   s.get("ce_col"))
         if "skew_label" in s:
             sc = s["skew_col"]
             st.markdown(
-                f"<div style='margin-top:8px;padding:8px 14px;border-radius:6px;"
+                f"<div style='margin-top:4px;padding:8px 14px;border-radius:6px;"
                 f"background:{sc}18;border-left:3px solid {sc};'>"
                 f"<span style='font-size:11px;font-weight:700;color:{sc};'>IC SHAPE · {s['skew_label']}</span>"
                 f"<span style='font-size:10px;color:#334155;'> — {s['skew_note']}</span>"

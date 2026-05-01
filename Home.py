@@ -321,7 +321,7 @@ _can_side = "CE" if _can_ce_h >= _can_pe_h else "PE"
 # Color = direction (BEAR=red, BULL=green), brightness = canary level
 _dir_base = "#dc2626" if _can_dir_h == "BEAR" else "#16a34a"
 _PE_G = {0:"#14532d",1:"#15803d",2:"#16a34a",3:"#bbf7d0",4:"#dcfce7"}
-_CE_R = {0:"#7f1d1d",1:"#991b1b",2:"#dc2626",3:"#fecaca",4:"#fee2e2"}
+_CE_R = {0:"#b91c1c",1:"#dc2626",2:"#ef4444",3:"#fca5a5",4:"#fee2e2"}
 _lbl  = {0:"SINGING",1:"Day 1",2:"Day 2",3:"Day 3",4:"Day 4"}
 _both_h = (_can_pe_h == 0 and _can_ce_h == 0)
 _pe_bg = "#d97706" if _both_h else _PE_G.get(_can_pe_h,"#94a3b8")
