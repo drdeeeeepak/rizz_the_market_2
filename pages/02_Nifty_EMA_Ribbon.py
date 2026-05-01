@@ -243,6 +243,7 @@ ce_driver = "Source 1" if src1_ce_eff >= src2_ce and src1_ce_eff >= src3_ce else
 CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
                  3: "Canary Day 3", 4: "Canary Day 4"}
 CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
+CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
 
 _both_singing = (pe_canary == 0 and ce_canary == 0)
@@ -336,8 +337,6 @@ with st.expander("What is the Canary? — Reference", expanded=False):
         ["Source 3", "Spot Drift from Expiry Close", "% drift of spot from Tuesday (expiry) close. PE sold 4% below, CE sold 3.5% above. Canary fires 2% before the sold strike."],
     ], columns=["Source", "Name", "What it detects"])
     st.dataframe(_src_ref, width="stretch", hide_index=True)
-
-CANARY_ICON = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
 
 def canary_card(side, level, driving_src, is_pe=True):
     palette = PE_GREEN if is_pe else CE_RED
