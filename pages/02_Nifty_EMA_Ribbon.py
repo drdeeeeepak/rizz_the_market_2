@@ -237,7 +237,7 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     elif drift_pct <= -2.0: src3_pe = 1
 
 # ── Dynamic Roll Matrix pre-compute ─────────────────────────────────────────
-_DEF_HI, _DEF_LO, _OFF_THR = 2.8, 2.0, 2.5          # defensive hi/lo, offensive threshold
+_DEF_HI, _DEF_LO, _OFF_THR = 2.8, 2.0, 1.8          # defensive hi/lo, offensive threshold
 def_threshold    = _DEF_LO if dte <= 3 else _DEF_HI   # DTE<=3 = gamma risk, no threat needed
 def_needs_threat = dte > 3
 
@@ -264,17 +264,22 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     ce_def_roll_to = int(round(tue_close * 1.05 / 50) * 50)
     pe_def_roll_to = int(round(tue_close * 0.95 / 50) * 50)
 
-    # Offensive: roll IN from current spot, DTE-scaled distance
-    off_in_pct     = 2.5 if dte >= 4 else 2.0 if dte == 3 else 1.5
-    ce_off_roll_to = int(round(spot_now * (1 + off_in_pct / 100) / 50) * 50)  # new CE above spot
-    pe_off_roll_to = int(round(spot_now * (1 - off_in_pct / 100) / 50) * 50)  # new PE below spot
+    # Offensive: roll IN from current spot
+    # Wed/Thu (DTE>=5): standard IC distances — 3.5% CE, 4.0% PE from CMP
+    # Fri/Mon/Tue (DTE<=4): tighter — 2.5% CE, 3.0% PE from CMP
+    if dte >= 5:
+        ce_off_pct, pe_off_pct = 3.5, 4.0
+    else:
+        ce_off_pct, pe_off_pct = 2.5, 3.0
+    ce_off_roll_to = int(round(spot_now * (1 + ce_off_pct / 100) / 50) * 50)  # new CE above spot
+    pe_off_roll_to = int(round(spot_now * (1 - pe_off_pct / 100) / 50) * 50)  # new PE below spot
 else:
     ce_adverse = pe_adverse = pe_favor = ce_favor = 0.0
     ce_def_fired = pe_def_fired = ce_def_near = pe_def_near = False
     ce_off_fired = pe_off_fired = False
     ce_def_trig_spot = pe_def_trig_spot = pe_off_trig_spot = ce_off_trig_spot = 0
     ce_def_roll_to = pe_def_roll_to = ce_off_roll_to = pe_off_roll_to = 0
-    off_in_pct = 2.5
+    ce_off_pct, pe_off_pct = (3.5, 4.0) if dte >= 5 else (2.5, 3.0)
 
 # Overall PE and CE canary (max across sources)
 pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
@@ -707,14 +712,13 @@ with st.expander("What is the Roll Matrix? — Reference", expanded=False):
         "a 2.8% drift on thin volume often reverses. On Fri/Mon, gamma risk is too high to wait; act at 2.0% regardless.\n\n"
         "---\n\n"
         "**Offensive Roll — Theta Harvest**\n\n"
-        "Triggered when spot moves *favourably* by 2.5% — the opposing leg loses nearly all delta and becomes cheap to buy back.\n\n"
-        "| DTE | Roll IN to (from current spot) |\n"
-        "|-----|--------------------------------|\n"
-        "| ≥ 4 (Wed/Thu) | 2.5% from spot |\n"
-        "| 3 (Fri) | 2.0% from spot |\n"
-        "| ≤ 2 (Mon/Tue) | 1.5% from spot |\n\n"
-        "The closer to expiry, the tighter you sell the new strike — you need less distance because the remaining theta "
-        "collapses faster.\n\n"
+        "Triggered when spot moves *favourably* by 1.8% — the dead leg loses delta and becomes cheap to buy back.\n\n"
+        "| When | CE roll-in | PE roll-in |\n"
+        "|------|-----------|----------|\n"
+        "| DTE ≥ 5 (Wed/Thu) | +3.5% from CMP | −4.0% from CMP |\n"
+        "| DTE ≤ 4 (Fri/Mon/Tue) | +2.5% from CMP | −3.0% from CMP |\n\n"
+        "Wed/Thu: re-enter at full standard IC distances from the new spot level. "
+        "Friday onwards: tighter strikes — less time, still worth the premium.\n\n"
         "---\n\n"
         "**Threat Multiplier** = |daily return %| × relative volume (today / 14-day avg)\n\n"
         "A value > 1.15 means the move is backed by above-average institutional activity. "
@@ -778,23 +782,25 @@ if tue_anchor_available:
 else:
     st.info("Expiry anchor not available — load data to activate roll matrix.")
 
+_off_rule = f"CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot ({'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'})"
 st.markdown("**Offensive Roll — Theta Harvest**")
-st.caption(f"Trigger: 2.5% favorable drift · Roll IN to {off_in_pct:.1f}% from spot (DTE {dte} rule)")
+st.caption(f"Trigger: 1.8% favorable drift · Roll IN to {_off_rule}")
 
-def _off_card(side_label, favor, fired, trig_spot, roll_to, palette):
+def _off_card(side_label, favor, fired, trig_spot, roll_to, palette, is_ce):
     gap = _OFF_THR - favor
+    _pct = ce_off_pct if is_ce else pe_off_pct
     if fired:
-        bg      = "#0f766e"   # teal — profit action
+        bg      = "#0f766e"
         txt_col = "white"
         status  = "ROLL-IN READY"
-        body    = f"Favorable drift {favor:.2f}% ≥ 2.5% threshold · Dead leg has minimal delta"
-        action  = f"BUY BACK dead leg · Roll IN to {off_in_pct:.1f}% from spot → {roll_to:,}"
+        body    = f"Favorable drift {favor:.2f}% ≥ 1.8% threshold · Dead leg has minimal delta"
+        action  = f"BUY BACK dead leg · Roll IN to {_pct}% from spot → {roll_to:,}"
     else:
         bg      = palette[4] if favor < 0.5 else palette[3] if favor < 1.5 else palette[2]
         txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
         status  = "CLEAR"
         body    = f"Favorable drift {favor:.2f}% · Need {gap:.2f}% more to trigger · Trigger spot: {trig_spot:,}"
-        action  = f"If triggered: Roll IN to {off_in_pct:.1f}% from spot → {roll_to:,}"
+        action  = f"If triggered: Roll IN to {_pct}% from spot → {roll_to:,}"
     st.markdown(
         f"<div style='background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:6px;'>"
         f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.85;'>{side_label}</div>"
@@ -805,6 +811,6 @@ def _off_card(side_label, favor, fired, trig_spot, roll_to, palette):
 
 if tue_anchor_available:
     _off_card("CE · CALL SIDE — Offensive (CE dead when spot falls)",
-              ce_favor, ce_off_fired, ce_off_trig_spot, ce_off_roll_to, CE_RED)
+              ce_favor, ce_off_fired, ce_off_trig_spot, ce_off_roll_to, CE_RED, is_ce=True)
     _off_card("PE · PUT SIDE — Offensive (PE dead when spot rises)",
-              pe_favor, pe_off_fired, pe_off_trig_spot, pe_off_roll_to, PE_GREEN)
+              pe_favor, pe_off_fired, pe_off_trig_spot, pe_off_roll_to, PE_GREEN, is_ce=False)

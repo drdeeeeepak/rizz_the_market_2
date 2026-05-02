@@ -396,7 +396,7 @@ try:
 
     if _anc_rm and _tc_rm > 0:
         _def_thr_rm  = 2.0 if _dte_rm <= 3 else 2.8
-        _off_thr_rm  = 2.5
+        _off_thr_rm  = 1.8
         _def_nt_rm   = _dte_rm > 3  # needs threat confirmation
 
         _ce_adv = max(_drift_rm,  0.0)
@@ -409,7 +409,9 @@ try:
         _ce_off = _ce_fav >= _off_thr_rm
         _pe_off = _pe_fav >= _off_thr_rm
 
-        _off_pct_rm = 2.5 if _dte_rm >= 4 else 2.0 if _dte_rm == 3 else 1.5
+        # Offensive roll-in distances from CMP (Wed/Thu vs Fri/Mon/Tue)
+        _ce_off_pct = 3.5 if _dte_rm >= 5 else 2.5
+        _pe_off_pct = 4.0 if _dte_rm >= 5 else 3.0
         _sp_rm = spot
 
         # Defensive: spot prices at trigger
@@ -419,8 +421,8 @@ try:
         _pe_dto = int(round(_tc_rm * 0.95 / 50) * 50)
 
         # Offensive: roll-in targets
-        _ce_oto = int(round(_sp_rm * (1 + _off_pct_rm/100) / 50) * 50)
-        _pe_oto = int(round(_sp_rm * (1 - _off_pct_rm/100) / 50) * 50)
+        _ce_oto = int(round(_sp_rm * (1 + _ce_off_pct/100) / 50) * 50)
+        _pe_oto = int(round(_sp_rm * (1 - _pe_off_pct/100) / 50) * 50)
 
         def _rm_chip(label, fired, near, adv, thr, trig_spot, roll_to, is_pe):
             if fired:
@@ -483,10 +485,9 @@ with st.expander("Roll Matrix — Quick Reference", expanded=False):
         "**Defensive (Stop Loss):** Spot drifts adversely from expiry anchor close.\n\n"
         "- DTE ≥ 4 (Wed/Thu): 2.8% drift **+** Threat Multiplier > 1.15 → Roll OUT to 5% from anchor\n"
         "- DTE ≤ 3 (Fri/Mon): 2.0% drift, no threat check needed (gamma risk) → Roll OUT to 5% from anchor\n\n"
-        "**Offensive (Theta Harvest):** Spot moves favourably 2.5% — dead leg loses delta, buy back cheap.\n\n"
-        "- DTE ≥ 4: Roll IN to 2.5% from current spot\n"
-        "- DTE 3: Roll IN to 2.0% from current spot\n"
-        "- DTE ≤ 2: Roll IN to 1.5% from current spot\n\n"
+        "**Offensive (Theta Harvest):** Spot moves favourably 1.8% — dead leg loses delta, buy back cheap.\n\n"
+        "- DTE ≥ 5 (Wed/Thu): CE → +3.5% from CMP · PE → −4.0% from CMP\n"
+        "- DTE ≤ 4 (Fri/Mon/Tue): CE → +2.5% from CMP · PE → −3.0% from CMP\n\n"
         "**Threat Multiplier** = |daily return %| × (today's volume ÷ 14-day avg volume).\n"
         "Above 1.15 = institutional backing. Below 1.15 = possible noise, hold on Wed/Thu."
     )
