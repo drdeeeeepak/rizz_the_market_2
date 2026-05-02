@@ -478,6 +478,19 @@ try:
 except Exception:
     pass
 
+with st.expander("Roll Matrix — Quick Reference", expanded=False):
+    st.markdown(
+        "**Defensive (Stop Loss):** Spot drifts adversely from expiry anchor close.\n\n"
+        "- DTE ≥ 4 (Wed/Thu): 2.8% drift **+** Threat Multiplier > 1.15 → Roll OUT to 5% from anchor\n"
+        "- DTE ≤ 3 (Fri/Mon): 2.0% drift, no threat check needed (gamma risk) → Roll OUT to 5% from anchor\n\n"
+        "**Offensive (Theta Harvest):** Spot moves favourably 2.5% — dead leg loses delta, buy back cheap.\n\n"
+        "- DTE ≥ 4: Roll IN to 2.5% from current spot\n"
+        "- DTE 3: Roll IN to 2.0% from current spot\n"
+        "- DTE ≤ 2: Roll IN to 1.5% from current spot\n\n"
+        "**Threat Multiplier** = |daily return %| × (today's volume ÷ 14-day avg volume).\n"
+        "Above 1.15 = institutional backing. Below 1.15 = possible noise, hold on Wed/Thu."
+    )
+
 with st.expander("📊 All Lens Distances", expanded=True):
     lens_table = sig.get("lens_table", {})
     if lens_table:

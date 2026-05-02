@@ -472,9 +472,10 @@ src_data = [
         "what":    f"EMA3/EMA8 gap: {gap_pts:.0f} pts ({gap_pct:.2f}% ATR) · Direction: {can_dir}",
         "pe_lvl":  src1_pe_eff,
         "ce_lvl":  src1_ce_eff,
-        "detail":  f"EMA3={e3:,.0f} · EMA8={e8:,.0f} · Gap={gap_pts:.0f} pts ({gap_pct:.2f}% ATR)\n"
-                   f"Thresholds: >55%=Singing · 35-55%=Day1 · 15-35%=Day2 · <15%=Day3 · <2%=Day4(Cross)\n"
-                   f"Rule 1: Gap Day 2+ overrides momentum skew",
+        "detail":  f"EMA3: {e3:,.0f}  ·  EMA8: {e8:,.0f}\n"
+                   f"Gap: {gap_pts:.0f} pts  ({gap_pct:.2f}% of ATR)\n"
+                   f"Thresholds: >55% = Singing  ·  35–55% = Day 1  ·  15–35% = Day 2  ·  <15% = Day 3  ·  <2% = Day 4\n"
+                   f"Rule 1: Gap Day 2+ overrides momentum skew regardless of score",
     },
     {
         "source":      "Source 2 — Momentum Score (% of ATR/day)",
@@ -483,10 +484,11 @@ src_data = [
         "ce_lvl":      src2_ce,
         "pe_col":      src2_pe_col,
         "ce_col":      src2_ce_col,
-        "detail":      f"EMA3 slope: {ema3_slope:+.1f} pts/day (60% weight)\n"
-                       f"EMA8 slope: {ema8_slope:+.1f} pts/day (40% weight)\n"
-                       f"Combined score: {mom_score:+.1f}% ATR/day\n"
-                       f"Thresholds: >32%(D0/D4) 20-32%(D1/D3) 11-20%(D2/D2) 5-11%(D3/D1) flat±5%=0/0",
+        "detail":      f"EMA3 slope: {ema3_slope:+.1f} pts/day  (60% weight)\n"
+                       f"EMA8 slope: {ema8_slope:+.1f} pts/day  (40% weight)\n"
+                       f"Combined score: {mom_score:+.1f}% of ATR/day\n"
+                       f"Bullish thresholds (PE/CE):  >32% = D0/D4  ·  20–32% = D1/D3  ·  11–20% = D2/D2  ·  5–11% = D3/D1\n"
+                       f"Flat zone: ±5% = both Day 0 (amber)  ·  Bearish: mirror of above",
         "skew_label":  skew_label,
         "skew_note":   skew_note,
         "skew_col":    skew_col,
@@ -498,11 +500,11 @@ src_data = [
                     "Expiry anchor not yet available"),
         "pe_lvl":  src3_pe,
         "ce_lvl":  src3_ce,
-        "detail":  (f"Expiry close: {tue_close:,.0f} ({tue_anchor_date})\n"
+        "detail":  (f"Expiry close: {tue_close:,.0f}  ({tue_anchor_date})\n"
                     f"PE sold at −4.0% → {pe_sold:,}  |  CE sold at +3.5% → {ce_sold:,}\n"
                     f"Drift from expiry: {drift_pct:+.2f}%\n"
-                    f"PE triggers: −2%(D1) −2.5%(D2) −3%(D3) −3.5%(D4)\n"
-                    f"CE triggers: +1.5%(D1) +2%(D2) +2.5%(D3) +3%(D4)")
+                    f"PE triggers:  −2.0% = D1  ·  −2.5% = D2  ·  −3.0% = D3  ·  −3.5% = D4\n"
+                    f"CE triggers:  +1.5% = D1  ·  +2.0% = D2  ·  +2.5% = D3  ·  +3.0% = D4")
                    if tue_anchor_available else "No expiry anchor available.",
     },
 ]
@@ -689,6 +691,36 @@ st.divider()
 # ══════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 6 — Dynamic Roll Matrix",
                   "Threat-scaled defensive stop-loss & offensive theta-harvest triggers · Exact roll-to strikes")
+
+with st.expander("What is the Roll Matrix? — Reference", expanded=False):
+    st.markdown(
+        "**The Roll Matrix tells you exactly when and how to act on a threatened or dead leg.**\n\n"
+        "It runs two independent checks — one for defence, one for offence — on both the CE and PE sides.\n\n"
+        "---\n\n"
+        "**Defensive Roll — Stop Loss**\n\n"
+        "Triggered when spot drifts adversely from the expiry anchor close.\n\n"
+        "| DTE | Trigger | Threat check? | Action |\n"
+        "|-----|---------|---------------|--------|\n"
+        "| ≥ 4 (Wed/Thu) | 2.8% adverse drift | Yes — Threat > 1.15 | Buy back losing leg · Roll OUT to 5% from anchor |\n"
+        "| ≤ 3 (Fri/Mon) | 2.0% adverse drift | No — gamma is the risk | Buy back losing leg · Roll OUT to 5% from anchor |\n\n"
+        "On Wed/Thu you wait for the Threat Multiplier to confirm the move is institutional before rolling — "
+        "a 2.8% drift on thin volume often reverses. On Fri/Mon, gamma risk is too high to wait; act at 2.0% regardless.\n\n"
+        "---\n\n"
+        "**Offensive Roll — Theta Harvest**\n\n"
+        "Triggered when spot moves *favourably* by 2.5% — the opposing leg loses nearly all delta and becomes cheap to buy back.\n\n"
+        "| DTE | Roll IN to (from current spot) |\n"
+        "|-----|--------------------------------|\n"
+        "| ≥ 4 (Wed/Thu) | 2.5% from spot |\n"
+        "| 3 (Fri) | 2.0% from spot |\n"
+        "| ≤ 2 (Mon/Tue) | 1.5% from spot |\n\n"
+        "The closer to expiry, the tighter you sell the new strike — you need less distance because the remaining theta "
+        "collapses faster.\n\n"
+        "---\n\n"
+        "**Threat Multiplier** = |daily return %| × relative volume (today / 14-day avg)\n\n"
+        "A value > 1.15 means the move is backed by above-average institutional activity. "
+        "Below 1.15 the move may be noise. Only relevant for the DTE ≥ 4 defensive trigger.\n\n"
+        "Note: volume data uses yesterday's completed candle until a live volume feed is wired in."
+    )
 
 # ── Metrics row ──────────────────────────────────────────────────────────────
 _dte_label = {0:"Tue · Expiry",1:"Tue · Expiry",2:"Wed",3:"Thu",4:"Fri",5:"Mon",6:"Tue · Entry"}.get(
