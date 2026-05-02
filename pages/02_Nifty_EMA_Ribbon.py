@@ -194,6 +194,26 @@ try:
 except Exception:
     pass
 
+# ── DTE & Threat Multiplier ──────────────────────────────────────────────────
+try:
+    from data.live_fetcher import get_dte as _get_dte, next_tuesday as _next_tue
+    dte = _get_dte(_next_tue(_dt.date.today()))
+except Exception:
+    dte = 7
+
+threat_mult = rel_vol = daily_ret_pct = vol_sma14 = 0.0
+try:
+    if not _daily.empty and len(_daily) >= 15:
+        vol_sma14     = float(_daily["volume"].rolling(14).mean().iloc[-1])
+        _td_vol       = float(_daily["volume"].iloc[-1])
+        _td_close     = float(_daily["close"].iloc[-1])
+        _prev_close   = float(_daily["close"].iloc[-2])
+        daily_ret_pct = (_td_close - _prev_close) / _prev_close * 100 if _prev_close > 0 else 0.0
+        rel_vol       = _td_vol / vol_sma14 if vol_sma14 > 0 else 1.0
+        threat_mult   = abs(daily_ret_pct) * rel_vol
+except Exception:
+    pass
+
 spot_now = spot
 src3_pe = src3_ce = 0
 pe_sold = ce_sold = 0
@@ -215,6 +235,46 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     elif drift_pct <= -3.0: src3_pe = 3
     elif drift_pct <= -2.5: src3_pe = 2
     elif drift_pct <= -2.0: src3_pe = 1
+
+# ── Dynamic Roll Matrix pre-compute ─────────────────────────────────────────
+_DEF_HI, _DEF_LO, _OFF_THR = 2.8, 2.0, 2.5          # defensive hi/lo, offensive threshold
+def_threshold    = _DEF_LO if dte <= 3 else _DEF_HI   # DTE<=3 = gamma risk, no threat needed
+def_needs_threat = dte > 3
+
+if tue_anchor_available and tue_close > 0 and spot_now > 0:
+    # Exact spot prices where triggers fire (nearest 50pt)
+    ce_def_trig_spot = int(round(tue_close * (1 + def_threshold / 100) / 50) * 50)
+    pe_def_trig_spot = int(round(tue_close * (1 - def_threshold / 100) / 50) * 50)
+    pe_off_trig_spot = int(round(tue_close * (1 + _OFF_THR / 100) / 50) * 50)  # PE dead when UP
+    ce_off_trig_spot = int(round(tue_close * (1 - _OFF_THR / 100) / 50) * 50)  # CE dead when DOWN
+
+    ce_adverse = max(drift_pct,  0.0)   # CE threatened: spot went UP from anchor
+    pe_adverse = max(-drift_pct, 0.0)   # PE threatened: spot went DOWN from anchor
+    pe_favor   = max(drift_pct,  0.0)   # PE dead: spot UP, PE is safe, harvest theta
+    ce_favor   = max(-drift_pct, 0.0)   # CE dead: spot DOWN, CE is safe, harvest theta
+
+    ce_def_fired = ce_adverse >= def_threshold and (not def_needs_threat or threat_mult > 1.15)
+    pe_def_fired = pe_adverse >= def_threshold and (not def_needs_threat or threat_mult > 1.15)
+    ce_def_near  = not ce_def_fired and ce_adverse >= def_threshold * 0.75
+    pe_def_near  = not pe_def_fired and pe_adverse >= def_threshold * 0.75
+    ce_off_fired = ce_favor >= _OFF_THR
+    pe_off_fired = pe_favor >= _OFF_THR
+
+    # Defensive: roll OUT to 5% from anchor close
+    ce_def_roll_to = int(round(tue_close * 1.05 / 50) * 50)
+    pe_def_roll_to = int(round(tue_close * 0.95 / 50) * 50)
+
+    # Offensive: roll IN from current spot, DTE-scaled distance
+    off_in_pct     = 2.5 if dte >= 4 else 2.0 if dte == 3 else 1.5
+    ce_off_roll_to = int(round(spot_now * (1 + off_in_pct / 100) / 50) * 50)  # new CE above spot
+    pe_off_roll_to = int(round(spot_now * (1 - off_in_pct / 100) / 50) * 50)  # new PE below spot
+else:
+    ce_adverse = pe_adverse = pe_favor = ce_favor = 0.0
+    ce_def_fired = pe_def_fired = ce_def_near = pe_def_near = False
+    ce_off_fired = pe_off_fired = False
+    ce_def_trig_spot = pe_def_trig_spot = pe_off_trig_spot = ce_off_trig_spot = 0
+    ce_def_roll_to = pe_def_roll_to = ce_off_roll_to = pe_off_roll_to = 0
+    off_in_pct = 2.5
 
 # Overall PE and CE canary (max across sources)
 pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
@@ -621,3 +681,98 @@ with st.expander("Hold Table Reference — full grid", expanded=False):
     df_ref = pd.DataFrame(ref_rows, columns=["Moats", "Canary Day", "Action", "Note"])
     st.dataframe(df_ref, width="stretch", hide_index=True)
     st.caption("Applied per side independently. CE and PE each get their own action. More severe = page recommendation.")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 6 — Dynamic Roll Matrix
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 6 — Dynamic Roll Matrix",
+                  "Threat-scaled defensive stop-loss & offensive theta-harvest triggers · Exact roll-to strikes")
+
+# ── Metrics row ──────────────────────────────────────────────────────────────
+_dte_label = {0:"Tue · Expiry",1:"Tue · Expiry",2:"Wed",3:"Thu",4:"Fri",5:"Mon",6:"Tue · Entry"}.get(
+    (7 - dte) % 7 if dte > 0 else 0, f"DTE {dte}")
+_thr_col = "#dc2626" if threat_mult > 1.5 else "#ea580c" if threat_mult > 1.15 else "#16a34a"
+_drift_col = "#dc2626" if abs(drift_pct) >= 2.0 else "#ea580c" if abs(drift_pct) >= 1.0 else "#16a34a"
+
+c1, c2, c3, c4 = st.columns(4)
+with c1: ui.metric_card("DTE",            f"{dte}",              sub=f"Thresh: {'2.0%' if dte<=3 else '2.8%+Threat'}")
+with c2: ui.metric_card("THREAT MULT",    f"{threat_mult:.2f}",  sub=f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}",
+                         color="red" if threat_mult > 1.15 else "green")
+with c3: ui.metric_card("ANCHOR CLOSE",   f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
+                         sub=f"Expiry: {tue_anchor_date}" if tue_anchor_available else "No anchor")
+with c4: ui.metric_card("DRIFT FROM ANCHOR", f"{drift_pct:+.2f}%" if tue_anchor_available else "—",
+                         sub=f"Spot {spot_now:,.0f}", color="red" if abs(drift_pct) >= 2.0 else "default")
+
+st.markdown("**Defensive Roll — Stop Loss**")
+st.caption(f"DTE {dte}: threshold {'2.0% (gamma — no threat check)' if dte<=3 else f'2.8% + Threat > 1.15 (current: {threat_mult:.2f})'}")
+
+def _def_card(side_label, adverse, fired, near, trig_spot, roll_to, palette):
+    if fired:
+        bg, txt_col = palette[0], "white"
+        status = "STOP-LOSS TRIGGERED"
+        body   = (f"Adverse drift {adverse:.2f}% ≥ {def_threshold:.1f}% threshold"
+                  + ("" if not def_needs_threat else f" · Threat {threat_mult:.2f} > 1.15"))
+        action = f"BUY BACK losing leg · Roll OUT to {roll_to:,} (5% from anchor)"
+    elif near:
+        bg, txt_col = "#ea580c", "white"
+        status = "APPROACHING"
+        gap = def_threshold - adverse
+        body   = f"Drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Trigger spot: {trig_spot:,}"
+        action = f"Monitor closely · Trigger at {trig_spot:,} → Roll to {roll_to:,}"
+    else:
+        bg  = palette[0]
+        txt_col = "white"
+        status = "CLEAR"
+        gap = def_threshold - adverse
+        body   = f"Adverse drift {adverse:.2f}% · Gap to trigger: {gap:.2f}%"
+        action = f"Trigger spot: {trig_spot:,} · Roll OUT to: {roll_to:,}"
+        bg = palette[4] if adverse < 0.5 else palette[3] if adverse < 1.0 else palette[2]
+        txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
+    st.markdown(
+        f"<div style='background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:6px;'>"
+        f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.85;'>{side_label}</div>"
+        f"<div style='color:{txt_col};font-size:14px;font-weight:900;margin:2px 0;'>{status}</div>"
+        f"<div style='color:{txt_col};font-size:10px;opacity:0.9;margin-bottom:2px;'>{body}</div>"
+        f"<div style='color:{txt_col};font-size:10px;font-style:italic;opacity:0.8;'>{action}</div>"
+        f"</div>", unsafe_allow_html=True)
+
+if tue_anchor_available:
+    _def_card("CE · CALL SIDE — Defensive",
+              ce_adverse, ce_def_fired, ce_def_near, ce_def_trig_spot, ce_def_roll_to, CE_RED)
+    _def_card("PE · PUT SIDE — Defensive",
+              pe_adverse, pe_def_fired, pe_def_near, pe_def_trig_spot, pe_def_roll_to, PE_GREEN)
+else:
+    st.info("Expiry anchor not available — load data to activate roll matrix.")
+
+st.markdown("**Offensive Roll — Theta Harvest**")
+st.caption(f"Trigger: 2.5% favorable drift · Roll IN to {off_in_pct:.1f}% from spot (DTE {dte} rule)")
+
+def _off_card(side_label, favor, fired, trig_spot, roll_to, palette):
+    gap = _OFF_THR - favor
+    if fired:
+        bg      = "#0f766e"   # teal — profit action
+        txt_col = "white"
+        status  = "ROLL-IN READY"
+        body    = f"Favorable drift {favor:.2f}% ≥ 2.5% threshold · Dead leg has minimal delta"
+        action  = f"BUY BACK dead leg · Roll IN to {off_in_pct:.1f}% from spot → {roll_to:,}"
+    else:
+        bg      = palette[4] if favor < 0.5 else palette[3] if favor < 1.5 else palette[2]
+        txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
+        status  = "CLEAR"
+        body    = f"Favorable drift {favor:.2f}% · Need {gap:.2f}% more to trigger · Trigger spot: {trig_spot:,}"
+        action  = f"If triggered: Roll IN to {off_in_pct:.1f}% from spot → {roll_to:,}"
+    st.markdown(
+        f"<div style='background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:6px;'>"
+        f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.85;'>{side_label}</div>"
+        f"<div style='color:{txt_col};font-size:14px;font-weight:900;margin:2px 0;'>{status}</div>"
+        f"<div style='color:{txt_col};font-size:10px;opacity:0.9;margin-bottom:2px;'>{body}</div>"
+        f"<div style='color:{txt_col};font-size:10px;font-style:italic;opacity:0.8;'>{action}</div>"
+        f"</div>", unsafe_allow_html=True)
+
+if tue_anchor_available:
+    _off_card("CE · CALL SIDE — Offensive (CE dead when spot falls)",
+              ce_favor, ce_off_fired, ce_off_trig_spot, ce_off_roll_to, CE_RED)
+    _off_card("PE · PUT SIDE — Offensive (PE dead when spot rises)",
+              pe_favor, pe_off_fired, pe_off_trig_spot, pe_off_roll_to, PE_GREEN)

@@ -356,6 +356,128 @@ st.markdown(
     f"<span style='font-size:10px;color:#64748b;'> · Score {_mscore:+.1f}% ATR/day{_forced_h}</span>"
     f"</div>", unsafe_allow_html=True)
 
+# ── Dynamic Roll Matrix — compact status row ─────────────────────────────────
+try:
+    import datetime as _dt_rm, numpy as _np_rm
+    from data.live_fetcher import get_nifty_daily as _gnd_rm, get_dte as _gte_rm, next_tuesday as _nxt_rm
+
+    _daily_rm = _gnd_rm()
+    _dte_rm   = _gte_rm(_nxt_rm(_dt_rm.date.today()))
+
+    # Anchor close (same Tuesday logic as page 02)
+    _tc_rm = _drift_rm = 0.0
+    _anc_rm = False
+    if not _daily_rm.empty:
+        _tod_rm  = _dt_rm.date.today()
+        _dst_rm  = (_tod_rm.weekday() - 1) % 7
+        _ltu_rm  = _tod_rm - _dt_rm.timedelta(days=_dst_rm)
+        _trd_rm  = set(_daily_rm.index.date)
+        _adate_rm = None
+        for _off_rm in range(7):
+            _cnd_rm = _ltu_rm - _dt_rm.timedelta(days=_off_rm)
+            if _cnd_rm in _trd_rm:
+                _adate_rm = _cnd_rm; break
+        if _adate_rm:
+            _tc_rm    = float(_daily_rm[_daily_rm.index.date <= _adate_rm]["close"].iloc[-1])
+            _sp_rm    = spot  # spot already loaded above
+            _drift_rm = (_sp_rm - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
+            _anc_rm   = True
+
+    # Threat multiplier
+    _thr_rm = 0.0
+    if not _daily_rm.empty and len(_daily_rm) >= 15:
+        _vs14_rm = float(_daily_rm["volume"].rolling(14).mean().iloc[-1])
+        _tvol_rm = float(_daily_rm["volume"].iloc[-1])
+        _tcl_rm  = float(_daily_rm["close"].iloc[-1])
+        _pcl_rm  = float(_daily_rm["close"].iloc[-2])
+        _ret_rm  = (_tcl_rm - _pcl_rm) / _pcl_rm * 100 if _pcl_rm > 0 else 0.0
+        _rv_rm   = _tvol_rm / _vs14_rm if _vs14_rm > 0 else 1.0
+        _thr_rm  = abs(_ret_rm) * _rv_rm
+
+    if _anc_rm and _tc_rm > 0:
+        _def_thr_rm  = 2.0 if _dte_rm <= 3 else 2.8
+        _off_thr_rm  = 2.5
+        _def_nt_rm   = _dte_rm > 3  # needs threat confirmation
+
+        _ce_adv = max(_drift_rm,  0.0)
+        _pe_adv = max(-_drift_rm, 0.0)
+        _pe_fav = max(_drift_rm,  0.0)
+        _ce_fav = max(-_drift_rm, 0.0)
+
+        _ce_def = _ce_adv >= _def_thr_rm and (not _def_nt_rm or _thr_rm > 1.15)
+        _pe_def = _pe_adv >= _def_thr_rm and (not _def_nt_rm or _thr_rm > 1.15)
+        _ce_off = _ce_fav >= _off_thr_rm
+        _pe_off = _pe_fav >= _off_thr_rm
+
+        _off_pct_rm = 2.5 if _dte_rm >= 4 else 2.0 if _dte_rm == 3 else 1.5
+        _sp_rm = spot
+
+        # Defensive: spot prices at trigger
+        _ce_dts = int(round(_tc_rm * (1 + _def_thr_rm/100) / 50) * 50)
+        _pe_dts = int(round(_tc_rm * (1 - _def_thr_rm/100) / 50) * 50)
+        _ce_dto = int(round(_tc_rm * 1.05 / 50) * 50)
+        _pe_dto = int(round(_tc_rm * 0.95 / 50) * 50)
+
+        # Offensive: roll-in targets
+        _ce_oto = int(round(_sp_rm * (1 + _off_pct_rm/100) / 50) * 50)
+        _pe_oto = int(round(_sp_rm * (1 - _off_pct_rm/100) / 50) * 50)
+
+        def _rm_chip(label, fired, near, adv, thr, trig_spot, roll_to, is_pe):
+            if fired:
+                bg = "#b91c1c" if not is_pe else "#14532d"
+                txt = "white"; icon = "🔴" if not is_pe else "🔴"
+                detail = f"ROLL OUT → {roll_to:,}"
+            elif near:
+                bg = "#ea580c"; txt = "white"; icon = "⚠️"
+                detail = f"↗ {trig_spot:,} triggers"
+            else:
+                bg = "#14532d" if is_pe else "#b91c1c"; txt = "white"; icon = "✅"
+                detail = f"Trig @ {trig_spot:,}"
+            return (
+                f"<div style='flex:1;background:{bg};border-radius:6px;padding:6px 10px;'>"
+                f"<div style='color:{txt};font-size:8px;font-weight:700;opacity:0.8;'>{label}</div>"
+                f"<div style='color:{txt};font-size:11px;font-weight:900;'>{icon} {adv:.1f}%/{thr:.1f}%</div>"
+                f"<div style='color:{txt};font-size:9px;opacity:0.85;'>{detail}</div>"
+                f"</div>"
+            )
+
+        def _off_chip(label, fired, fav, trig_spot, roll_to, is_pe):
+            if fired:
+                bg = "#0f766e"; txt = "white"; icon = "🟢"
+                detail = f"ROLL IN → {roll_to:,}"
+            else:
+                gap = _off_thr_rm - fav
+                bg = "#1e293b"; txt = "white"; icon = "✅"
+                detail = f"Need {gap:.1f}% · Trig @ {trig_spot:,}"
+            return (
+                f"<div style='flex:1;background:{bg};border-radius:6px;padding:6px 10px;'>"
+                f"<div style='color:{txt};font-size:8px;font-weight:700;opacity:0.8;'>{label}</div>"
+                f"<div style='color:{txt};font-size:11px;font-weight:900;'>{icon} {fav:.1f}%/{_off_thr_rm:.1f}%</div>"
+                f"<div style='color:{txt};font-size:9px;opacity:0.85;'>{detail}</div>"
+                f"</div>"
+            )
+
+        _pe_near_rm = not _pe_def and _pe_adv >= _def_thr_rm * 0.75
+        _ce_near_rm = not _ce_def and _ce_adv >= _def_thr_rm * 0.75
+
+        st.markdown(
+            f"<div style='margin-bottom:4px;'>"
+            f"<span style='font-size:9px;font-weight:700;color:#64748b;'>ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · Def ≥{_def_thr_rm}% {'(+Threat)' if _def_nt_rm else '(Gamma)'}</span>"
+            f"</div>"
+            f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
+            f"<div style='flex:0 0 auto;display:flex;align-items:center;padding-right:4px;'><span style='font-size:8px;font-weight:700;color:#64748b;'>DEF</span></div>"
+            + _rm_chip("CE CALL", _ce_def, _ce_near_rm, _ce_adv, _def_thr_rm, _ce_dts, _ce_dto, False)
+            + _rm_chip("PE PUT",  _pe_def, _pe_near_rm, _pe_adv, _def_thr_rm, _pe_dts, _pe_dto, True)
+            + f"</div>"
+            f"<div style='display:flex;gap:4px;margin-bottom:8px;'>"
+            f"<div style='flex:0 0 auto;display:flex;align-items:center;padding-right:4px;'><span style='font-size:8px;font-weight:700;color:#64748b;'>OFF</span></div>"
+            + _off_chip("CE CALL", _ce_off, _ce_fav, int(round(_tc_rm*(1-_off_thr_rm/100)/50)*50), _ce_oto, False)
+            + _off_chip("PE PUT",  _pe_off, _pe_fav, int(round(_tc_rm*(1+_off_thr_rm/100)/50)*50), _pe_oto, True)
+            + f"</div>",
+            unsafe_allow_html=True)
+except Exception:
+    pass
+
 with st.expander("📊 All Lens Distances", expanded=True):
     lens_table = sig.get("lens_table", {})
     if lens_table:
