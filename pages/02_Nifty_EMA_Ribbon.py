@@ -237,26 +237,24 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     elif drift_pct <= -2.0: src3_pe = 1
 
 # ── Dynamic Roll Matrix pre-compute ─────────────────────────────────────────
-_DEF_HI, _DEF_LO, _OFF_THR = 2.8, 2.0, 1.8          # defensive hi/lo, offensive threshold
-def_threshold    = _DEF_LO if dte <= 3 else _DEF_HI   # DTE<=3 = gamma risk, no threat needed
-def_needs_threat = dte > 3
+_DEF_THR, _OFF_THR = 2.8, 1.8    # defensive: 2.8% adverse + Threat>1.15 · offensive: 1.8% favorable
 
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
     # Exact spot prices where triggers fire (nearest 50pt)
-    ce_def_trig_spot = int(round(tue_close * (1 + def_threshold / 100) / 50) * 50)
-    pe_def_trig_spot = int(round(tue_close * (1 - def_threshold / 100) / 50) * 50)
-    pe_off_trig_spot = int(round(tue_close * (1 + _OFF_THR / 100) / 50) * 50)  # PE dead when UP
-    ce_off_trig_spot = int(round(tue_close * (1 - _OFF_THR / 100) / 50) * 50)  # CE dead when DOWN
+    ce_def_trig_spot = int(round(tue_close * (1 + _DEF_THR / 100) / 50) * 50)
+    pe_def_trig_spot = int(round(tue_close * (1 - _DEF_THR / 100) / 50) * 50)
+    pe_off_trig_spot = int(round(tue_close * (1 + _OFF_THR / 100) / 50) * 50)
+    ce_off_trig_spot = int(round(tue_close * (1 - _OFF_THR / 100) / 50) * 50)
 
-    ce_adverse = max(drift_pct,  0.0)   # CE threatened: spot went UP from anchor
-    pe_adverse = max(-drift_pct, 0.0)   # PE threatened: spot went DOWN from anchor
-    pe_favor   = max(drift_pct,  0.0)   # PE dead: spot UP, PE is safe, harvest theta
-    ce_favor   = max(-drift_pct, 0.0)   # CE dead: spot DOWN, CE is safe, harvest theta
+    ce_adverse = max(drift_pct,  0.0)
+    pe_adverse = max(-drift_pct, 0.0)
+    pe_favor   = max(drift_pct,  0.0)
+    ce_favor   = max(-drift_pct, 0.0)
 
-    ce_def_fired = ce_adverse >= def_threshold and (not def_needs_threat or threat_mult > 1.15)
-    pe_def_fired = pe_adverse >= def_threshold and (not def_needs_threat or threat_mult > 1.15)
-    ce_def_near  = not ce_def_fired and ce_adverse >= def_threshold * 0.75
-    pe_def_near  = not pe_def_fired and pe_adverse >= def_threshold * 0.75
+    ce_def_fired = ce_adverse >= _DEF_THR and threat_mult > 1.15
+    pe_def_fired = pe_adverse >= _DEF_THR and threat_mult > 1.15
+    ce_def_near  = not ce_def_fired and ce_adverse >= _DEF_THR * 0.75
+    pe_def_near  = not pe_def_fired and pe_adverse >= _DEF_THR * 0.75
     ce_off_fired = ce_favor >= _OFF_THR
     pe_off_fired = pe_favor >= _OFF_THR
 
@@ -703,13 +701,12 @@ with st.expander("What is the Roll Matrix? — Reference", expanded=False):
         "It runs two independent checks — one for defence, one for offence — on both the CE and PE sides.\n\n"
         "---\n\n"
         "**Defensive Roll — Stop Loss**\n\n"
-        "Triggered when spot drifts adversely from the expiry anchor close.\n\n"
-        "| DTE | Trigger | Threat check? | Action |\n"
-        "|-----|---------|---------------|--------|\n"
-        "| ≥ 4 (Wed/Thu) | 2.8% adverse drift | Yes — Threat > 1.15 | Buy back losing leg · Roll OUT to 5% from anchor |\n"
-        "| ≤ 3 (Fri/Mon) | 2.0% adverse drift | No — gamma is the risk | Buy back losing leg · Roll OUT to 5% from anchor |\n\n"
-        "On Wed/Thu you wait for the Threat Multiplier to confirm the move is institutional before rolling — "
-        "a 2.8% drift on thin volume often reverses. On Fri/Mon, gamma risk is too high to wait; act at 2.0% regardless.\n\n"
+        "Single rule — biweekly positions are always managed with ≥ 7 DTE, so gamma is never the primary risk.\n\n"
+        "**Trigger: 2.8% adverse drift AND Threat Multiplier > 1.15**\n\n"
+        "Buy back the losing leg · Roll OUT to 5% from anchor close (nearest 50pt)\n\n"
+        "The Threat Multiplier confirms the move is institutional. A 2.8% drift on low volume often reverses — "
+        "wait for confirmation before rolling. The canary system (Sources 1–3) will have flagged the deterioration "
+        "well before this point.\n\n"
         "---\n\n"
         "**Offensive Roll — Theta Harvest**\n\n"
         "Triggered when spot moves *favourably* by 1.8% — the dead leg loses delta and becomes cheap to buy back.\n\n"
@@ -733,7 +730,7 @@ _thr_col = "#dc2626" if threat_mult > 1.5 else "#ea580c" if threat_mult > 1.15 e
 _drift_col = "#dc2626" if abs(drift_pct) >= 2.0 else "#ea580c" if abs(drift_pct) >= 1.0 else "#16a34a"
 
 c1, c2, c3, c4 = st.columns(4)
-with c1: ui.metric_card("DTE",            f"{dte}",              sub=f"Thresh: {'2.0%' if dte<=3 else '2.8%+Threat'}")
+with c1: ui.metric_card("DTE",            f"{dte}",              sub="Def: 2.8% + Threat > 1.15")
 with c2: ui.metric_card("THREAT MULT",    f"{threat_mult:.2f}",  sub=f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}",
                          color="red" if threat_mult > 1.15 else "green")
 with c3: ui.metric_card("ANCHOR CLOSE",   f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
@@ -742,27 +739,24 @@ with c4: ui.metric_card("DRIFT FROM ANCHOR", f"{drift_pct:+.2f}%" if tue_anchor_
                          sub=f"Spot {spot_now:,.0f}", color="red" if abs(drift_pct) >= 2.0 else "default")
 
 st.markdown("**Defensive Roll — Stop Loss**")
-st.caption(f"DTE {dte}: threshold {'2.0% (gamma — no threat check)' if dte<=3 else f'2.8% + Threat > 1.15 (current: {threat_mult:.2f})'}")
+st.caption(f"Trigger: 2.8% adverse drift + Threat > 1.15 · Current Threat: {threat_mult:.2f}")
 
 def _def_card(side_label, adverse, fired, near, trig_spot, roll_to, palette):
     if fired:
         bg, txt_col = palette[0], "white"
         status = "STOP-LOSS TRIGGERED"
-        body   = (f"Adverse drift {adverse:.2f}% ≥ {def_threshold:.1f}% threshold"
-                  + ("" if not def_needs_threat else f" · Threat {threat_mult:.2f} > 1.15"))
+        body   = f"Adverse drift {adverse:.2f}% ≥ 2.8% · Threat {threat_mult:.2f} > 1.15"
         action = f"BUY BACK losing leg · Roll OUT to {roll_to:,} (5% from anchor)"
     elif near:
         bg, txt_col = "#ea580c", "white"
         status = "APPROACHING"
-        gap = def_threshold - adverse
-        body   = f"Drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Trigger spot: {trig_spot:,}"
-        action = f"Monitor closely · Trigger at {trig_spot:,} → Roll to {roll_to:,}"
+        gap = _DEF_THR - adverse
+        body   = f"Drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Threat {threat_mult:.2f}"
+        action = f"Monitor · Trigger spot: {trig_spot:,} → Roll to {roll_to:,}"
     else:
-        bg  = palette[0]
-        txt_col = "white"
+        gap = _DEF_THR - adverse
         status = "CLEAR"
-        gap = def_threshold - adverse
-        body   = f"Adverse drift {adverse:.2f}% · Gap to trigger: {gap:.2f}%"
+        body   = f"Adverse drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Threat {threat_mult:.2f}"
         action = f"Trigger spot: {trig_spot:,} · Roll OUT to: {roll_to:,}"
         bg = palette[4] if adverse < 0.5 else palette[3] if adverse < 1.0 else palette[2]
         txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"

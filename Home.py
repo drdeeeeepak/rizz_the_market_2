@@ -395,17 +395,16 @@ try:
         _thr_rm  = abs(_ret_rm) * _rv_rm
 
     if _anc_rm and _tc_rm > 0:
-        _def_thr_rm  = 2.0 if _dte_rm <= 3 else 2.8
+        _def_thr_rm  = 2.8
         _off_thr_rm  = 1.8
-        _def_nt_rm   = _dte_rm > 3  # needs threat confirmation
 
         _ce_adv = max(_drift_rm,  0.0)
         _pe_adv = max(-_drift_rm, 0.0)
         _pe_fav = max(_drift_rm,  0.0)
         _ce_fav = max(-_drift_rm, 0.0)
 
-        _ce_def = _ce_adv >= _def_thr_rm and (not _def_nt_rm or _thr_rm > 1.15)
-        _pe_def = _pe_adv >= _def_thr_rm and (not _def_nt_rm or _thr_rm > 1.15)
+        _ce_def = _ce_adv >= _def_thr_rm and _thr_rm > 1.15
+        _pe_def = _pe_adv >= _def_thr_rm and _thr_rm > 1.15
         _ce_off = _ce_fav >= _off_thr_rm
         _pe_off = _pe_fav >= _off_thr_rm
 
@@ -464,7 +463,7 @@ try:
 
         st.markdown(
             f"<div style='margin-bottom:4px;'>"
-            f"<span style='font-size:9px;font-weight:700;color:#64748b;'>ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · Def ≥{_def_thr_rm}% {'(+Threat)' if _def_nt_rm else '(Gamma)'}</span>"
+            f"<span style='font-size:9px;font-weight:700;color:#64748b;'>ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · Def ≥2.8% + Threat > 1.15</span>"
             f"</div>"
             f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
             f"<div style='flex:0 0 auto;display:flex;align-items:center;padding-right:4px;'><span style='font-size:8px;font-weight:700;color:#64748b;'>DEF</span></div>"
@@ -482,9 +481,8 @@ except Exception:
 
 with st.expander("Roll Matrix — Quick Reference", expanded=False):
     st.markdown(
-        "**Defensive (Stop Loss):** Spot drifts adversely from expiry anchor close.\n\n"
-        "- DTE ≥ 4 (Wed/Thu): 2.8% drift **+** Threat Multiplier > 1.15 → Roll OUT to 5% from anchor\n"
-        "- DTE ≤ 3 (Fri/Mon): 2.0% drift, no threat check needed (gamma risk) → Roll OUT to 5% from anchor\n\n"
+        "**Defensive (Stop Loss):** Single rule — biweekly positions always have ≥ 7 DTE, gamma is not the risk.\n\n"
+        "**2.8% adverse drift + Threat Multiplier > 1.15 → Buy back losing leg · Roll OUT to 5% from anchor**\n\n"
         "**Offensive (Theta Harvest):** Spot moves favourably 1.8% — dead leg loses delta, buy back cheap.\n\n"
         "- DTE ≥ 5 (Wed/Thu): CE → +3.5% from CMP · PE → −4.0% from CMP\n"
         "- DTE ≤ 4 (Fri/Mon/Tue): CE → +2.5% from CMP · PE → −3.0% from CMP\n\n"
