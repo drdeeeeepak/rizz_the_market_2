@@ -328,6 +328,16 @@ GEO_VOL_SMA_PERIOD=50; GEO_MAX_RESULTS=20; GEO_MIN_RR=2.0
 GEO_MARKET_HEALTH_BULL=300; GEO_MARKET_HEALTH_SELECT=200
 WATCHLIST_DIR="data/watchlists"; PARQUET_DIR="data/parquet"
 
+# ─── Page 16: Gamma Provisioning & Defensive Roll (Biweekly) ─────────────────
+GAMMA_BIWEEKLY_ENTRY_DTE  = 14    # Target entry DTE for biweekly IC cycle
+GAMMA_ROLL_DTE_RED        = 5     # DTE ≤ this + proximity = ROLL NOW
+GAMMA_ROLL_DTE_AMBER      = 7     # DTE ≤ this + proximity = WATCH
+GAMMA_ROLL_MONO_RED       = 200   # Moneyness (pts from short strike) = red zone
+GAMMA_ROLL_MONO_AMBER     = 350   # Moneyness (pts from short strike) = amber zone
+GAMMA_ACCEL_ROLL          = 2.0   # Gamma multiple vs entry = roll signal
+GAMMA_ACCEL_WATCH         = 1.5   # Gamma multiple vs entry = watch signal
+GAMMA_DEFAULT_IV          = 12.0  # Fallback IV% when live chain not available
+
 # ─── Home Score Rescaling (Option B) — 8 lenses, total max = 100 ─────────────
 # Previous max per lens:  OC=25, RSI=20, MP=20, BB=15, VIX=10, Dow=5, EMA=5
 # ST adds 9 pts. Rescaled so total max = 100.
