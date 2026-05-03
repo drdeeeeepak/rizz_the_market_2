@@ -56,6 +56,26 @@ def get_dte(expiry: date) -> int:
     return max(0, (expiry - date.today()).days)
 
 
+# ─── India VIX ───────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_india_vix() -> tuple:
+    """Returns (vix_current, vix_change_pct). Both 0.0 on failure."""
+    try:
+        from data.kite_client import get_kite
+        kite = get_kite()
+        quote = kite.quote(["NSE:INDIA VIX"])
+        for key in ["NSE:INDIA VIX", "INDIA VIX"]:
+            if key in quote:
+                q = quote[key]
+                cur = float(q.get("last_price", 0) or 0)
+                chg = float(q.get("change_percent", 0) or q.get("net_change", 0) or 0)
+                return cur, chg
+        return 0.0, 0.0
+    except Exception:
+        return 0.0, 0.0
+
+
 # ─── Nifty spot ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=TTL_PRICE, show_spinner=False)

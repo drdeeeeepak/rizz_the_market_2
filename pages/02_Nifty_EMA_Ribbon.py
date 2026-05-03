@@ -18,7 +18,7 @@ from pathlib import Path
 import json
 
 st.set_page_config(page_title="P02 · EMA Hold Monitor", layout="wide")
-st_autorefresh(interval=60_000, key="p02")
+st_autorefresh(interval=180_000, key="p02")
 
 from page_utils import bootstrap_signals, show_page_header
 sig, spot, signals_ts = bootstrap_signals()
@@ -237,7 +237,7 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     elif drift_pct <= -2.0: src3_pe = 1
 
 # ── Dynamic Roll Matrix pre-compute ─────────────────────────────────────────
-_DEF_THR, _OFF_THR = 2.8, 1.8    # defensive: 2.8% adverse + Threat>1.15 · offensive: 1.8% favorable
+_DEF_THR, _OFF_THR = 2.5, 1.8    # defensive: 2.5% adverse (all 4 filters) · offensive: 1.8% favorable
 
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
     # Exact spot prices where triggers fire (nearest 50pt)
@@ -283,6 +283,54 @@ else:
 pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
 ce_canary = max(src1 if can_dir == "BULL" else 0, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
+
+# ── India VIX ────────────────────────────────────────────────────────────────
+vix_current = vix_chg_pct = 0.0
+vix_available = vix_rising = False
+try:
+    from data.live_fetcher import get_india_vix as _get_vix
+    vix_current, vix_chg_pct = _get_vix()
+    vix_available = vix_current > 0
+    vix_rising = vix_chg_pct > 5.0
+except Exception:
+    pass
+
+# ── Multi-filter roll states ─────────────────────────────────────────────────
+# Four required gates per side. VIX is advisory only (not a gate).
+# BOOK LOSS: all 4 pass. PREPARE TO BOOK LOSS: 90% drift OR (80% drift + 3/4 filters).
+# BOOK PROFIT: favorable ≥ 1.8%. PREPARE TO BOOK PROFIT: favorable ≥ 1.35%.
+if tue_anchor_available and tue_close > 0 and spot_now > 0:
+    # CE side filters (spot rallied above CE strike)
+    ce_f1 = ce_adverse >= _DEF_THR           # 2.5% adverse drift
+    ce_f2 = threat_mult > 1.15              # institutional backing
+    ce_f3 = ce_canary >= 2                  # canary Day 2+
+    ce_f4 = mom_score > 0                   # bullish momentum (hurts CE)
+    ce_fp = int(ce_f1) + int(ce_f2) + int(ce_f3) + int(ce_f4)
+    # PE side filters (spot fell below PE strike)
+    pe_f1 = pe_adverse >= _DEF_THR
+    pe_f2 = threat_mult > 1.15
+    pe_f3 = pe_canary >= 2
+    pe_f4 = mom_score < 0                   # bearish momentum (hurts PE)
+    pe_fp = int(pe_f1) + int(pe_f2) + int(pe_f3) + int(pe_f4)
+    # BOOK LOSS: all 4 gates
+    ce_book_loss    = ce_f1 and ce_f2 and ce_f3 and ce_f4
+    pe_book_loss    = pe_f1 and pe_f2 and pe_f3 and pe_f4
+    # PREPARE TO BOOK LOSS: 90% pure drift OR (80% drift + ≥3 filters pass)
+    ce_prepare_loss = (not ce_book_loss) and (
+        ce_adverse >= _DEF_THR * 0.90 or (ce_adverse >= _DEF_THR * 0.80 and ce_fp >= 3))
+    pe_prepare_loss = (not pe_book_loss) and (
+        pe_adverse >= _DEF_THR * 0.90 or (pe_adverse >= _DEF_THR * 0.80 and pe_fp >= 3))
+    # BOOK PROFIT: favorable ≥ 1.8%
+    ce_book_profit    = ce_favor >= _OFF_THR
+    pe_book_profit    = pe_favor >= _OFF_THR
+    # PREPARE TO BOOK PROFIT: 75% of 1.8% = 1.35%
+    ce_prepare_profit = (not ce_book_profit) and ce_favor >= _OFF_THR * 0.75
+    pe_prepare_profit = (not pe_book_profit) and pe_favor >= _OFF_THR * 0.75
+else:
+    ce_f1=ce_f2=ce_f3=ce_f4=pe_f1=pe_f2=pe_f3=pe_f4=False
+    ce_fp=pe_fp=0
+    ce_book_loss=ce_prepare_loss=ce_book_profit=ce_prepare_profit=False
+    pe_book_loss=pe_prepare_loss=pe_book_profit=pe_prepare_profit=False
 
 # ── Canary colour palettes ──────────────────────────────────────────────────
 # PE = green gradient: Day 0 deepest (safest), Day 4 lightest (most exposed)
@@ -358,6 +406,58 @@ with st.expander("Cluster Regime Reference", expanded=False):
         return "background-color:#dbeafe;font-weight:700" if val == regime else ""
     st.dataframe(_reg_df.style.map(_hl_reg, subset=["Regime"]),
                  width="stretch", hide_index=True)
+
+# ── Top-of-page Roll Alert Banner ────────────────────────────────────────────
+_any_book_loss   = ce_book_loss   or pe_book_loss
+_any_book_profit = ce_book_profit or pe_book_profit
+_any_prep_loss   = ce_prepare_loss   or pe_prepare_loss
+_any_prep_profit = ce_prepare_profit or pe_prepare_profit
+
+if _any_book_loss:
+    _loss_sides = " + ".join(filter(None, ["CE" if ce_book_loss else "", "PE" if pe_book_loss else ""]))
+    _loss_roll  = " + ".join(filter(None, [
+        f"CE → {ce_def_roll_to:,}" if ce_book_loss else "",
+        f"PE → {pe_def_roll_to:,}" if pe_book_loss else ""]))
+    st.markdown(
+        f"<div style='background:#b91c1c;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
+        f"border:2px solid #ef4444;'>"
+        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🔴 ROLL MATRIX ALERT</div>"
+        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>BOOK LOSS — {_loss_sides} LEG</div>"
+        f"<div style='color:white;font-size:12px;'>All 4 filters confirmed · Buy back losing leg · "
+        f"Roll OUT to 5% from anchor · {_loss_roll}</div>"
+        f"</div>", unsafe_allow_html=True)
+elif _any_prep_loss:
+    _prep_sides = " + ".join(filter(None, ["CE" if ce_prepare_loss else "", "PE" if pe_prepare_loss else ""]))
+    st.markdown(
+        f"<div style='background:#ea580c;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
+        f"border:2px solid #f97316;'>"
+        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>⚠️ ROLL MATRIX ALERT</div>"
+        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>PREPARE TO BOOK LOSS — {_prep_sides} LEG</div>"
+        f"<div style='color:white;font-size:12px;'>Approaching defensive threshold · Review Section 6 now</div>"
+        f"</div>", unsafe_allow_html=True)
+
+if _any_book_profit:
+    _prof_sides = " + ".join(filter(None, ["CE" if ce_book_profit else "", "PE" if pe_book_profit else ""]))
+    _prof_roll  = " + ".join(filter(None, [
+        f"CE → {ce_off_roll_to:,}" if ce_book_profit else "",
+        f"PE → {pe_off_roll_to:,}" if pe_book_profit else ""]))
+    st.markdown(
+        f"<div style='background:#0f766e;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
+        f"border:2px solid #14b8a6;'>"
+        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🟢 ROLL MATRIX ALERT</div>"
+        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>BOOK PROFIT — {_prof_sides} LEG</div>"
+        f"<div style='color:white;font-size:12px;'>Favorable drift ≥ 1.8% · Dead leg cheap · "
+        f"Roll IN closer · {_prof_roll}</div>"
+        f"</div>", unsafe_allow_html=True)
+elif _any_prep_profit:
+    _pp_sides = " + ".join(filter(None, ["CE" if ce_prepare_profit else "", "PE" if pe_prepare_profit else ""]))
+    st.markdown(
+        f"<div style='background:#0369a1;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
+        f"border:2px solid #38bdf8;'>"
+        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🔵 ROLL MATRIX ALERT</div>"
+        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>PREPARE TO BOOK PROFIT — {_pp_sides} LEG</div>"
+        f"<div style='color:white;font-size:12px;'>Favorable drift ≥ 1.35% · Review Section 6 · Prepare roll-in strikes</div>"
+        f"</div>", unsafe_allow_html=True)
 
 st.title("Page 02 — EMA Hold Monitor")
 st.caption("Three-Source Canary · PE and CE independently · Live Moat Status · Hold / Watch / Prepare / Act")
@@ -693,118 +793,167 @@ st.divider()
 # SECTION 6 — Dynamic Roll Matrix
 # ══════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 6 — Dynamic Roll Matrix",
-                  "Threat-scaled defensive stop-loss & offensive theta-harvest triggers · Exact roll-to strikes")
+                  "Four-filter defensive gate · Offensive theta harvest · Exact roll-to strikes")
 
-with st.expander("What is the Roll Matrix? — Reference", expanded=False):
+with st.expander("Roll Matrix — Reference", expanded=False):
     st.markdown(
         "**The Roll Matrix tells you exactly when and how to act on a threatened or dead leg.**\n\n"
-        "It runs two independent checks — one for defence, one for offence — on both the CE and PE sides.\n\n"
         "---\n\n"
-        "**Defensive Roll — Stop Loss**\n\n"
-        "Single rule — biweekly positions are always managed with ≥ 7 DTE, so gamma is never the primary risk.\n\n"
-        "**Trigger: 2.8% adverse drift AND Threat Multiplier > 1.15**\n\n"
-        "Buy back the losing leg · Roll OUT to 5% from anchor close (nearest 50pt)\n\n"
-        "The Threat Multiplier confirms the move is institutional. A 2.8% drift on low volume often reverses — "
-        "wait for confirmation before rolling. The canary system (Sources 1–3) will have flagged the deterioration "
-        "well before this point.\n\n"
+        "**BOOK LOSS (Defensive Roll)**\n\n"
+        "All 4 filters must pass simultaneously:\n\n"
+        "1. **Drift ≥ 2.5%** adverse from anchor close\n"
+        "2. **Threat Multiplier > 1.15** — move is institutionally backed\n"
+        "3. **Canary ≥ Day 2** on the threatened side\n"
+        "4. **Momentum agrees** — mom_score > 0 for CE threat · mom_score < 0 for PE threat\n\n"
+        "Action: Buy back losing leg · Roll OUT to 5% from anchor close (nearest 50pt)\n\n"
+        "**VIX asymmetry:** Rising VIX (>5% change) with an up move suggests mean reversion — "
+        "shown as ⚠️ CAUTION on CE side (extra reason to hold). "
+        "Rising VIX with a down move is fear-driven selling — shown as 🔵 EXTRA CONFIRMATION on PE side.\n\n"
         "---\n\n"
-        "**Offensive Roll — Theta Harvest**\n\n"
-        "Triggered when spot moves *favourably* by 1.8% — the dead leg loses delta and becomes cheap to buy back.\n\n"
+        "**PREPARE TO BOOK LOSS**\n\n"
+        "Either condition triggers:\n"
+        "- Drift ≥ 2.25% (90% of 2.5%), regardless of other filters, OR\n"
+        "- Drift ≥ 2.0% (80%) AND 3 or more of the 4 filters already pass\n\n"
+        "---\n\n"
+        "**BOOK PROFIT (Offensive Roll)**\n\n"
+        "Favorable drift ≥ 1.8% — dead leg loses delta, cheap to buy back.\n\n"
         "| When | CE roll-in | PE roll-in |\n"
         "|------|-----------|----------|\n"
         "| DTE ≥ 5 (Wed/Thu) | +3.5% from CMP | −4.0% from CMP |\n"
         "| DTE ≤ 4 (Fri/Mon/Tue) | +2.5% from CMP | −3.0% from CMP |\n\n"
-        "Wed/Thu: re-enter at full standard IC distances from the new spot level. "
-        "Friday onwards: tighter strikes — less time, still worth the premium.\n\n"
+        "**PREPARE TO BOOK PROFIT:** Favorable drift ≥ 1.35% (75% of 1.8%)\n\n"
         "---\n\n"
-        "**Threat Multiplier** = |daily return %| × relative volume (today / 14-day avg)\n\n"
-        "A value > 1.15 means the move is backed by above-average institutional activity. "
-        "Below 1.15 the move may be noise. Only relevant for the DTE ≥ 4 defensive trigger.\n\n"
-        "Note: volume data uses yesterday's completed candle until a live volume feed is wired in."
+        "**Threat Multiplier** = |daily return %| × (today volume ÷ 14-day avg volume)\n\n"
+        "> 1.15 = institutional backing confirmed. Below = possible noise."
     )
 
 # ── Metrics row ──────────────────────────────────────────────────────────────
-_dte_label = {0:"Tue · Expiry",1:"Tue · Expiry",2:"Wed",3:"Thu",4:"Fri",5:"Mon",6:"Tue · Entry"}.get(
-    (7 - dte) % 7 if dte > 0 else 0, f"DTE {dte}")
-_thr_col = "#dc2626" if threat_mult > 1.5 else "#ea580c" if threat_mult > 1.15 else "#16a34a"
-_drift_col = "#dc2626" if abs(drift_pct) >= 2.0 else "#ea580c" if abs(drift_pct) >= 1.0 else "#16a34a"
-
-c1, c2, c3, c4 = st.columns(4)
-with c1: ui.metric_card("DTE",            f"{dte}",              sub="Def: 2.8% + Threat > 1.15")
-with c2: ui.metric_card("THREAT MULT",    f"{threat_mult:.2f}",  sub=f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}",
+c1, c2, c3, c4, c5 = st.columns(5)
+with c1: ui.metric_card("DTE", f"{dte}", sub=f"{'Wed/Thu — std IC' if dte >= 5 else 'Fri/Mon/Tue — tight IC'}")
+with c2: ui.metric_card("THREAT MULT", f"{threat_mult:.2f}",
+                         sub=f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}",
                          color="red" if threat_mult > 1.15 else "green")
-with c3: ui.metric_card("ANCHOR CLOSE",   f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
-                         sub=f"Expiry: {tue_anchor_date}" if tue_anchor_available else "No anchor")
+with c3: ui.metric_card("ANCHOR CLOSE", f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
+                         sub=f"Anchor: {tue_anchor_date}" if tue_anchor_available else "No anchor")
 with c4: ui.metric_card("DRIFT FROM ANCHOR", f"{drift_pct:+.2f}%" if tue_anchor_available else "—",
                          sub=f"Spot {spot_now:,.0f}", color="red" if abs(drift_pct) >= 2.0 else "default")
-
-st.markdown("**Defensive Roll — Stop Loss**")
-st.caption(f"Trigger: 2.8% adverse drift + Threat > 1.15 · Current Threat: {threat_mult:.2f}")
-
-def _def_card(side_label, adverse, fired, near, trig_spot, roll_to, palette):
-    if fired:
-        bg, txt_col = palette[0], "white"
-        status = "STOP-LOSS TRIGGERED"
-        body   = f"Adverse drift {adverse:.2f}% ≥ 2.8% · Threat {threat_mult:.2f} > 1.15"
-        action = f"BUY BACK losing leg · Roll OUT to {roll_to:,} (5% from anchor)"
-    elif near:
-        bg, txt_col = "#ea580c", "white"
-        status = "APPROACHING"
-        gap = _DEF_THR - adverse
-        body   = f"Drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Threat {threat_mult:.2f}"
-        action = f"Monitor · Trigger spot: {trig_spot:,} → Roll to {roll_to:,}"
+with c5:
+    if vix_available:
+        _vix_sub = f"Chg {vix_chg_pct:+.1f}% · {'⚠️ RISING' if vix_rising else 'stable'}"
+        ui.metric_card("INDIA VIX", f"{vix_current:.2f}", sub=_vix_sub,
+                        color="red" if vix_rising else "default")
     else:
-        gap = _DEF_THR - adverse
-        status = "CLEAR"
-        body   = f"Adverse drift {adverse:.2f}% · Gap to trigger: {gap:.2f}% · Threat {threat_mult:.2f}"
-        action = f"Trigger spot: {trig_spot:,} · Roll OUT to: {roll_to:,}"
-        bg = palette[4] if adverse < 0.5 else palette[3] if adverse < 1.0 else palette[2]
-        txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
-    st.markdown(
-        f"<div style='background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:6px;'>"
-        f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.85;'>{side_label}</div>"
-        f"<div style='color:{txt_col};font-size:14px;font-weight:900;margin:2px 0;'>{status}</div>"
-        f"<div style='color:{txt_col};font-size:10px;opacity:0.9;margin-bottom:2px;'>{body}</div>"
-        f"<div style='color:{txt_col};font-size:10px;font-style:italic;opacity:0.8;'>{action}</div>"
-        f"</div>", unsafe_allow_html=True)
+        ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
 
-if tue_anchor_available:
-    _def_card("CE · CALL SIDE — Defensive",
-              ce_adverse, ce_def_fired, ce_def_near, ce_def_trig_spot, ce_def_roll_to, CE_RED)
-    _def_card("PE · PUT SIDE — Defensive",
-              pe_adverse, pe_def_fired, pe_def_near, pe_def_trig_spot, pe_def_roll_to, PE_GREEN)
-else:
+if not tue_anchor_available:
     st.info("Expiry anchor not available — load data to activate roll matrix.")
+else:
+    # ── Helper: filter-row HTML ───────────────────────────────────────────────
+    def _frow(label, passed, value_str):
+        icon = "✅" if passed else "❌"
+        col  = "#16a34a" if passed else "#dc2626"
+        return (
+            f"<div style='display:flex;align-items:center;gap:6px;margin:2px 0;'>"
+            f"<span style='font-size:11px;'>{icon}</span>"
+            f"<span style='font-size:10px;color:#e2e8f0;flex:1;'>{label}</span>"
+            f"<span style='font-size:10px;font-weight:700;color:{col};'>{value_str}</span>"
+            f"</div>"
+        )
 
-_off_rule = f"CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot ({'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'})"
-st.markdown("**Offensive Roll — Theta Harvest**")
-st.caption(f"Trigger: 1.8% favorable drift · Roll IN to {_off_rule}")
+    def _side_card(side_tag, palette,
+                   book_loss, prep_loss, book_profit, prep_profit,
+                   adverse, favor,
+                   def_roll_to, off_roll_to, def_trig_spot, off_trig_spot,
+                   f1, f2, f3, f4, fp, canary_val, is_ce):
+        # Determine state + appearance
+        if book_loss:
+            bg       = palette[0]
+            state    = "🔴 BOOK LOSS — ROLL OUT"
+            action   = f"Buy back losing leg · Roll OUT to 5% from anchor → {def_roll_to:,}"
+        elif prep_loss:
+            bg       = "#ea580c"
+            state    = "⚠️ PREPARE TO BOOK LOSS"
+            gap      = _DEF_THR - adverse
+            action   = f"Approaching threshold · {gap:.2f}% to full trigger · Trigger spot {def_trig_spot:,}"
+        elif book_profit:
+            bg       = "#0f766e"
+            state    = "🟢 BOOK PROFIT — ROLL IN"
+            _pct     = ce_off_pct if is_ce else pe_off_pct
+            action   = f"Buy back dead leg · Roll IN {_pct}% from spot → {off_roll_to:,}"
+        elif prep_profit:
+            bg       = "#0369a1"
+            state    = "🔵 PREPARE TO BOOK PROFIT"
+            gap      = _OFF_THR - favor
+            action   = f"Favorable drift building · {gap:.2f}% to roll trigger · Trig spot {off_trig_spot:,}"
+        else:
+            bg       = palette[4] if adverse < 0.5 and favor < 0.5 else palette[3]
+            state    = "✅ HOLD"
+            gap_d    = _DEF_THR - adverse
+            gap_o    = _OFF_THR - favor
+            action   = f"Def gap {gap_d:.2f}% · Off gap {gap_o:.2f}% · Trig spots Def {def_trig_spot:,} / Off {off_trig_spot:,}"
 
-def _off_card(side_label, favor, fired, trig_spot, roll_to, palette, is_ce):
-    gap = _OFF_THR - favor
-    _pct = ce_off_pct if is_ce else pe_off_pct
-    if fired:
-        bg      = "#0f766e"
-        txt_col = "white"
-        status  = "ROLL-IN READY"
-        body    = f"Favorable drift {favor:.2f}% ≥ 1.8% threshold · Dead leg has minimal delta"
-        action  = f"BUY BACK dead leg · Roll IN to {_pct}% from spot → {roll_to:,}"
-    else:
-        bg      = palette[4] if favor < 0.5 else palette[3] if favor < 1.5 else palette[2]
         txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
-        status  = "CLEAR"
-        body    = f"Favorable drift {favor:.2f}% · Need {gap:.2f}% more to trigger · Trigger spot: {trig_spot:,}"
-        action  = f"If triggered: Roll IN to {_pct}% from spot → {roll_to:,}"
-    st.markdown(
-        f"<div style='background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:6px;'>"
-        f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.85;'>{side_label}</div>"
-        f"<div style='color:{txt_col};font-size:14px;font-weight:900;margin:2px 0;'>{status}</div>"
-        f"<div style='color:{txt_col};font-size:10px;opacity:0.9;margin-bottom:2px;'>{body}</div>"
-        f"<div style='color:{txt_col};font-size:10px;font-style:italic;opacity:0.8;'>{action}</div>"
-        f"</div>", unsafe_allow_html=True)
 
-if tue_anchor_available:
-    _off_card("CE · CALL SIDE — Offensive (CE dead when spot falls)",
-              ce_favor, ce_off_fired, ce_off_trig_spot, ce_off_roll_to, CE_RED, is_ce=True)
-    _off_card("PE · PUT SIDE — Offensive (PE dead when spot rises)",
-              pe_favor, pe_off_fired, pe_off_trig_spot, pe_off_roll_to, PE_GREEN, is_ce=False)
+        # VIX advisory line
+        vix_line = ""
+        if vix_available and vix_rising:
+            if is_ce:
+                vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
+                            f"background:rgba(0,0,0,0.25);color:#fef08a;font-size:9px;font-weight:700;'>"
+                            f"⚠️ VIX RISING {vix_chg_pct:+.1f}% — CAUTION: up moves may revert · hold CE unless all 4 fire"
+                            f"</div>")
+            else:
+                vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
+                            f"background:rgba(0,0,0,0.25);color:#bfdbfe;font-size:9px;font-weight:700;'>"
+                            f"🔵 VIX RISING {vix_chg_pct:+.1f}% — EXTRA CONFIRMATION: fear-driven · PE sell-off persists"
+                            f"</div>")
+
+        # Filter scorecard rows
+        f1_label = "Drift ≥ 2.5% adverse"
+        f2_label = "Threat Multiplier > 1.15"
+        f3_label = f"Canary ≥ Day 2 ({canary_val}/4)"
+        f4_label = f"Mom {'> 0 (bullish)' if is_ce else '< 0 (bearish)'}"
+        scorecard = (
+            _frow(f1_label, f1, f"{adverse:.2f}%")
+            + _frow(f2_label, f2, f"{threat_mult:.2f}")
+            + _frow(f3_label, f3, f"Day {canary_val}")
+            + _frow(f4_label, f4, f"{mom_score:+.1f}%ATR")
+        )
+
+        st.markdown(
+            f"<div style='background:{bg};border-radius:10px;padding:14px 16px;margin-bottom:8px;'>"
+            f"<div style='color:{txt_col};font-size:9px;font-weight:700;opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
+            f"<div style='color:{txt_col};font-size:16px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
+            f"<div style='color:{txt_col};font-size:10px;font-style:italic;opacity:0.9;margin-bottom:8px;'>{action}</div>"
+            f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
+            f"<div style='color:#94a3b8;font-size:8px;font-weight:700;margin-bottom:4px;letter-spacing:1px;'>"
+            f"FILTER SCORECARD — {fp}/4 PASS</div>"
+            + scorecard
+            + f"</div>"
+            + vix_line
+            + f"</div>", unsafe_allow_html=True)
+
+    st.markdown("#### Defensive Roll — Book Loss · Offensive Roll — Book Profit")
+
+    col_ce, col_pe = st.columns(2)
+    with col_ce:
+        _side_card(
+            "CE · CALL SIDE", CE_RED,
+            ce_book_loss, ce_prepare_loss, ce_book_profit, ce_prepare_profit,
+            ce_adverse, ce_favor,
+            ce_def_roll_to, ce_off_roll_to, ce_def_trig_spot, ce_off_trig_spot,
+            ce_f1, ce_f2, ce_f3, ce_f4, ce_fp, ce_canary, is_ce=True)
+    with col_pe:
+        _side_card(
+            "PE · PUT SIDE", PE_GREEN,
+            pe_book_loss, pe_prepare_loss, pe_book_profit, pe_prepare_profit,
+            pe_adverse, pe_favor,
+            pe_def_roll_to, pe_off_roll_to, pe_def_trig_spot, pe_off_trig_spot,
+            pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False)
+
+    # ── Strike distance reference ─────────────────────────────────────────────
+    _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
+    st.caption(
+        f"Anchor close {tue_close:,.0f} · Spot {spot_now:,.0f} · Drift {drift_pct:+.2f}% · "
+        f"Threat {threat_mult:.2f} · VIX {vix_current:.2f} · Off rule: {_off_rule}"
+    )
