@@ -356,138 +356,157 @@ st.markdown(
     f"<span style='font-size:10px;color:#64748b;'> · Score {_mscore:+.1f}% ATR/day{_forced_h}</span>"
     f"</div>", unsafe_allow_html=True)
 
-# ── Dynamic Roll Matrix — compact status row ─────────────────────────────────
+# ── Dynamic Roll Matrix — compact status chips ───────────────────────────────
 try:
-    import datetime as _dt_rm, numpy as _np_rm
+    import datetime as _dt_rm
     from data.live_fetcher import get_nifty_daily as _gnd_rm, get_dte as _gte_rm, next_tuesday as _nxt_rm
 
     _daily_rm = _gnd_rm()
     _dte_rm   = _gte_rm(_nxt_rm(_dt_rm.date.today()))
 
-    # Anchor close (same Tuesday logic as page 02)
+    # Anchor close — last Tuesday (or last trading day before it)
     _tc_rm = _drift_rm = 0.0
     _anc_rm = False
     if not _daily_rm.empty:
-        _tod_rm  = _dt_rm.date.today()
-        _dst_rm  = (_tod_rm.weekday() - 1) % 7
-        _ltu_rm  = _tod_rm - _dt_rm.timedelta(days=_dst_rm)
-        _trd_rm  = set(_daily_rm.index.date)
-        _adate_rm = None
-        for _off_rm in range(7):
-            _cnd_rm = _ltu_rm - _dt_rm.timedelta(days=_off_rm)
-            if _cnd_rm in _trd_rm:
-                _adate_rm = _cnd_rm; break
+        _tod_rm   = _dt_rm.date.today()
+        _ltu_rm   = _tod_rm - _dt_rm.timedelta(days=(_tod_rm.weekday() - 1) % 7)
+        _trd_rm   = set(_daily_rm.index.date)
+        _adate_rm = next(((_ltu_rm - _dt_rm.timedelta(days=i)) for i in range(7)
+                          if (_ltu_rm - _dt_rm.timedelta(days=i)) in _trd_rm), None)
         if _adate_rm:
             _tc_rm    = float(_daily_rm[_daily_rm.index.date <= _adate_rm]["close"].iloc[-1])
-            _sp_rm    = spot  # spot already loaded above
-            _drift_rm = (_sp_rm - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
+            _drift_rm = (spot - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
             _anc_rm   = True
 
     # Threat multiplier
-    _thr_rm = 0.0
+    _thr_rm = _mom_score_rm = 0.0
     if not _daily_rm.empty and len(_daily_rm) >= 15:
-        _vs14_rm = float(_daily_rm["volume"].rolling(14).mean().iloc[-1])
-        _tvol_rm = float(_daily_rm["volume"].iloc[-1])
-        _tcl_rm  = float(_daily_rm["close"].iloc[-1])
-        _pcl_rm  = float(_daily_rm["close"].iloc[-2])
-        _ret_rm  = (_tcl_rm - _pcl_rm) / _pcl_rm * 100 if _pcl_rm > 0 else 0.0
-        _rv_rm   = _tvol_rm / _vs14_rm if _vs14_rm > 0 else 1.0
-        _thr_rm  = abs(_ret_rm) * _rv_rm
+        _vs14    = float(_daily_rm["volume"].rolling(14).mean().iloc[-1])
+        _tvol    = float(_daily_rm["volume"].iloc[-1])
+        _tcl     = float(_daily_rm["close"].iloc[-1])
+        _pcl     = float(_daily_rm["close"].iloc[-2])
+        _ret_rm  = (_tcl - _pcl) / _pcl * 100 if _pcl > 0 else 0.0
+        _thr_rm  = abs(_ret_rm) * (_tvol / _vs14 if _vs14 > 0 else 1.0)
+
+    # Canary and momentum from signals dict
+    _canary_dir_rm = sig.get("canary_direction", "NONE")
+    _canary_lvl_rm = sig.get("canary_level", 0)
+    _mom_score_rm  = sig.get("cr_mom_score", 0.0)
+    # Approximate per-side canary from overall
+    _pe_can_rm = _canary_lvl_rm if _canary_dir_rm == "BEAR" else 0
+    _ce_can_rm = _canary_lvl_rm if _canary_dir_rm == "BULL" else 0
 
     if _anc_rm and _tc_rm > 0:
-        _def_thr_rm  = 2.8
-        _off_thr_rm  = 1.8
-
+        _DEF = 2.5;  _OFF = 1.8
         _ce_adv = max(_drift_rm,  0.0)
         _pe_adv = max(-_drift_rm, 0.0)
         _pe_fav = max(_drift_rm,  0.0)
         _ce_fav = max(-_drift_rm, 0.0)
 
-        _ce_def = _ce_adv >= _def_thr_rm and _thr_rm > 1.15
-        _pe_def = _pe_adv >= _def_thr_rm and _thr_rm > 1.15
-        _ce_off = _ce_fav >= _off_thr_rm
-        _pe_off = _pe_fav >= _off_thr_rm
+        # 4-filter states
+        _ce_f1 = _ce_adv >= _DEF;  _ce_f2 = _thr_rm > 1.15
+        _ce_f3 = _ce_can_rm >= 2;  _ce_f4 = _mom_score_rm > 0
+        _pe_f1 = _pe_adv >= _DEF;  _pe_f2 = _thr_rm > 1.15
+        _pe_f3 = _pe_can_rm >= 2;  _pe_f4 = _mom_score_rm < 0
+        _ce_fp = sum([_ce_f1, _ce_f2, _ce_f3, _ce_f4])
+        _pe_fp = sum([_pe_f1, _pe_f2, _pe_f3, _pe_f4])
 
-        # Offensive roll-in distances from CMP (Wed/Thu vs Fri/Mon/Tue)
+        _ce_book_loss    = _ce_f1 and _ce_f2 and _ce_f3 and _ce_f4
+        _pe_book_loss    = _pe_f1 and _pe_f2 and _pe_f3 and _pe_f4
+        _ce_prep_loss    = not _ce_book_loss and (_ce_adv >= _DEF*0.9 or (_ce_adv >= _DEF*0.8 and _ce_fp >= 3))
+        _pe_prep_loss    = not _pe_book_loss and (_pe_adv >= _DEF*0.9 or (_pe_adv >= _DEF*0.8 and _pe_fp >= 3))
+        _ce_book_profit  = _ce_fav >= _OFF
+        _pe_book_profit  = _pe_fav >= _OFF
+        _ce_prep_profit  = not _ce_book_profit and _ce_fav >= _OFF * 0.75
+        _pe_prep_profit  = not _pe_book_profit and _pe_fav >= _OFF * 0.75
+
+        # Strike targets
         _ce_off_pct = 3.5 if _dte_rm >= 5 else 2.5
         _pe_off_pct = 4.0 if _dte_rm >= 5 else 3.0
-        _sp_rm = spot
+        _ce_def_roll = int(round(_tc_rm * 1.05 / 50) * 50)
+        _pe_def_roll = int(round(_tc_rm * 0.95 / 50) * 50)
+        _ce_off_roll = int(round(spot * (1 + _ce_off_pct/100) / 50) * 50)
+        _pe_off_roll = int(round(spot * (1 - _pe_off_pct/100) / 50) * 50)
+        _ce_def_trig = int(round(_tc_rm * (1 + _DEF/100) / 50) * 50)
+        _pe_def_trig = int(round(_tc_rm * (1 - _DEF/100) / 50) * 50)
 
-        # Defensive: spot prices at trigger
-        _ce_dts = int(round(_tc_rm * (1 + _def_thr_rm/100) / 50) * 50)
-        _pe_dts = int(round(_tc_rm * (1 - _def_thr_rm/100) / 50) * 50)
-        _ce_dto = int(round(_tc_rm * 1.05 / 50) * 50)
-        _pe_dto = int(round(_tc_rm * 0.95 / 50) * 50)
-
-        # Offensive: roll-in targets
-        _ce_oto = int(round(_sp_rm * (1 + _ce_off_pct/100) / 50) * 50)
-        _pe_oto = int(round(_sp_rm * (1 - _pe_off_pct/100) / 50) * 50)
-
-        def _rm_chip(label, fired, near, adv, thr, trig_spot, roll_to, is_pe):
-            if fired:
-                bg = "#b91c1c" if not is_pe else "#14532d"
-                txt = "white"; icon = "🔴" if not is_pe else "🔴"
-                detail = f"ROLL OUT → {roll_to:,}"
-            elif near:
-                bg = "#ea580c"; txt = "white"; icon = "⚠️"
-                detail = f"↗ {trig_spot:,} triggers"
+        def _rm_state_chip(side, is_loss_side,
+                           book_loss, prep_loss, book_profit, prep_profit,
+                           adv, fav, fp, def_roll, off_roll, def_trig, off_trig):
+            if book_loss:
+                bg = "#b91c1c" if not is_loss_side else "#14532d"
+                ico = "🔴"; headline = "BOOK LOSS"
+                sub = f"Roll OUT → {def_roll:,}"
+            elif prep_loss:
+                bg = "#ea580c"; ico = "⚠️"; headline = "PREPARE LOSS"
+                sub = f"Trig @ {def_trig:,} · {fp}/4 filters"
+            elif book_profit:
+                bg = "#0f766e"; ico = "🟢"; headline = "BOOK PROFIT"
+                sub = f"Roll IN → {off_roll:,}"
+            elif prep_profit:
+                bg = "#0369a1"; ico = "🔵"; headline = "PREP PROFIT"
+                sub = f"Fav {fav:.1f}% · Roll IN→{off_roll:,}"
             else:
-                bg = "#14532d" if is_pe else "#b91c1c"; txt = "white"; icon = "✅"
-                detail = f"Trig @ {trig_spot:,}"
+                bg = "#1e293b" if not is_loss_side else "#14532d"
+                ico = "✅"; headline = "HOLD"
+                sub = f"Adv {adv:.1f}% · Fav {fav:.1f}%"
             return (
-                f"<div style='flex:1;background:{bg};border-radius:6px;padding:6px 10px;'>"
-                f"<div style='color:{txt};font-size:8px;font-weight:700;opacity:0.8;'>{label}</div>"
-                f"<div style='color:{txt};font-size:11px;font-weight:900;'>{icon} {adv:.1f}%/{thr:.1f}%</div>"
-                f"<div style='color:{txt};font-size:9px;opacity:0.85;'>{detail}</div>"
+                f"<div style='flex:1;background:{bg};border-radius:7px;padding:7px 10px;'>"
+                f"<div style='color:rgba(255,255,255,0.7);font-size:8px;font-weight:700;'>{side}</div>"
+                f"<div style='color:white;font-size:12px;font-weight:900;'>{ico} {headline}</div>"
+                f"<div style='color:rgba(255,255,255,0.8);font-size:8px;margin-top:1px;'>{sub}</div>"
                 f"</div>"
             )
 
-        def _off_chip(label, fired, fav, trig_spot, roll_to, is_pe):
-            if fired:
-                bg = "#0f766e"; txt = "white"; icon = "🟢"
-                detail = f"ROLL IN → {roll_to:,}"
-            else:
-                gap = _off_thr_rm - fav
-                bg = "#1e293b"; txt = "white"; icon = "✅"
-                detail = f"Need {gap:.1f}% · Trig @ {trig_spot:,}"
-            return (
-                f"<div style='flex:1;background:{bg};border-radius:6px;padding:6px 10px;'>"
-                f"<div style='color:{txt};font-size:8px;font-weight:700;opacity:0.8;'>{label}</div>"
-                f"<div style='color:{txt};font-size:11px;font-weight:900;'>{icon} {fav:.1f}%/{_off_thr_rm:.1f}%</div>"
-                f"<div style='color:{txt};font-size:9px;opacity:0.85;'>{detail}</div>"
-                f"</div>"
-            )
+        # VIX advisory
+        _vix_cur, _vix_chg = 0.0, 0.0
+        try:
+            from data.live_fetcher import get_india_vix_detail as _gvd
+            _vix_cur, _vix_chg = _gvd()
+        except Exception:
+            pass
+        _vix_rising_rm = _vix_chg > 5.0
 
-        _pe_near_rm = not _pe_def and _pe_adv >= _def_thr_rm * 0.75
-        _ce_near_rm = not _ce_def and _ce_adv >= _def_thr_rm * 0.75
+        _vix_note = ""
+        if _vix_rising_rm:
+            _vix_note = (f"<div style='margin-top:4px;font-size:8px;font-weight:700;color:#fef08a;'>"
+                         f"⚠️ VIX +{_vix_chg:.1f}% RISING — CE caution · PE confirmed</div>")
 
         st.markdown(
-            f"<div style='margin-bottom:4px;'>"
-            f"<span style='font-size:9px;font-weight:700;color:#64748b;'>ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · Def ≥2.8% + Threat > 1.15</span>"
+            f"<div style='margin-bottom:2px;'>"
+            f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
+            f"ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · "
+            f"Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%</span>"
             f"</div>"
-            f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
-            f"<div style='flex:0 0 auto;display:flex;align-items:center;padding-right:4px;'><span style='font-size:8px;font-weight:700;color:#64748b;'>DEF</span></div>"
-            + _rm_chip("CE CALL", _ce_def, _ce_near_rm, _ce_adv, _def_thr_rm, _ce_dts, _ce_dto, False)
-            + _rm_chip("PE PUT",  _pe_def, _pe_near_rm, _pe_adv, _def_thr_rm, _pe_dts, _pe_dto, True)
+            f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
+            + _rm_state_chip("CE · CALL", False,
+                             _ce_book_loss, _ce_prep_loss, _ce_book_profit, _ce_prep_profit,
+                             _ce_adv, _ce_fav, _ce_fp, _ce_def_roll, _ce_off_roll,
+                             _ce_def_trig, 0)
+            + _rm_state_chip("PE · PUT", True,
+                             _pe_book_loss, _pe_prep_loss, _pe_book_profit, _pe_prep_profit,
+                             _pe_adv, _pe_fav, _pe_fp, _pe_def_roll, _pe_off_roll,
+                             _pe_def_trig, 0)
             + f"</div>"
-            f"<div style='display:flex;gap:4px;margin-bottom:8px;'>"
-            f"<div style='flex:0 0 auto;display:flex;align-items:center;padding-right:4px;'><span style='font-size:8px;font-weight:700;color:#64748b;'>OFF</span></div>"
-            + _off_chip("CE CALL", _ce_off, _ce_fav, int(round(_tc_rm*(1-_off_thr_rm/100)/50)*50), _ce_oto, False)
-            + _off_chip("PE PUT",  _pe_off, _pe_fav, int(round(_tc_rm*(1+_off_thr_rm/100)/50)*50), _pe_oto, True)
-            + f"</div>",
+            + _vix_note,
             unsafe_allow_html=True)
 except Exception:
     pass
 
 with st.expander("Roll Matrix — Quick Reference", expanded=False):
     st.markdown(
-        "**Defensive (Stop Loss):** Single rule — biweekly positions always have ≥ 7 DTE, gamma is not the risk.\n\n"
-        "**2.8% adverse drift + Threat Multiplier > 1.15 → Buy back losing leg · Roll OUT to 5% from anchor**\n\n"
-        "**Offensive (Theta Harvest):** Spot moves favourably 1.8% — dead leg loses delta, buy back cheap.\n\n"
+        "**BOOK LOSS:** All 4 filters must pass — "
+        "Drift ≥ 2.5% adverse · Threat > 1.15 · Canary ≥ Day 2 · Momentum agrees\n\n"
+        "→ Buy back losing leg · Roll OUT to 5% from anchor close\n\n"
+        "**PREPARE TO BOOK LOSS:** Drift ≥ 2.25% (90%) regardless, "
+        "OR drift ≥ 2.0% + 3 of 4 filters pass\n\n"
+        "**BOOK PROFIT:** Favorable drift ≥ 1.8% — dead leg cheap, roll IN\n\n"
         "- DTE ≥ 5 (Wed/Thu): CE → +3.5% from CMP · PE → −4.0% from CMP\n"
         "- DTE ≤ 4 (Fri/Mon/Tue): CE → +2.5% from CMP · PE → −3.0% from CMP\n\n"
-        "**Threat Multiplier** = |daily return %| × (today's volume ÷ 14-day avg volume).\n"
-        "Above 1.15 = institutional backing. Below 1.15 = possible noise, hold on Wed/Thu."
+        "**PREPARE TO BOOK PROFIT:** Favorable drift ≥ 1.35%\n\n"
+        "**Threat Multiplier** = |daily return %| × (volume ÷ 14-day avg). "
+        "> 1.15 = institutional backing confirmed.\n\n"
+        "**VIX rising:** ⚠️ CAUTION on CE (up moves may revert) · 🔵 CONFIRMATION on PE (fear-driven)"
     )
 
 with st.expander("📊 All Lens Distances", expanded=True):
