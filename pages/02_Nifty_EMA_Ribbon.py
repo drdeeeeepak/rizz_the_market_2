@@ -358,101 +358,6 @@ overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
 overall_label  = CANARY_LABEL.get(overall_canary, "Canary Day 4")
 
 _both_singing = (pe_canary == 0 and ce_canary == 0)
-_pe_hdr = BOTH_AMBER if _both_singing else PE_GREEN.get(pe_canary, "#94a3b8")
-_ce_hdr = BOTH_AMBER if _both_singing else CE_RED.get(ce_canary, "#94a3b8")
-_pe_txt = "white" if _both_singing else _txt(pe_canary)
-_ce_txt = "white" if _both_singing else _txt(ce_canary)
-_act_col = {0:"#d97706",1:"#d97706",2:"#d97706",3:"#ea580c",4:"#dc2626"}.get(overall_canary,"#94a3b8")
-if _both_singing: _act_col = "#d97706"
-
-st.markdown(
-    f"<div style='display:flex;border-radius:8px;overflow:hidden;margin-bottom:12px;gap:2px;'>"
-    # PE side
-    f"<div style='background:{_pe_hdr};flex:1;padding:10px 16px;'>"
-    f"<div style='color:{_pe_txt};font-size:11px;font-weight:700;opacity:0.9;'>PE · PUT SIDE</div>"
-    f"<div style='color:{_pe_txt};font-size:17px;font-weight:900;'>{CANARY_ICON.get(pe_canary,'')} {CANARY_LABEL.get(pe_canary,'—')}</div>"
-    f"<div style='color:{_pe_txt};font-size:11px;opacity:0.8;'>{pe_driver}</div>"
-    f"</div>"
-    # Centre action
-    f"<div style='background:{_act_col};padding:10px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:90px;'>"
-    f"<div style='color:white;font-size:10px;font-weight:700;letter-spacing:1px;text-align:center;'>EMA HOLD MONITOR</div>"
-    f"<div style='color:white;font-size:20px;font-weight:900;'>{overall_action}</div>"
-    f"<div style='color:rgba(255,255,255,0.75);font-size:10px;font-family:monospace;'>{regime}</div>"
-    f"</div>"
-    # CE side
-    f"<div style='background:{_ce_hdr};flex:1;padding:10px 16px;text-align:right;'>"
-    f"<div style='color:{_ce_txt};font-size:11px;font-weight:700;opacity:0.9;'>CE · CALL SIDE</div>"
-    f"<div style='color:{_ce_txt};font-size:17px;font-weight:900;'>{CANARY_ICON.get(ce_canary,'')} {CANARY_LABEL.get(ce_canary,'—')}</div>"
-    f"<div style='color:{_ce_txt};font-size:11px;opacity:0.8;'>{ce_driver}</div>"
-    f"</div>"
-    f"</div>",
-    unsafe_allow_html=True)
-
-# ── Top-of-page Roll Alert Banner ────────────────────────────────────────────
-_any_book_loss   = ce_book_loss   or pe_book_loss
-_any_book_profit = ce_book_profit or pe_book_profit
-_any_prep_loss   = ce_prepare_loss   or pe_prepare_loss
-_any_prep_profit = ce_prepare_profit or pe_prepare_profit
-
-if _any_book_loss:
-    _loss_sides = " + ".join(filter(None, ["CE" if ce_book_loss else "", "PE" if pe_book_loss else ""]))
-    _loss_roll  = " + ".join(filter(None, [
-        f"CE → {ce_def_roll_to:,}" if ce_book_loss else "",
-        f"PE → {pe_def_roll_to:,}" if pe_book_loss else ""]))
-    st.markdown(
-        f"<div style='background:#b91c1c;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
-        f"border:2px solid #ef4444;'>"
-        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🔴 ROLL MATRIX ALERT</div>"
-        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>BOOK LOSS — {_loss_sides} LEG</div>"
-        f"<div style='color:white;font-size:12px;'>All 4 filters confirmed · Buy back losing leg · "
-        f"Roll OUT to 5% from anchor · {_loss_roll}</div>"
-        f"</div>", unsafe_allow_html=True)
-elif _any_prep_loss:
-    _prep_sides = " + ".join(filter(None, ["CE" if ce_prepare_loss else "", "PE" if pe_prepare_loss else ""]))
-    st.markdown(
-        f"<div style='background:#ea580c;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
-        f"border:2px solid #f97316;'>"
-        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>⚠️ ROLL MATRIX ALERT</div>"
-        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>PREPARE TO BOOK LOSS — {_prep_sides} LEG</div>"
-        f"<div style='color:white;font-size:12px;'>Approaching defensive threshold · Review Section 6 now</div>"
-        f"</div>", unsafe_allow_html=True)
-
-if _any_book_profit:
-    _prof_sides = " + ".join(filter(None, ["CE" if ce_book_profit else "", "PE" if pe_book_profit else ""]))
-    _prof_roll  = " + ".join(filter(None, [
-        f"CE → {ce_off_roll_to:,}" if ce_book_profit else "",
-        f"PE → {pe_off_roll_to:,}" if pe_book_profit else ""]))
-    st.markdown(
-        f"<div style='background:#0f766e;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
-        f"border:2px solid #14b8a6;'>"
-        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🟢 ROLL MATRIX ALERT</div>"
-        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>BOOK PROFIT — {_prof_sides} LEG</div>"
-        f"<div style='color:white;font-size:12px;'>Favorable drift ≥ 1.8% · Dead leg cheap · "
-        f"Roll IN closer · {_prof_roll}</div>"
-        f"</div>", unsafe_allow_html=True)
-elif _any_prep_profit:
-    _pp_sides = " + ".join(filter(None, ["CE" if ce_prepare_profit else "", "PE" if pe_prepare_profit else ""]))
-    st.markdown(
-        f"<div style='background:#0369a1;border-radius:8px;padding:14px 20px;margin-bottom:12px;"
-        f"border:2px solid #38bdf8;'>"
-        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>🔵 ROLL MATRIX ALERT</div>"
-        f"<div style='color:white;font-size:18px;font-weight:900;margin:4px 0;'>PREPARE TO BOOK PROFIT — {_pp_sides} LEG</div>"
-        f"<div style='color:white;font-size:12px;'>Favorable drift ≥ 1.35% · Review Section 6 · Prepare roll-in strikes</div>"
-        f"</div>", unsafe_allow_html=True)
-
-st.title("Page 02 — EMA Hold Monitor")
-st.caption("Three-Source Canary · PE and CE independently · Live Moat Status · Hold / Watch / Prepare / Act")
-show_page_header(spot, signals_ts)
-
-# Top-level banners for serious canary
-if overall_canary >= 4:
-    st.error(f"🔴 {overall_label} — EMA structure has shifted. ACT NOW. Roll or exit. Do not wait for tomorrow.")
-elif overall_canary == 3:
-    st.warning(f"⚠️ {overall_label} — Structural weakness confirmed. PREPARE roll plan now. Know your exit strikes.")
-elif overall_canary == 0:
-    st.success("✅ SINGING — All sources clear. EMA structure intact. Hold with confidence.")
-
-st.divider()
 
 # Colours that need dark text — defined here so all UI sections can use it
 _LIGHT_COLS = {"#bbf7d0", "#dcfce7", "#fca5a5", "#fecaca", "#fee2e2"}
@@ -509,170 +414,9 @@ pe_rs_txt, pe_rs_col = _roll_state(pe_book_loss, pe_prepare_loss, pe_book_profit
 ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_prepare_loss, ce_book_profit, ce_prepare_profit)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COMMAND CENTRE
-# ══════════════════════════════════════════════════════════════════════════════
-ui.section_header("Command Centre",
-                  "Position snapshot — Roll state · Canary · Moats · Source chips · Drift · Filter status")
-
-def _side_panel(tag, palette, is_pe,
-                rs_txt, rs_col, hold_act, ha_lvl,
-                canary_lvl, driver,
-                moats, moat_lbl, moat_detail,
-                s2, s3,
-                adverse, favor,
-                f1, f2, f3, f4):
-    ha_col  = _lvl_col.get(ha_lvl, "#64748b")
-    mc      = "#15803d" if moats >= 2 else "#d97706" if moats >= 1 else "#dc2626"
-    dc      = "#dc2626" if adverse >= 2.0 else "#ea580c" if adverse >= 1.0 else "#64748b"
-    fc      = "#0f766e" if favor  >= 1.8  else "#16a34a" if favor  >= 1.0 else "#64748b"
-
-    bg_can  = BOTH_AMBER if _both_singing else (PE_GREEN if is_pe else CE_RED).get(canary_lvl, "#94a3b8")
-    tc_can  = "#1e293b" if bg_can in _LIGHT_COLS else "white"
-
-    moat_sub = (" · ".join(f"{lb}: {v:,.0f}" for lb, v in moat_detail[:2])
-                if moat_detail else "—")
-
-    dots = "".join(
-        f"<span style='display:inline-block;width:8px;height:8px;border-radius:50%;"
-        f"background:{'#16a34a' if ok else '#dc2626'};margin-right:2px;vertical-align:middle;'></span>"
-        f"<span style='font-size:10px;color:#94a3b8;margin-right:6px;'>{lbl}</span>"
-        for ok, lbl in [(f2, "Thr"), (f3, "Can"), (f4, "Mom"), (f1, "Dft")]
-    )
-
-    vix_line = ""
-    if vix_available and vix_rising:
-        if is_pe:
-            vix_line = ("<div style='margin-top:6px;font-size:11px;font-weight:700;color:#bfdbfe;'>"
-                        "🔵 VIX rising — fear confirms PE pressure</div>")
-        else:
-            vix_line = ("<div style='margin-top:6px;font-size:11px;font-weight:700;color:#fef08a;'>"
-                        "⚠️ VIX rising — up move may revert, hold CE</div>")
-
-    s2c = _chip(s2, palette)
-    s3c = _chip(s3, palette)
-
-    st.markdown(
-        f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
-        f"border:1px solid #1e293b;'>"
-        # Tag
-        f"<div style='font-size:10px;font-weight:700;color:#475569;"
-        f"letter-spacing:1.5px;margin-bottom:8px;'>{tag}</div>"
-        # Roll state badge
-        f"<div style='background:{rs_col};border-radius:6px;padding:5px 10px;margin-bottom:10px;'>"
-        f"<span style='color:white;font-size:15px;font-weight:900;"
-        f"letter-spacing:0.3px;'>{rs_txt}</span></div>"
-        # Canary
-        f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:7px;'>"
-        f"<span style='background:{bg_can};color:{tc_can};border-radius:5px;"
-        f"padding:3px 8px;font-size:12px;font-weight:700;'>"
-        f"{CANARY_ICON.get(canary_lvl,'')} {CANARY_LABEL.get(canary_lvl,'—')}</span>"
-        f"<span style='font-size:10px;color:#475569;'>{driver}</span></div>"
-        # Source chips (S2 + S3 only)
-        f"<div style='display:flex;align-items:center;gap:3px;margin-bottom:7px;'>"
-        f"<span style='font-size:10px;color:#475569;margin-right:2px;'>SRC</span>"
-        f"<span style='font-size:10px;color:#64748b;'>S2</span>&nbsp;{s2c}&nbsp;"
-        f"<span style='font-size:10px;color:#64748b;margin-left:4px;'>S3</span>&nbsp;{s3c}</div>"
-        # Moats
-        f"<div style='margin-bottom:7px;'>"
-        f"<span style='font-size:11px;color:#94a3b8;'>Moats </span>"
-        f"<span style='font-size:16px;font-weight:700;color:{mc};'>{moats:g}</span>"
-        f"<span style='font-size:11px;color:#64748b;'> · {moat_lbl}</span>"
-        f"<div style='font-size:10px;color:#475569;margin-top:1px;'>{moat_sub}</div></div>"
-        # Adverse / Favor
-        f"<div style='display:flex;gap:14px;margin-bottom:7px;'>"
-        f"<div><span style='font-size:10px;color:#94a3b8;'>ADVERSE </span>"
-        f"<span style='font-size:15px;font-weight:700;color:{dc};'>{adverse:.2f}%</span></div>"
-        f"<div><span style='font-size:10px;color:#94a3b8;'>FAVOR </span>"
-        f"<span style='font-size:15px;font-weight:700;color:{fc};'>{favor:.2f}%</span></div></div>"
-        # Hold/Act
-        f"<div style='margin-bottom:8px;'>"
-        f"<span style='font-size:11px;color:#94a3b8;'>Hold/Act: </span>"
-        f"<span style='font-size:13px;font-weight:700;color:{ha_col};'>{hold_act}</span></div>"
-        # Filter dots
-        f"<div style='display:flex;align-items:center;flex-wrap:wrap;'>{dots}</div>"
-        + vix_line
-        + f"</div>", unsafe_allow_html=True)
-
-_oa_col    = _lvl_col.get(page_level, "#64748b")
-_reg_col   = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#15803d",
-              "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
-              "STRONG_BEAR":"#b91c1c"}.get(regime, "#64748b")
-_thr_col2  = "#dc2626" if threat_mult > 1.5 else "#ea580c" if threat_mult > 1.15 else "#16a34a"
-_vix_col2  = "#dc2626" if vix_rising else ("#16a34a" if vix_available else "#64748b")
-_vix_disp  = f"{vix_current:.1f}" if vix_available else "N/A"
-_drift_col3 = "#dc2626" if abs(drift_pct) >= 2.0 else "#ea580c" if abs(drift_pct) >= 1.0 else "#16a34a"
-_drift_disp = f"{drift_pct:+.2f}%" if tue_anchor_available else "—"
-_thr_disp  = "⚠️" if threat_mult > 1.15 else ""
-
-col_pe, col_ctr, col_ce = st.columns([5, 4, 5])
-
-with col_pe:
-    _side_panel(
-        "PE · PUT SIDE", PE_GREEN, True,
-        pe_rs_txt, pe_rs_col, action_pe, level_pe,
-        pe_canary, pe_driver,
-        put_moats, put_label, _detail_p,
-        src2_pe, src3_pe,
-        pe_adverse, pe_favor,
-        pe_f1, pe_f2, pe_f3, pe_f4)
-
-with col_ctr:
-    st.markdown(
-        f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
-        f"border:1px solid #1e293b;text-align:center;'>"
-        f"<div style='font-size:10px;font-weight:700;color:#475569;"
-        f"letter-spacing:1.5px;margin-bottom:10px;'>OVERALL VERDICT</div>"
-        # Overall action
-        f"<div style='background:{_oa_col};border-radius:8px;padding:8px 12px;margin-bottom:10px;'>"
-        f"<div style='color:white;font-size:17px;font-weight:900;'>{page_action}</div>"
-        f"<div style='color:rgba(255,255,255,0.65);font-size:11px;'>{page_driver} side drives</div></div>"
-        # Regime
-        f"<div style='border:1px solid {_reg_col}55;border-radius:6px;"
-        f"padding:5px 8px;margin-bottom:6px;'>"
-        f"<div style='font-size:12px;font-weight:700;color:{_reg_col};'>{regime}</div>"
-        f"<div style='font-size:10px;color:#64748b;'>EMA Regime</div></div>"
-        # IC shape
-        f"<div style='border:1px solid {skew_col}55;border-radius:6px;"
-        f"padding:5px 8px;margin-bottom:10px;'>"
-        f"<div style='font-size:12px;font-weight:700;color:{skew_col};'>{skew_label}</div>"
-        f"<div style='font-size:10px;color:#64748b;'>IC Shape</div></div>"
-        # 2×2 key metrics grid
-        f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;'>"
-        f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:10px;color:#64748b;'>DTE</div>"
-        f"<div style='font-size:16px;font-weight:700;color:#e2e8f0;'>{dte}</div></div>"
-        f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:10px;color:#64748b;'>THREAT {_thr_disp}</div>"
-        f"<div style='font-size:16px;font-weight:700;color:{_thr_col2};'>{threat_mult:.2f}</div></div>"
-        f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:10px;color:#64748b;'>INDIA VIX</div>"
-        f"<div style='font-size:16px;font-weight:700;color:{_vix_col2};'>{_vix_disp}</div></div>"
-        f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:10px;color:#64748b;'>DRIFT</div>"
-        f"<div style='font-size:16px;font-weight:700;color:{_drift_col3};'>{_drift_disp}</div></div>"
-        f"</div>"
-        f"</div>", unsafe_allow_html=True)
-
-with col_ce:
-    _side_panel(
-        "CE · CALL SIDE", CE_RED, False,
-        ce_rs_txt, ce_rs_col, action_ce, level_ce,
-        ce_canary, ce_driver,
-        call_moats, call_label, _detail_c,
-        src2_ce, src3_ce,
-        ce_adverse, ce_favor,
-        ce_f1, ce_f2, ce_f3, ce_f4)
-
-# Regime change warning (was in Section 3)
-_entry_regime = sig.get("entry_regime", regime)
-if _entry_regime != regime:
-    st.warning(f"⚠️ Regime changed since entry: {_entry_regime} → {regime}")
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
 # ROLL MATRIX — Defensive Book Loss · Offensive Book Profit
 # ══════════════════════════════════════════════════════════════════════════════
+show_page_header(spot, signals_ts)
 ui.section_header("Roll Matrix",
                   "Four-filter defensive gate · Offensive theta harvest · Exact roll-to strikes")
 
@@ -817,52 +561,34 @@ else:
     if ema_vals and spot_now > 0:
         _all_emas = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
 
-        # CE corridor: EMAs strictly between spot and ce_sold (spot < ema < ce_sold)
-        if ce_sold > 0:
-            _ce_moats = sorted(
-                [(p, v) for p, v in _all_emas if spot_now < v < ce_sold],
-                key=lambda x: x[1]
-            )
-        else:
-            _ce_moats = []
+        # Build corridor items and sort by price ascending for both strips
+        _anchor_val = tue_close if tue_anchor_available else None
 
-        # PE corridor: EMAs strictly between pe_sold and spot (pe_sold < ema < spot)
-        if pe_sold > 0:
-            _pe_moats = sorted(
-                [(p, v) for p, v in _all_emas if pe_sold < v < spot_now],
-                key=lambda x: x[1], reverse=True
-            )
-        else:
-            _pe_moats = []
-
-        # CE strip: [ANCHOR→] [CMP] [EMA moats ascending] [CE_SOLD]
-        # PE strip: [PE_SOLD] [EMA moats descending] [CMP] [←ANCHOR]
-        _ce_anchor_val = tue_close if tue_anchor_available else None
-        _pe_anchor_val = tue_close if tue_anchor_available else None
-
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#475569;"
-            "letter-spacing:1px;margin:12px 0 6px;'>STRIKE-PATH CORRIDOR</div>",
-            unsafe_allow_html=True)
-
-        # CE strip
+        # CE corridor: all items between anchor/spot and ce_sold, sorted by price
         _ce_items = []
-        if _ce_anchor_val:
-            _ce_items.append(("ANCHOR", _ce_anchor_val, "neutral"))
-        _ce_items.append(("CMP", spot_now, "cmp"))
-        for p, v in _ce_moats:
-            _ce_items.append((f"EMA{p}", v, "above"))
+        if _anchor_val:
+            _ce_items.append(("ANCHOR", float(_anchor_val), "neutral"))
+        _ce_items.append(("CMP", float(spot_now), "cmp"))
         if ce_sold > 0:
+            for p, v in _all_emas:
+                if spot_now < v < ce_sold:
+                    _ce_items.append((f"EMA{p}", v, "above"))
             _ce_items.append((f"CE {ce_sold:,}", float(ce_sold), "sold_ce"))
+        _ce_items.sort(key=lambda x: x[1])
+        _ce_moat_count = sum(1 for _, _, k in _ce_items if k == "above")
 
+        # PE corridor: all items between pe_sold and anchor/spot, sorted by price
         _pe_items = []
         if pe_sold > 0:
             _pe_items.append((f"PE {pe_sold:,}", float(pe_sold), "sold_pe"))
-        for p, v in _pe_moats:
-            _pe_items.append((f"EMA{p}", v, "below"))
-        _pe_items.append(("CMP", spot_now, "cmp"))
-        if _pe_anchor_val:
-            _pe_items.append(("ANCHOR", _pe_anchor_val, "neutral"))
+            for p, v in _all_emas:
+                if pe_sold < v < spot_now:
+                    _pe_items.append((f"EMA{p}", v, "below"))
+        _pe_items.append(("CMP", float(spot_now), "cmp"))
+        if _anchor_val:
+            _pe_items.append(("ANCHOR", float(_anchor_val), "neutral"))
+        _pe_items.sort(key=lambda x: x[1])
+        _pe_moat_count = sum(1 for _, _, k in _pe_items if k == "below")
 
         _COLOR_MAP = {
             "neutral": ("#dbeafe", "#1e3a5f"),
@@ -873,34 +599,34 @@ else:
             "sold_pe": ("#15803d", "white"),
         }
 
-        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor (left→right, price ascending)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor — price ascending left→right</div>", unsafe_allow_html=True)
         _ce_cols = st.columns(max(len(_ce_items), 1))
         for i, (lbl, val, kind) in enumerate(_ce_items):
-            bg, tc = _COLOR_MAP[kind]
-            _moat_count = len(_ce_moats)
-            _path_note = f"{_moat_count} moat{'s' if _moat_count != 1 else ''}" if kind == "sold_ce" else ""
-            if kind == "sold_ce" and _moat_count == 0:
-                _path_note = "PATH CLEAR ⚠️"
+            _path_note = (f"{_ce_moat_count} moat{'s' if _ce_moat_count != 1 else ''}"
+                          if kind == "sold_ce" and _ce_moat_count > 0
+                          else "PATH CLEAR ⚠️" if kind == "sold_ce"
+                          else "")
             with _ce_cols[i]:
                 ui.metric_card(lbl, f"{val:,.0f}",
-                               sub=_path_note if _path_note else ("sold strike" if kind == "sold_ce" else
+                               sub=_path_note if _path_note else (
+                                   "sold strike" if kind == "sold_ce" else
                                    "current price" if kind == "cmp" else
                                    "anchor" if kind == "neutral" else "moat EMA"),
                                color=("red" if kind in ("above", "sold_ce") else
                                       "blue" if kind == "cmp" else
                                       "green" if kind in ("below", "sold_pe") else "default"))
 
-        st.markdown("<div style='font-size:10px;color:#64748b;margin:6px 0 3px;'>📉 PE Corridor (left→right, price descending — danger on left)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:10px;color:#64748b;margin:6px 0 3px;'>📉 PE Corridor — price ascending left→right (sold put leftmost)</div>", unsafe_allow_html=True)
         _pe_cols = st.columns(max(len(_pe_items), 1))
         for i, (lbl, val, kind) in enumerate(_pe_items):
-            bg, tc = _COLOR_MAP[kind]
-            _moat_count_pe = len(_pe_moats)
-            _path_note_pe = f"{_moat_count_pe} moat{'s' if _moat_count_pe != 1 else ''}" if kind == "sold_pe" else ""
-            if kind == "sold_pe" and _moat_count_pe == 0:
-                _path_note_pe = "PATH CLEAR ⚠️"
+            _path_note_pe = (f"{_pe_moat_count} moat{'s' if _pe_moat_count != 1 else ''}"
+                             if kind == "sold_pe" and _pe_moat_count > 0
+                             else "PATH CLEAR ⚠️" if kind == "sold_pe"
+                             else "")
             with _pe_cols[i]:
                 ui.metric_card(lbl, f"{val:,.0f}",
-                               sub=_path_note_pe if _path_note_pe else ("sold strike" if kind == "sold_pe" else
+                               sub=_path_note_pe if _path_note_pe else (
+                                   "sold strike" if kind == "sold_pe" else
                                    "current price" if kind == "cmp" else
                                    "anchor" if kind == "neutral" else "moat EMA"),
                                color=("green" if kind in ("below", "sold_pe") else
