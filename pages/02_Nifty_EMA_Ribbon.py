@@ -345,10 +345,8 @@ BOTH_AMBER = "#d97706"
 # ── Driver attribution (needed by header) ────────────────────────────────────
 src1_pe_eff = src1 if can_dir == "BEAR" else 0
 src1_ce_eff = src1 if can_dir == "BULL" else 0
-pe_driver = "Source 1" if src1_pe_eff >= src2_pe and src1_pe_eff >= src3_pe else \
-            "Source 2" if src2_pe >= src3_pe else "Source 3"
-ce_driver = "Source 1" if src1_ce_eff >= src2_ce and src1_ce_eff >= src3_ce else \
-            "Source 2" if src2_ce >= src3_ce else "Source 3"
+pe_driver = "Source 2" if src2_pe >= src3_pe else "Source 3"
+ce_driver = "Source 2" if src2_ce >= src3_ce else "Source 3"
 
 # ── Page header colour ───────────────────────────────────────────────────────
 CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
@@ -371,21 +369,21 @@ st.markdown(
     f"<div style='display:flex;border-radius:8px;overflow:hidden;margin-bottom:12px;gap:2px;'>"
     # PE side
     f"<div style='background:{_pe_hdr};flex:1;padding:10px 16px;'>"
-    f"<div style='color:{_pe_txt};font-size:9px;font-weight:700;opacity:0.9;'>PE · PUT SIDE</div>"
-    f"<div style='color:{_pe_txt};font-size:15px;font-weight:900;'>{CANARY_ICON.get(pe_canary,'')} {CANARY_LABEL.get(pe_canary,'—')}</div>"
-    f"<div style='color:{_pe_txt};font-size:9px;opacity:0.8;'>{pe_driver}</div>"
+    f"<div style='color:{_pe_txt};font-size:11px;font-weight:700;opacity:0.9;'>PE · PUT SIDE</div>"
+    f"<div style='color:{_pe_txt};font-size:17px;font-weight:900;'>{CANARY_ICON.get(pe_canary,'')} {CANARY_LABEL.get(pe_canary,'—')}</div>"
+    f"<div style='color:{_pe_txt};font-size:11px;opacity:0.8;'>{pe_driver}</div>"
     f"</div>"
     # Centre action
     f"<div style='background:{_act_col};padding:10px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:90px;'>"
-    f"<div style='color:white;font-size:8px;font-weight:700;letter-spacing:1px;text-align:center;'>EMA HOLD MONITOR</div>"
-    f"<div style='color:white;font-size:18px;font-weight:900;'>{overall_action}</div>"
-    f"<div style='color:rgba(255,255,255,0.75);font-size:8px;font-family:monospace;'>{regime}</div>"
+    f"<div style='color:white;font-size:10px;font-weight:700;letter-spacing:1px;text-align:center;'>EMA HOLD MONITOR</div>"
+    f"<div style='color:white;font-size:20px;font-weight:900;'>{overall_action}</div>"
+    f"<div style='color:rgba(255,255,255,0.75);font-size:10px;font-family:monospace;'>{regime}</div>"
     f"</div>"
     # CE side
     f"<div style='background:{_ce_hdr};flex:1;padding:10px 16px;text-align:right;'>"
-    f"<div style='color:{_ce_txt};font-size:9px;font-weight:700;opacity:0.9;'>CE · CALL SIDE</div>"
-    f"<div style='color:{_ce_txt};font-size:15px;font-weight:900;'>{CANARY_ICON.get(ce_canary,'')} {CANARY_LABEL.get(ce_canary,'—')}</div>"
-    f"<div style='color:{_ce_txt};font-size:9px;opacity:0.8;'>{ce_driver}</div>"
+    f"<div style='color:{_ce_txt};font-size:11px;font-weight:700;opacity:0.9;'>CE · CALL SIDE</div>"
+    f"<div style='color:{_ce_txt};font-size:17px;font-weight:900;'>{CANARY_ICON.get(ce_canary,'')} {CANARY_LABEL.get(ce_canary,'—')}</div>"
+    f"<div style='color:{_ce_txt};font-size:11px;opacity:0.8;'>{ce_driver}</div>"
     f"</div>"
     f"</div>",
     unsafe_allow_html=True)
@@ -497,7 +495,7 @@ def _chip(lvl, palette):
     bg = BOTH_AMBER if _both_singing else palette.get(lvl, "#94a3b8")
     tc = "#1e293b" if bg in _LIGHT_COLS else "white"
     return (f"<span style='background:{bg};color:{tc};border-radius:3px;"
-            f"padding:1px 5px;font-size:9px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
+            f"padding:2px 6px;font-size:11px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
 
 # Roll state label + colour per side
 def _roll_state(bl, pl, bp, pp):
@@ -520,7 +518,7 @@ def _side_panel(tag, palette, is_pe,
                 rs_txt, rs_col, hold_act, ha_lvl,
                 canary_lvl, driver,
                 moats, moat_lbl, moat_detail,
-                s1, s2, s3,
+                s2, s3,
                 adverse, favor,
                 f1, f2, f3, f4):
     ha_col  = _lvl_col.get(ha_lvl, "#64748b")
@@ -535,22 +533,21 @@ def _side_panel(tag, palette, is_pe,
                 if moat_detail else "—")
 
     dots = "".join(
-        f"<span style='display:inline-block;width:7px;height:7px;border-radius:50%;"
-        f"background:{'#16a34a' if ok else '#dc2626'};margin-right:1px;vertical-align:middle;'></span>"
-        f"<span style='font-size:8px;color:#94a3b8;margin-right:5px;'>{lbl}</span>"
+        f"<span style='display:inline-block;width:8px;height:8px;border-radius:50%;"
+        f"background:{'#16a34a' if ok else '#dc2626'};margin-right:2px;vertical-align:middle;'></span>"
+        f"<span style='font-size:10px;color:#94a3b8;margin-right:6px;'>{lbl}</span>"
         for ok, lbl in [(f2, "Thr"), (f3, "Can"), (f4, "Mom"), (f1, "Dft")]
     )
 
     vix_line = ""
     if vix_available and vix_rising:
         if is_pe:
-            vix_line = ("<div style='margin-top:6px;font-size:9px;font-weight:700;color:#bfdbfe;'>"
+            vix_line = ("<div style='margin-top:6px;font-size:11px;font-weight:700;color:#bfdbfe;'>"
                         "🔵 VIX rising — fear confirms PE pressure</div>")
         else:
-            vix_line = ("<div style='margin-top:6px;font-size:9px;font-weight:700;color:#fef08a;'>"
+            vix_line = ("<div style='margin-top:6px;font-size:11px;font-weight:700;color:#fef08a;'>"
                         "⚠️ VIX rising — up move may revert, hold CE</div>")
 
-    s1c = _chip(s1, palette)
     s2c = _chip(s2, palette)
     s3c = _chip(s3, palette)
 
@@ -558,40 +555,39 @@ def _side_panel(tag, palette, is_pe,
         f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
         f"border:1px solid #1e293b;'>"
         # Tag
-        f"<div style='font-size:8px;font-weight:700;color:#475569;"
+        f"<div style='font-size:10px;font-weight:700;color:#475569;"
         f"letter-spacing:1.5px;margin-bottom:8px;'>{tag}</div>"
         # Roll state badge
         f"<div style='background:{rs_col};border-radius:6px;padding:5px 10px;margin-bottom:10px;'>"
-        f"<span style='color:white;font-size:13px;font-weight:900;"
+        f"<span style='color:white;font-size:15px;font-weight:900;"
         f"letter-spacing:0.3px;'>{rs_txt}</span></div>"
         # Canary
         f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:7px;'>"
         f"<span style='background:{bg_can};color:{tc_can};border-radius:5px;"
-        f"padding:3px 8px;font-size:10px;font-weight:700;'>"
+        f"padding:3px 8px;font-size:12px;font-weight:700;'>"
         f"{CANARY_ICON.get(canary_lvl,'')} {CANARY_LABEL.get(canary_lvl,'—')}</span>"
-        f"<span style='font-size:8px;color:#475569;'>{driver}</span></div>"
-        # Source chips
+        f"<span style='font-size:10px;color:#475569;'>{driver}</span></div>"
+        # Source chips (S2 + S3 only)
         f"<div style='display:flex;align-items:center;gap:3px;margin-bottom:7px;'>"
-        f"<span style='font-size:8px;color:#475569;margin-right:2px;'>SRC</span>"
-        f"<span style='font-size:8px;color:#64748b;'>S1</span>&nbsp;{s1c}&nbsp;"
-        f"<span style='font-size:8px;color:#64748b;margin-left:4px;'>S2</span>&nbsp;{s2c}&nbsp;"
-        f"<span style='font-size:8px;color:#64748b;margin-left:4px;'>S3</span>&nbsp;{s3c}</div>"
+        f"<span style='font-size:10px;color:#475569;margin-right:2px;'>SRC</span>"
+        f"<span style='font-size:10px;color:#64748b;'>S2</span>&nbsp;{s2c}&nbsp;"
+        f"<span style='font-size:10px;color:#64748b;margin-left:4px;'>S3</span>&nbsp;{s3c}</div>"
         # Moats
         f"<div style='margin-bottom:7px;'>"
-        f"<span style='font-size:9px;color:#94a3b8;'>Moats </span>"
-        f"<span style='font-size:14px;font-weight:700;color:{mc};'>{moats:g}</span>"
-        f"<span style='font-size:9px;color:#64748b;'> · {moat_lbl}</span>"
-        f"<div style='font-size:8px;color:#475569;margin-top:1px;'>{moat_sub}</div></div>"
+        f"<span style='font-size:11px;color:#94a3b8;'>Moats </span>"
+        f"<span style='font-size:16px;font-weight:700;color:{mc};'>{moats:g}</span>"
+        f"<span style='font-size:11px;color:#64748b;'> · {moat_lbl}</span>"
+        f"<div style='font-size:10px;color:#475569;margin-top:1px;'>{moat_sub}</div></div>"
         # Adverse / Favor
         f"<div style='display:flex;gap:14px;margin-bottom:7px;'>"
-        f"<div><span style='font-size:8px;color:#94a3b8;'>ADVERSE </span>"
-        f"<span style='font-size:13px;font-weight:700;color:{dc};'>{adverse:.2f}%</span></div>"
-        f"<div><span style='font-size:8px;color:#94a3b8;'>FAVOR </span>"
-        f"<span style='font-size:13px;font-weight:700;color:{fc};'>{favor:.2f}%</span></div></div>"
+        f"<div><span style='font-size:10px;color:#94a3b8;'>ADVERSE </span>"
+        f"<span style='font-size:15px;font-weight:700;color:{dc};'>{adverse:.2f}%</span></div>"
+        f"<div><span style='font-size:10px;color:#94a3b8;'>FAVOR </span>"
+        f"<span style='font-size:15px;font-weight:700;color:{fc};'>{favor:.2f}%</span></div></div>"
         # Hold/Act
         f"<div style='margin-bottom:8px;'>"
-        f"<span style='font-size:9px;color:#94a3b8;'>Hold/Act: </span>"
-        f"<span style='font-size:11px;font-weight:700;color:{ha_col};'>{hold_act}</span></div>"
+        f"<span style='font-size:11px;color:#94a3b8;'>Hold/Act: </span>"
+        f"<span style='font-size:13px;font-weight:700;color:{ha_col};'>{hold_act}</span></div>"
         # Filter dots
         f"<div style='display:flex;align-items:center;flex-wrap:wrap;'>{dots}</div>"
         + vix_line
@@ -616,7 +612,7 @@ with col_pe:
         pe_rs_txt, pe_rs_col, action_pe, level_pe,
         pe_canary, pe_driver,
         put_moats, put_label, _detail_p,
-        src1_pe_eff, src2_pe, src3_pe,
+        src2_pe, src3_pe,
         pe_adverse, pe_favor,
         pe_f1, pe_f2, pe_f3, pe_f4)
 
@@ -624,36 +620,36 @@ with col_ctr:
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
         f"border:1px solid #1e293b;text-align:center;'>"
-        f"<div style='font-size:8px;font-weight:700;color:#475569;"
+        f"<div style='font-size:10px;font-weight:700;color:#475569;"
         f"letter-spacing:1.5px;margin-bottom:10px;'>OVERALL VERDICT</div>"
         # Overall action
         f"<div style='background:{_oa_col};border-radius:8px;padding:8px 12px;margin-bottom:10px;'>"
-        f"<div style='color:white;font-size:15px;font-weight:900;'>{page_action}</div>"
-        f"<div style='color:rgba(255,255,255,0.65);font-size:9px;'>{page_driver} side drives</div></div>"
+        f"<div style='color:white;font-size:17px;font-weight:900;'>{page_action}</div>"
+        f"<div style='color:rgba(255,255,255,0.65);font-size:11px;'>{page_driver} side drives</div></div>"
         # Regime
         f"<div style='border:1px solid {_reg_col}55;border-radius:6px;"
         f"padding:5px 8px;margin-bottom:6px;'>"
-        f"<div style='font-size:10px;font-weight:700;color:{_reg_col};'>{regime}</div>"
-        f"<div style='font-size:8px;color:#64748b;'>EMA Regime</div></div>"
+        f"<div style='font-size:12px;font-weight:700;color:{_reg_col};'>{regime}</div>"
+        f"<div style='font-size:10px;color:#64748b;'>EMA Regime</div></div>"
         # IC shape
         f"<div style='border:1px solid {skew_col}55;border-radius:6px;"
         f"padding:5px 8px;margin-bottom:10px;'>"
-        f"<div style='font-size:10px;font-weight:700;color:{skew_col};'>{skew_label}</div>"
-        f"<div style='font-size:8px;color:#64748b;'>IC Shape</div></div>"
+        f"<div style='font-size:12px;font-weight:700;color:{skew_col};'>{skew_label}</div>"
+        f"<div style='font-size:10px;color:#64748b;'>IC Shape</div></div>"
         # 2×2 key metrics grid
         f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;'>"
         f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:8px;color:#64748b;'>DTE</div>"
-        f"<div style='font-size:14px;font-weight:700;color:#e2e8f0;'>{dte}</div></div>"
+        f"<div style='font-size:10px;color:#64748b;'>DTE</div>"
+        f"<div style='font-size:16px;font-weight:700;color:#e2e8f0;'>{dte}</div></div>"
         f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:8px;color:#64748b;'>THREAT {_thr_disp}</div>"
-        f"<div style='font-size:14px;font-weight:700;color:{_thr_col2};'>{threat_mult:.2f}</div></div>"
+        f"<div style='font-size:10px;color:#64748b;'>THREAT {_thr_disp}</div>"
+        f"<div style='font-size:16px;font-weight:700;color:{_thr_col2};'>{threat_mult:.2f}</div></div>"
         f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:8px;color:#64748b;'>INDIA VIX</div>"
-        f"<div style='font-size:14px;font-weight:700;color:{_vix_col2};'>{_vix_disp}</div></div>"
+        f"<div style='font-size:10px;color:#64748b;'>INDIA VIX</div>"
+        f"<div style='font-size:16px;font-weight:700;color:{_vix_col2};'>{_vix_disp}</div></div>"
         f"<div style='background:#1e293b;border-radius:5px;padding:5px 6px;'>"
-        f"<div style='font-size:8px;color:#64748b;'>DRIFT</div>"
-        f"<div style='font-size:14px;font-weight:700;color:{_drift_col3};'>{_drift_disp}</div></div>"
+        f"<div style='font-size:10px;color:#64748b;'>DRIFT</div>"
+        f"<div style='font-size:16px;font-weight:700;color:{_drift_col3};'>{_drift_disp}</div></div>"
         f"</div>"
         f"</div>", unsafe_allow_html=True)
 
@@ -663,7 +659,7 @@ with col_ce:
         ce_rs_txt, ce_rs_col, action_ce, level_ce,
         ce_canary, ce_driver,
         call_moats, call_label, _detail_c,
-        src1_ce_eff, src2_ce, src3_ce,
+        src2_ce, src3_ce,
         ce_adverse, ce_favor,
         ce_f1, ce_f2, ce_f3, ce_f4)
 
@@ -735,10 +731,10 @@ else:
         icon = "✅" if passed else "❌"
         col  = "#16a34a" if passed else "#dc2626"
         return (
-            f"<div style='display:flex;align-items:center;gap:6px;margin:2px 0;'>"
-            f"<span style='font-size:11px;'>{icon}</span>"
-            f"<span style='font-size:10px;color:#e2e8f0;flex:1;'>{label}</span>"
-            f"<span style='font-size:10px;font-weight:700;color:{col};'>{value_str}</span>"
+            f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
+            f"<span style='font-size:13px;'>{icon}</span>"
+            f"<span style='font-size:12px;color:#e2e8f0;flex:1;'>{label}</span>"
+            f"<span style='font-size:12px;font-weight:700;color:{col};'>{value_str}</span>"
             f"</div>"
         )
 
@@ -776,12 +772,12 @@ else:
             if is_ce:
                 vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
                             f"background:rgba(0,0,0,0.25);color:#fef08a;"
-                            f"font-size:9px;font-weight:700;'>"
+                            f"font-size:11px;font-weight:700;'>"
                             f"⚠️ VIX RISING {vix_chg_pct:+.1f}% — CAUTION: up moves may revert</div>")
             else:
                 vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
                             f"background:rgba(0,0,0,0.25);color:#bfdbfe;"
-                            f"font-size:9px;font-weight:700;'>"
+                            f"font-size:11px;font-weight:700;'>"
                             f"🔵 VIX RISING {vix_chg_pct:+.1f}% — EXTRA CONFIRMATION: fear-driven</div>")
 
         scorecard = (
@@ -792,13 +788,13 @@ else:
         )
         st.markdown(
             f"<div style='background:{bg};border-radius:10px;padding:14px 16px;margin-bottom:8px;'>"
-            f"<div style='color:{txt_col};font-size:9px;font-weight:700;"
+            f"<div style='color:{txt_col};font-size:11px;font-weight:700;"
             f"opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
-            f"<div style='color:{txt_col};font-size:16px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
-            f"<div style='color:{txt_col};font-size:10px;font-style:italic;"
+            f"<div style='color:{txt_col};font-size:18px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
+            f"<div style='color:{txt_col};font-size:12px;font-style:italic;"
             f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
-            f"<div style='color:#94a3b8;font-size:8px;font-weight:700;"
+            f"<div style='color:#94a3b8;font-size:10px;font-weight:700;"
             f"margin-bottom:4px;letter-spacing:1px;'>FILTER SCORECARD — {fp}/4 PASS</div>"
             + scorecard + f"</div>" + vix_line + f"</div>",
             unsafe_allow_html=True)
@@ -816,6 +812,100 @@ else:
                    pe_adverse, pe_favor,
                    pe_def_roll_to, pe_off_roll_to, pe_def_trig_spot, pe_off_trig_spot,
                    pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False)
+
+    # ── Strike-Path Corridor ──────────────────────────────────────────────────
+    if ema_vals and spot_now > 0:
+        _all_emas = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
+
+        # CE corridor: EMAs strictly between spot and ce_sold (spot < ema < ce_sold)
+        if ce_sold > 0:
+            _ce_moats = sorted(
+                [(p, v) for p, v in _all_emas if spot_now < v < ce_sold],
+                key=lambda x: x[1]
+            )
+        else:
+            _ce_moats = []
+
+        # PE corridor: EMAs strictly between pe_sold and spot (pe_sold < ema < spot)
+        if pe_sold > 0:
+            _pe_moats = sorted(
+                [(p, v) for p, v in _all_emas if pe_sold < v < spot_now],
+                key=lambda x: x[1], reverse=True
+            )
+        else:
+            _pe_moats = []
+
+        # CE strip: [ANCHOR→] [CMP] [EMA moats ascending] [CE_SOLD]
+        # PE strip: [PE_SOLD] [EMA moats descending] [CMP] [←ANCHOR]
+        _ce_anchor_val = tue_close if tue_anchor_available else None
+        _pe_anchor_val = tue_close if tue_anchor_available else None
+
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#475569;"
+            "letter-spacing:1px;margin:12px 0 6px;'>STRIKE-PATH CORRIDOR</div>",
+            unsafe_allow_html=True)
+
+        # CE strip
+        _ce_items = []
+        if _ce_anchor_val:
+            _ce_items.append(("ANCHOR", _ce_anchor_val, "neutral"))
+        _ce_items.append(("CMP", spot_now, "cmp"))
+        for p, v in _ce_moats:
+            _ce_items.append((f"EMA{p}", v, "above"))
+        if ce_sold > 0:
+            _ce_items.append((f"CE {ce_sold:,}", float(ce_sold), "sold_ce"))
+
+        _pe_items = []
+        if pe_sold > 0:
+            _pe_items.append((f"PE {pe_sold:,}", float(pe_sold), "sold_pe"))
+        for p, v in _pe_moats:
+            _pe_items.append((f"EMA{p}", v, "below"))
+        _pe_items.append(("CMP", spot_now, "cmp"))
+        if _pe_anchor_val:
+            _pe_items.append(("ANCHOR", _pe_anchor_val, "neutral"))
+
+        _COLOR_MAP = {
+            "neutral": ("#dbeafe", "#1e3a5f"),
+            "cmp":     ("#bfdbfe", "#1e3a5f"),
+            "above":   ("#fee2e2", "#7f1d1d"),
+            "below":   ("#dcfce7", "#14532d"),
+            "sold_ce": ("#b91c1c", "white"),
+            "sold_pe": ("#15803d", "white"),
+        }
+
+        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor (left→right, price ascending)</div>", unsafe_allow_html=True)
+        _ce_cols = st.columns(max(len(_ce_items), 1))
+        for i, (lbl, val, kind) in enumerate(_ce_items):
+            bg, tc = _COLOR_MAP[kind]
+            _moat_count = len(_ce_moats)
+            _path_note = f"{_moat_count} moat{'s' if _moat_count != 1 else ''}" if kind == "sold_ce" else ""
+            if kind == "sold_ce" and _moat_count == 0:
+                _path_note = "PATH CLEAR ⚠️"
+            with _ce_cols[i]:
+                ui.metric_card(lbl, f"{val:,.0f}",
+                               sub=_path_note if _path_note else ("sold strike" if kind == "sold_ce" else
+                                   "current price" if kind == "cmp" else
+                                   "anchor" if kind == "neutral" else "moat EMA"),
+                               color=("red" if kind in ("above", "sold_ce") else
+                                      "blue" if kind == "cmp" else
+                                      "green" if kind in ("below", "sold_pe") else "default"))
+
+        st.markdown("<div style='font-size:10px;color:#64748b;margin:6px 0 3px;'>📉 PE Corridor (left→right, price descending — danger on left)</div>", unsafe_allow_html=True)
+        _pe_cols = st.columns(max(len(_pe_items), 1))
+        for i, (lbl, val, kind) in enumerate(_pe_items):
+            bg, tc = _COLOR_MAP[kind]
+            _moat_count_pe = len(_pe_moats)
+            _path_note_pe = f"{_moat_count_pe} moat{'s' if _moat_count_pe != 1 else ''}" if kind == "sold_pe" else ""
+            if kind == "sold_pe" and _moat_count_pe == 0:
+                _path_note_pe = "PATH CLEAR ⚠️"
+            with _pe_cols[i]:
+                ui.metric_card(lbl, f"{val:,.0f}",
+                               sub=_path_note_pe if _path_note_pe else ("sold strike" if kind == "sold_pe" else
+                                   "current price" if kind == "cmp" else
+                                   "anchor" if kind == "neutral" else "moat EMA"),
+                               color=("green" if kind in ("below", "sold_pe") else
+                                      "blue" if kind == "cmp" else
+                                      "red" if kind in ("above", "sold_ce") else "default"))
 
     _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
     st.caption(
@@ -861,16 +951,6 @@ st.markdown(
     f"</div>", unsafe_allow_html=True)
 
 src_data = [
-    {
-        "source": "Source 1 — EMA Proximity",
-        "what":   f"EMA3/EMA8 gap: {gap_pts:.0f} pts ({gap_pct:.2f}% ATR) · Direction: {can_dir}",
-        "pe_lvl": src1_pe_eff, "ce_lvl": src1_ce_eff,
-        "detail": (f"EMA3: {e3:,.0f}  ·  EMA8: {e8:,.0f}\n"
-                   f"Gap: {gap_pts:.0f} pts  ({gap_pct:.2f}% of ATR)\n"
-                   f"Thresholds: >55% = Singing  ·  35–55% = Day 1  ·  15–35% = Day 2"
-                   f"  ·  <15% = Day 3  ·  <2% = Day 4\n"
-                   f"Rule 1: Gap Day 2+ overrides momentum skew regardless of score"),
-    },
     {
         "source":     "Source 2 — Momentum Score (% of ATR/day)",
         "what":       f"Score: {mom_score:+.1f}% of ATR/day · IC Shape: {skew_label}",
