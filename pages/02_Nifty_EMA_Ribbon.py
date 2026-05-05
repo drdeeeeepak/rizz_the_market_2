@@ -669,7 +669,7 @@ else:
             f"<div style='color:{txt_col};font-size:14px;font-weight:700;"
             f"opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
             f"<div style='color:{txt_col};font-size:18px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
-            f"<div style='color:{txt_col};font-size:12px;font-style:italic;"
+            f"<div style='color:{txt_col};font-size:12px;font-weight:700;"
             f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
             f"<div style='color:#e2e8f0;font-size:13px;font-weight:700;"
