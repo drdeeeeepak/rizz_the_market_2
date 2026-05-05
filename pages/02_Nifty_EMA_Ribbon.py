@@ -910,141 +910,128 @@ with st.expander("Cluster Regime Reference", expanded=False):
                  width="stretch", hide_index=True)
 
 # ── Live Cluster State ────────────────────────────────────────────────────────
-if ema_vals and spot > 0:
-    _e3  = float(ema_vals.get(3,  0) or 0)
-    _e8  = float(ema_vals.get(8,  0) or 0)
-    _e16 = float(ema_vals.get(16, 0) or 0)
-    _e30 = float(ema_vals.get(30, 0) or 0)
+# e3/e8/e16/e30 already computed at lines above from sig + ema_vals fallback
+if e3 and e8 and e16 and e30 and spot > 0:
+    _fast_lo, _fast_hi = min(e3, e8),   max(e3, e8)
+    _slow_lo, _slow_hi = min(e16, e30), max(e16, e30)
+    _fast_above_slow   = _fast_lo > _slow_hi
+    _fast_below_slow   = _fast_hi < _slow_lo
 
-    if _e3 and _e8 and _e16 and _e30:
-        _fast_lo, _fast_hi = min(_e3, _e8),   max(_e3, _e8)
-        _slow_lo, _slow_hi = min(_e16, _e30), max(_e16, _e30)
-        _fast_above_slow   = _fast_lo > _slow_hi
-        _fast_below_slow   = _fast_hi < _slow_lo
+    if _fast_above_slow:
+        _gap = _fast_lo - _slow_hi
+    elif _fast_below_slow:
+        _gap = _slow_lo - _fast_hi
+    else:
+        _gap = -(max(_fast_lo, _slow_lo) - min(_fast_hi, _slow_hi))
 
-        # Signed inter-cluster gap (positive = separated, negative = entangled)
-        if _fast_above_slow:
-            _gap = _fast_lo - _slow_hi
-        elif _fast_below_slow:
-            _gap = _slow_lo - _fast_hi
-        else:
-            _gap = -(max(_fast_lo, _slow_lo) - min(_fast_hi, _slow_hi))
+    _gap_lbl = ("BREATHING"   if _gap > 150 else
+                "COMPRESSING" if _gap > 30  else
+                "TOUCHING"    if _gap >= 0  else
+                "ENTANGLED")
+    _gap_col = ("#16a34a" if _gap > 150 else
+                "#d97706" if _gap > 30  else
+                "#ea580c" if _gap >= 0  else
+                "#dc2626")
 
-        _gap_lbl = ("BREATHING"   if _gap > 150 else
-                    "COMPRESSING" if _gap > 30  else
-                    "TOUCHING"    if _gap >= 0  else
-                    "ENTANGLED")
-        _gap_col = ("#16a34a" if _gap > 150 else
-                    "#d97706" if _gap > 30  else
-                    "#ea580c" if _gap >= 0  else
-                    "#dc2626")
+    # Gap as % CMP (headline — intuitive) and % ATR (VIX-normalised)
+    _spot_v      = float(spot)
+    _gap_cmp_pct = (_gap / _spot_v * 100) if _spot_v > 0 else 0
+    _gap_atr_pct = (_gap / atr14   * 100) if atr14   > 0 else 0
+    _gap_pct_str = f"{_gap_cmp_pct:.2f}% CMP · {_gap_atr_pct:.0f}% ATR"
 
-        # Gap as % of ATR — normalised breathing room
-        _gap_atr_pct = (_gap / atr14 * 100) if atr14 > 0 else 0
-        _gap_atr_lbl = (f"{_gap_atr_pct:.0f}% ATR"
-                        + (" · tight" if abs(_gap_atr_pct) < 10 else ""))
+    # Fast cluster slope
+    _fast_slope  = (ema3_slope + ema8_slope) / 2
+    _slope_arrow = "▲" if _fast_slope > 5 else "▼" if _fast_slope < -5 else "→"
+    _slope_col   = "#16a34a" if _fast_slope > 5 else "#dc2626" if _fast_slope < -5 else "#94a3b8"
+    _slope_lbl   = f"{_slope_arrow} {abs(_fast_slope):.0f} pts/day"
 
-        # Fast cluster slope (avg of EMA3+EMA8 slopes = speed of fast cluster)
-        _fast_slope   = (ema3_slope + ema8_slope) / 2
-        _slope_arrow  = "▲" if _fast_slope > 5 else "▼" if _fast_slope < -5 else "→"
-        _slope_col    = "#16a34a" if _fast_slope > 5 else "#dc2626" if _fast_slope < -5 else "#94a3b8"
-        _slope_lbl    = f"{_slope_arrow} {abs(_fast_slope):.0f} pts/day"
+    # Cross proximity
+    _converging  = ((_fast_above_slow and _fast_slope < 0) or
+                    (_fast_below_slow and _fast_slope > 0) or
+                    (not _fast_above_slow and not _fast_below_slow))
+    if _converging and abs(_fast_slope) > 1 and _gap > 0:
+        _days_to_cross = int(_gap / abs(_fast_slope))
+        _cross_note    = f"~{_days_to_cross}d to touch"
+        _cross_col     = "#dc2626" if _days_to_cross <= 2 else "#ea580c" if _days_to_cross <= 5 else "#d97706"
+    else:
+        _cross_note = "Diverging" if not _converging and _gap > 0 else ""
+        _cross_col  = "#16a34a"
 
-        # Cross proximity: if clusters converging, estimate days to touch
-        # Fast cluster moving toward slow — slope direction opposes gap sign
-        _converging = ((_fast_above_slow and _fast_slope < 0) or
-                       (_fast_below_slow and _fast_slope > 0) or
-                       (not _fast_above_slow and not _fast_below_slow))
-        if _converging and abs(_fast_slope) > 1 and _gap > 0:
-            _days_to_cross = int(_gap / abs(_fast_slope))
-            _cross_note = f"~{_days_to_cross}d to touch at current slope"
-            _cross_col  = "#dc2626" if _days_to_cross <= 2 else "#ea580c" if _days_to_cross <= 5 else "#d97706"
-        else:
-            _cross_note = "Diverging" if not _converging and _gap > 0 else ""
-            _cross_col  = "#16a34a"
+    # Spot position with distance
+    if _spot_v > _fast_hi:
+        _spot_pos = f"Above fast (+{_spot_v - _fast_hi:.0f} pts)"
+    elif _spot_v >= _fast_lo:
+        _spot_pos = "Inside fast cluster"
+    elif _spot_v > _slow_hi:
+        _spot_pos = "Between clusters"
+    elif _spot_v >= _slow_lo:
+        _spot_pos = "Inside slow cluster"
+    else:
+        _spot_pos = f"Below slow (−{_slow_lo - _spot_v:.0f} pts)"
 
-        # Spot position with distance
-        _spot_v = float(spot)
-        if _spot_v > _fast_hi:
-            _spot_pos  = f"Above fast  (+{_spot_v - _fast_hi:.0f} pts)"
-        elif _spot_v >= _fast_lo:
-            _spot_pos  = "Inside fast cluster"
-        elif _spot_v > _slow_hi:
-            _spot_pos  = f"Between clusters"
-        elif _spot_v >= _slow_lo:
-            _spot_pos  = "Inside slow cluster"
-        else:
-            _spot_pos  = f"Below slow  (−{_slow_lo - _spot_v:.0f} pts)"
+    # Entry regime vs current
+    _regime_changed = (_entry_regime != regime)
+    _entry_reg_col  = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#0369a1",
+                       "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
+                       "STRONG_BEAR":"#b91c1c"}.get(_entry_regime, "#64748b")
+    _reg_ic   = {"STRONG_BULL":"1:2","BULL_COMPRESSED":"1:2","INSIDE_BULL":"1:1",
+                 "RECOVERING":"1:1","INSIDE_BEAR":"1:1","BEAR_COMPRESSED":"2:1",
+                 "STRONG_BEAR":"2:1"}.get(regime, "1:1")
+    _reg_sz   = {"STRONG_BULL":"100%","BULL_COMPRESSED":"75%","INSIDE_BULL":"75%",
+                 "RECOVERING":"75%","INSIDE_BEAR":"50%","BEAR_COMPRESSED":"75%",
+                 "STRONG_BEAR":"63%"}.get(regime, "75%")
+    _reg_col2 = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#0369a1",
+                 "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
+                 "STRONG_BEAR":"#b91c1c"}.get(regime, "#64748b")
 
-        # Entry regime vs current
-        _regime_changed = (_entry_regime != regime)
-        _entry_reg_col  = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#0369a1",
-                           "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
-                           "STRONG_BEAR":"#b91c1c"}.get(_entry_regime, "#64748b")
-
-        _reg_ic   = {"STRONG_BULL":"1:2","BULL_COMPRESSED":"1:2","INSIDE_BULL":"1:1",
-                     "RECOVERING":"1:1","INSIDE_BEAR":"1:1","BEAR_COMPRESSED":"2:1",
-                     "STRONG_BEAR":"2:1"}.get(regime, "1:1")
-        _reg_sz   = {"STRONG_BULL":"100%","BULL_COMPRESSED":"75%","INSIDE_BULL":"75%",
-                     "RECOVERING":"75%","INSIDE_BEAR":"50%","BEAR_COMPRESSED":"75%",
-                     "STRONG_BEAR":"63%"}.get(regime, "75%")
-        _reg_col2 = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#0369a1",
-                     "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
-                     "STRONG_BEAR":"#b91c1c"}.get(regime, "#64748b")
-
-        st.markdown(
-            f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
-            f"border:1px solid #1e293b;margin-top:10px;'>"
-            f"<div style='font-size:10px;font-weight:700;color:#475569;"
-            f"letter-spacing:1.5px;margin-bottom:10px;'>LIVE CLUSTER STATE</div>"
-
-            # Cluster bands row
-            f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;'>"
-            f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-            f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
-            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
-            f"<div style='font-size:10px;color:{_slope_col};margin-top:2px;'>"
-            f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div>"
-            f"</div>"
-            f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-            f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
-            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
-            f"<div style='font-size:10px;color:#94a3b8;margin-top:2px;'>"
-            f"Spot: {_spot_pos} · width {_slow_hi-_slow_lo:.0f} pts</div>"
-            f"</div>"
-            f"</div>"
-
-            # Gap row
-            f"<div style='background:#1e293b;border-radius:6px;padding:8px 12px;margin-bottom:8px;'>"
-            f"<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>"
-            f"<div>"
-            f"<span style='font-size:11px;color:#94a3b8;'>Gap </span>"
-            f"<span style='font-size:22px;font-weight:900;color:{_gap_col};'>{_gap:+.0f} pts</span>"
-            f"<span style='font-size:12px;font-weight:700;color:{_gap_col};margin-left:6px;'>{_gap_lbl}</span>"
-            f"<span style='font-size:10px;color:#64748b;margin-left:8px;'>{_gap_atr_lbl}</span>"
-            f"</div>"
-            + (f"<div style='font-size:11px;font-weight:700;color:{_cross_col};'>{_cross_note}</div>"
-               if _cross_note else "")
-            + f"</div></div>"
-
-            # Regime row — entry vs current
-            f"<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center;'>"
-            + (f"<div style='background:{_entry_reg_col}33;border:1px solid {_entry_reg_col}66;"
-               f"border-radius:5px;padding:4px 10px;'>"
-               f"<span style='color:{_entry_reg_col};font-size:11px;font-weight:700;'>"
-               f"ENTRY: {_entry_regime}</span></div>"
-               f"<span style='color:#475569;font-size:14px;'>→</span>"
-               if _regime_changed else "")
-            + f"<div style='background:{_reg_col2};border-radius:5px;padding:4px 10px;'>"
-            f"<span style='color:white;font-size:12px;font-weight:700;'>"
-            + ("NOW: " if _regime_changed else "") + f"{regime}</span></div>"
-            + (f"<div style='background:#7c2d12;border-radius:5px;padding:4px 10px;'>"
-               f"<span style='color:#fca5a5;font-size:11px;font-weight:700;'>"
-               f"⚠️ REGIME CHANGED</span></div>" if _regime_changed else "")
-            + f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
-            f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Shape {_reg_ic}</span></div>"
-            f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
-            f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Size {_reg_sz}</span></div>"
-            f"</div>"
-            f"</div>",
-            unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
+        f"border:1px solid #1e293b;margin-top:10px;'>"
+        f"<div style='font-size:10px;font-weight:700;color:#475569;"
+        f"letter-spacing:1.5px;margin-bottom:10px;'>LIVE CLUSTER STATE</div>"
+        # Cluster bands
+        f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;'>"
+        f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
+        f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
+        f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
+        f"<div style='font-size:10px;color:{_slope_col};margin-top:2px;'>"
+        f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div></div>"
+        f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
+        f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
+        f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
+        f"<div style='font-size:10px;color:#94a3b8;margin-top:2px;'>"
+        f"Spot: {_spot_pos} · width {_slow_hi-_slow_lo:.0f} pts</div></div>"
+        f"</div>"
+        # Gap row
+        f"<div style='background:#1e293b;border-radius:6px;padding:8px 12px;margin-bottom:8px;'>"
+        f"<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>"
+        f"<div>"
+        f"<span style='font-size:11px;color:#94a3b8;'>Gap </span>"
+        f"<span style='font-size:22px;font-weight:900;color:{_gap_col};'>{_gap:+.0f} pts</span>"
+        f"<span style='font-size:12px;font-weight:700;color:{_gap_col};margin-left:6px;'>{_gap_lbl}</span>"
+        f"<span style='font-size:10px;color:#64748b;margin-left:8px;'>{_gap_pct_str}</span>"
+        f"</div>"
+        + (f"<div style='font-size:11px;font-weight:700;color:{_cross_col};'>{_cross_note}</div>"
+           if _cross_note else "")
+        + f"</div></div>"
+        # Regime row
+        f"<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center;'>"
+        + (f"<div style='background:{_entry_reg_col}33;border:1px solid {_entry_reg_col}66;"
+           f"border-radius:5px;padding:4px 10px;'>"
+           f"<span style='color:{_entry_reg_col};font-size:11px;font-weight:700;'>"
+           f"ENTRY: {_entry_regime}</span></div>"
+           f"<span style='color:#475569;font-size:14px;'>→</span>"
+           if _regime_changed else "")
+        + f"<div style='background:{_reg_col2};border-radius:5px;padding:4px 10px;'>"
+        f"<span style='color:white;font-size:12px;font-weight:700;'>"
+        + ("NOW: " if _regime_changed else "") + f"{regime}</span></div>"
+        + (f"<div style='background:#7c2d12;border-radius:5px;padding:4px 10px;'>"
+           f"<span style='color:#fca5a5;font-size:11px;font-weight:700;'>"
+           f"⚠️ REGIME CHANGED</span></div>" if _regime_changed else "")
+        + f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
+        f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Shape {_reg_ic}</span></div>"
+        f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
+        f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Size {_reg_sz}</span></div>"
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True)
