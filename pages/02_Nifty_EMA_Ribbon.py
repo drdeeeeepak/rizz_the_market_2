@@ -26,6 +26,10 @@ if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
 
+# Save EOD entry moat counts BEFORE live override — these lock the adjusted strikes
+_entry_put_moats  = sig.get("cr_put_moats",  2)
+_entry_call_moats = sig.get("cr_call_moats", 2)
+
 import datetime, pytz
 def _is_live():
     n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
@@ -262,9 +266,17 @@ drift_pct = 0.0
 # Source 3: expiry close = Tuesday close (or last trading day before Tuesday if holiday)
 # PE sold 4% below expiry close, CE sold 3.5% above expiry close (rounded to nearest 50-pt strike)
 # Canary triggers based on % drift from expiry close toward the sold strike
+def _moat_pull(m):
+    if m >= 4: return 100
+    if m >= 3: return 75
+    if m >= 2: return 50
+    return 0
+
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
-    pe_sold   = int(round(tue_close * 0.96  / 50) * 50)
-    ce_sold   = int(round(tue_close * 1.035 / 50) * 50)
+    _pe_pull  = _moat_pull(_entry_put_moats)
+    _ce_pull  = _moat_pull(_entry_call_moats)
+    pe_sold   = int(round((tue_close * 0.96  + _pe_pull) / 50) * 50)
+    ce_sold   = int(round((tue_close * 1.035 - _ce_pull) / 50) * 50)
     drift_pct = (spot_now - tue_close) / tue_close * 100
     # CE side: sold at +3.5% → canary thresholds at +1.5%, +2.0%, +2.5%, +3.0%
     if   drift_pct >= 3.0: src3_ce = 4
@@ -541,6 +553,48 @@ with c5:
 if not tue_anchor_available:
     st.info("Expiry anchor not available — load data to activate roll matrix.")
 else:
+    # ── Entry strike card (moat-adjusted, locked for the week) ────────────────
+    _pe_pull = _moat_pull(_entry_put_moats)
+    _ce_pull = _moat_pull(_entry_call_moats)
+    _pe_base = int(round(tue_close * 0.96  / 50) * 50)
+    _ce_base = int(round(tue_close * 1.035 / 50) * 50)
+    _pe_moat_warn = put_moats < _entry_put_moats
+    _ce_moat_warn = call_moats < _entry_call_moats
+
+    _pe_strike_note = (f"−4% base {_pe_base:,}"
+                       + (f" + {_pe_pull}pt moat pull ({_entry_put_moats} moats at entry)"
+                          if _pe_pull else " · 0 moats at entry"))
+    _ce_strike_note = (f"+3.5% base {_ce_base:,}"
+                       + (f" − {_ce_pull}pt moat pull ({_entry_call_moats} moats at entry)"
+                          if _ce_pull else " · 0 moats at entry"))
+
+    st.markdown(
+        f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
+        f"border:1px solid #1e293b;margin-bottom:10px;'>"
+        f"<div style='font-size:10px;font-weight:700;color:#475569;"
+        f"letter-spacing:1.5px;margin-bottom:8px;'>ENTRY STRIKES — LOCKED AT EXPIRY EOD</div>"
+        f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
+        # PE strike
+        f"<div>"
+        f"<span style='font-size:11px;color:#94a3b8;'>PE SOLD </span>"
+        f"<span style='font-size:20px;font-weight:900;color:#16a34a;'>{pe_sold:,}</span>"
+        f"<div style='font-size:10px;color:#64748b;margin-top:2px;'>{_pe_strike_note}</div>"
+        + (f"<div style='font-size:11px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
+           f"⚠️ PE moats {_entry_put_moats}→{put_moats} · Support thinning · Strike locked</div>"
+           if _pe_moat_warn else "")
+        + f"</div>"
+        # CE strike
+        f"<div>"
+        f"<span style='font-size:11px;color:#94a3b8;'>CE SOLD </span>"
+        f"<span style='font-size:20px;font-weight:900;color:#dc2626;'>{ce_sold:,}</span>"
+        f"<div style='font-size:10px;color:#64748b;margin-top:2px;'>{_ce_strike_note}</div>"
+        + (f"<div style='font-size:11px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
+           f"⚠️ CE moats {_entry_call_moats}→{call_moats} · Resistance weakening · Strike locked</div>"
+           if _ce_moat_warn else "")
+        + f"</div>"
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True)
     def _frow(label, passed, value_str):
         icon = "✅" if passed else "❌"
         col  = "#16a34a" if passed else "#dc2626"
@@ -853,3 +907,98 @@ with st.expander("Cluster Regime Reference", expanded=False):
         return "background-color:#dbeafe;font-weight:700" if val == regime else ""
     st.dataframe(_reg_df.style.map(_hl_reg, subset=["Regime"]),
                  width="stretch", hide_index=True)
+
+# ── Live Cluster State ────────────────────────────────────────────────────────
+if ema_vals and spot > 0:
+    _e3  = float(ema_vals.get(3,  0) or 0)
+    _e8  = float(ema_vals.get(8,  0) or 0)
+    _e16 = float(ema_vals.get(16, 0) or 0)
+    _e30 = float(ema_vals.get(30, 0) or 0)
+
+    if _e3 and _e8 and _e16 and _e30:
+        _fast_lo, _fast_hi = min(_e3, _e8),   max(_e3, _e8)
+        _slow_lo, _slow_hi = min(_e16, _e30), max(_e16, _e30)
+        _fast_above_slow   = _fast_lo > _slow_hi  # fully separated bull
+        _fast_below_slow   = _fast_hi < _slow_lo  # fully separated bear
+
+        # Signed inter-cluster gap: positive = breathing room, negative = entangled
+        if _fast_above_slow:
+            _gap = _fast_lo - _slow_hi
+        elif _fast_below_slow:
+            _gap = _slow_lo - _fast_hi
+        else:
+            _gap = -(max(_fast_lo, _slow_lo) - min(_fast_hi, _slow_hi))  # overlap = negative
+
+        _gap_lbl  = ("BREATHING" if _gap > 150 else
+                     "COMPRESSING" if _gap > 30 else
+                     "TOUCHING" if _gap >= 0 else
+                     "ENTANGLED")
+        _gap_col  = ("#16a34a" if _gap > 150 else
+                     "#d97706" if _gap > 30 else
+                     "#ea580c" if _gap >= 0 else
+                     "#dc2626")
+
+        # Spot position descriptor
+        _spot_v = float(spot)
+        if _spot_v > _fast_hi:
+            _spot_pos = "Above fast cluster"
+        elif _spot_v >= _fast_lo:
+            _spot_pos = "Inside fast cluster"
+        elif _spot_v > _slow_hi:
+            _spot_pos = "Between clusters"
+        elif _spot_v >= _slow_lo:
+            _spot_pos = "Inside slow cluster"
+        else:
+            _spot_pos = "Below slow cluster"
+
+        _reg_ic   = {"STRONG_BULL":"1:2","BULL_COMPRESSED":"1:2","INSIDE_BULL":"1:1",
+                     "RECOVERING":"1:1","INSIDE_BEAR":"1:1","BEAR_COMPRESSED":"2:1",
+                     "STRONG_BEAR":"2:1"}.get(regime, "1:1")
+        _reg_sz   = {"STRONG_BULL":"100%","BULL_COMPRESSED":"75%","INSIDE_BULL":"75%",
+                     "RECOVERING":"75%","INSIDE_BEAR":"50%","BEAR_COMPRESSED":"75%",
+                     "STRONG_BEAR":"63%"}.get(regime, "75%")
+        _reg_col2 = {"STRONG_BULL":"#16a34a","BULL_COMPRESSED":"#15803d","INSIDE_BULL":"#0369a1",
+                     "RECOVERING":"#d97706","INSIDE_BEAR":"#ea580c","BEAR_COMPRESSED":"#dc2626",
+                     "STRONG_BEAR":"#b91c1c"}.get(regime, "#64748b")
+
+        st.markdown(
+            f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
+            f"border:1px solid #1e293b;margin-top:10px;'>"
+            f"<div style='font-size:10px;font-weight:700;color:#475569;"
+            f"letter-spacing:1.5px;margin-bottom:10px;'>LIVE CLUSTER STATE</div>"
+            f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;'>"
+            # Fast cluster
+            f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
+            f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>FAST CLUSTER (EMA3 · EMA8)</div>"
+            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>"
+            f"{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
+            f"<div style='font-size:10px;color:#94a3b8;'>Band width: {_fast_hi-_fast_lo:.0f} pts</div>"
+            f"</div>"
+            # Slow cluster
+            f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
+            f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>SLOW CLUSTER (EMA16 · EMA30)</div>"
+            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>"
+            f"{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
+            f"<div style='font-size:10px;color:#94a3b8;'>Band width: {_slow_hi-_slow_lo:.0f} pts</div>"
+            f"</div>"
+            f"</div>"
+            # Inter-cluster gap
+            f"<div style='display:flex;align-items:center;gap:16px;margin-bottom:8px;'>"
+            f"<div>"
+            f"<span style='font-size:11px;color:#94a3b8;'>Inter-cluster gap </span>"
+            f"<span style='font-size:22px;font-weight:900;color:{_gap_col};'>{_gap:+.0f} pts</span>"
+            f"<span style='font-size:12px;font-weight:700;color:{_gap_col};margin-left:6px;'>{_gap_lbl}</span>"
+            f"</div>"
+            f"<div style='font-size:11px;color:#64748b;'>Spot: {_spot_pos}</div>"
+            f"</div>"
+            # Regime output
+            f"<div style='display:flex;gap:8px;flex-wrap:wrap;'>"
+            f"<div style='background:{_reg_col2};border-radius:5px;padding:4px 10px;'>"
+            f"<span style='color:white;font-size:12px;font-weight:700;'>{regime}</span></div>"
+            f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
+            f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Shape {_reg_ic}</span></div>"
+            f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
+            f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Size {_reg_sz}</span></div>"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True)
