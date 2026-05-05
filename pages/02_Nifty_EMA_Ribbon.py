@@ -178,18 +178,24 @@ tue_anchor_available = False
 tue_anchor_date = ""
 anchor_mode = "NORMAL"  # NORMAL | PRE_EXPIRY | PROVISIONAL | POST_EXPIRY
 try:
-    from data.live_fetcher import get_nifty_daily
-    _daily = get_nifty_daily()
+    from data.live_fetcher import get_nifty_daily, get_nifty_daily_live
+    _now_ist        = _dt.datetime.now(pytz.timezone("Asia/Kolkata"))
+    _today          = _now_ist.date()
+    _cur_mins       = _now_ist.hour * 60 + _now_ist.minute
+    _PROV_START     = 15 * 60 + 15   # 3:15 PM IST
+    _PROV_END       = 15 * 60 + 30   # 3:30 PM IST
+    _days_since_tue = (_today.weekday() - 1) % 7
+    _last_tue       = _today - _dt.timedelta(days=_days_since_tue)
+
+    # After 3:30 PM on expiry day, use live-TTL fetch (60s) so we always get
+    # the actual EOD candle from Kite, not a stale intraday price from the 24h cache.
+    _is_tue         = (_last_tue == _today)
+    _use_live_daily = _is_tue and (_cur_mins >= _PROV_END)
+    _daily = get_nifty_daily_live() if _use_live_daily else get_nifty_daily()
+
     if not _daily.empty:
-        _now_ist       = _dt.datetime.now(pytz.timezone("Asia/Kolkata"))
-        _today         = _now_ist.date()
-        _cur_mins      = _now_ist.hour * 60 + _now_ist.minute
-        _PROV_START    = 15 * 60 + 15   # 3:15 PM IST
-        _PROV_END      = 15 * 60 + 30   # 3:30 PM IST
-        _days_since_tue = (_today.weekday() - 1) % 7
-        _last_tue      = _today - _dt.timedelta(days=_days_since_tue)
-        _trading_dates = set(_daily.index.date)
-        _is_expiry_day = (_last_tue == _today) and (_today in _trading_dates)
+        _trading_dates  = set(_daily.index.date)
+        _is_expiry_day  = _is_tue and (_today in _trading_dates)
 
         def _find_anchor(target_tue):
             for _off in range(7):
@@ -230,25 +236,15 @@ try:
             tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
 
         else:
-            # Normal: after 3:30 on expiry day OR any non-expiry day
+            # Normal: after 3:30 on expiry day OR any non-expiry day.
+            # POST_EXPIRY uses get_nifty_daily_live() (60s TTL) so the
+            # anchor is always the actual Tuesday EOD candle from Kite.
+            # Holiday Tuesday: _find_anchor walks back to last trading day.
             anchor_mode = "POST_EXPIRY" if _is_expiry_day else "NORMAL"
             _ad = _find_anchor(_last_tue)
             if _ad:
-                _hist_close, tue_atr = _load_anchor(_ad)
+                tue_close, tue_atr = _load_anchor(_ad)
                 tue_anchor_date = str(_ad)
-
-            if _is_expiry_day and spot_now > 0:
-                # POST_EXPIRY: market has settled — spot_now IS the expiry close.
-                # Never trust the daily cache for today's close; it may have been
-                # populated before 3:30 PM and contains an intraday price.
-                tue_close = float(spot_now)
-                tue_anchor_date = f"{_last_tue} (expiry close)"
-                tue_anchor_available = True
-                if not _ad:
-                    tue_atr = 200.0
-            elif _ad:
-                # Non-expiry day: use historical close normally
-                tue_close = _hist_close
                 tue_anchor_available = True
 except Exception:
     pass
