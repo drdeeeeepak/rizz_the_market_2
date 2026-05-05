@@ -683,80 +683,97 @@ else:
                    pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False)
 
     # ── Strike-Path Corridor ──────────────────────────────────────────────────
-    if ema_vals and spot_now > 0:
-        _all_emas = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
+    if ema_vals and spot_now > 0 and tue_anchor_available:
+        _all_emas   = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
+        _anc        = float(tue_close)
+        _pct_anc    = lambda v: (float(v) - _anc) / _anc * 100 if _anc > 0 else 0
 
-        # Build corridor items and sort by price ascending for both strips
-        _anchor_val = tue_close if tue_anchor_available else None
+        # Pre-compute trigger levels
+        _ce_prep_trig = int(round(_anc * (1 + _DEF_THR * 0.90 / 100) / 50) * 50)  # +2.25%
+        _pe_prep_trig = int(round(_anc * (1 - _DEF_THR * 0.90 / 100) / 50) * 50)  # -2.25%
+        _ce_prep_prof = int(round(_anc * (1 - _OFF_THR * 0.75 / 100) / 50) * 50)  # -1.35%
+        _pe_prep_prof = int(round(_anc * (1 + _OFF_THR * 0.75 / 100) / 50) * 50)  # +1.35%
 
-        # CE corridor: all items between anchor/spot and ce_sold, sorted by price
-        _ce_items = []
-        if _anchor_val:
-            _ce_items.append(("ANCHOR", float(_anchor_val), "neutral"))
-        _ce_items.append(("CMP", float(spot_now), "cmp"))
+        def _sub(kind, val, extra=""):
+            pct = _pct_anc(val)
+            base = {
+                "neutral":      "anchor",
+                "cmp":          "current price",
+                "above":        "moat EMA",
+                "below":        "moat EMA",
+                "sold_ce":      f"CE sold · {extra}" if extra else "CE sold",
+                "sold_pe":      f"PE sold · {extra}" if extra else "PE sold",
+                "book_loss":    "📕 BOOK LOSS",
+                "prep_loss":    "⚠️ PREPARE LOSS",
+                "book_profit":  "📗 BOOK PROFIT",
+                "prep_profit":  "🔵 PREP PROFIT",
+            }.get(kind, kind)
+            return f"{pct:+.2f}% · {base}"
+
+        def _col(kind):
+            return {"neutral":"default","cmp":"blue",
+                    "above":"red","sold_ce":"red",
+                    "below":"green","sold_pe":"green",
+                    "book_loss":"red","prep_loss":"red",
+                    "book_profit":"green","prep_profit":"green"}.get(kind,"default")
+
+        # ── CE strip ─────────────────────────────────────────────────────────
+        _ce_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
+        # Loss triggers (above anchor, between CMP and CE_SOLD)
+        if ce_def_trig_spot > 0:
+            _ce_items.append(("PREP LOSS",  float(_ce_prep_trig),   "prep_loss"))
+            _ce_items.append(("BOOK LOSS",  float(ce_def_trig_spot), "book_loss"))
+        # Profit trigger (below anchor — market moved down, favorable for CE)
+        if ce_off_trig_spot > 0:
+            _ce_items.append(("PREP PROFIT", float(_ce_prep_prof),   "prep_profit"))
+            _ce_items.append(("BOOK PROFIT", float(ce_off_trig_spot), "book_profit"))
+        # EMA moats in corridor
         if ce_sold > 0:
             for p, v in _all_emas:
                 if spot_now < v < ce_sold:
                     _ce_items.append((f"EMA{p}", v, "above"))
+            _ce_moat_count = sum(1 for _, v, k in _ce_items if k == "above")
+            _ce_note = f"{_ce_moat_count} moat{'s' if _ce_moat_count!=1 else ''}" if _ce_moat_count else "PATH CLEAR ⚠️"
             _ce_items.append((f"CE {ce_sold:,}", float(ce_sold), "sold_ce"))
+        else:
+            _ce_moat_count, _ce_note = 0, ""
         _ce_items.sort(key=lambda x: x[1])
-        _ce_moat_count = sum(1 for _, _, k in _ce_items if k == "above")
 
-        # PE corridor: all items between pe_sold and anchor/spot, sorted by price
-        _pe_items = []
+        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
+        _ce_cols = st.columns(max(len(_ce_items), 1))
+        for i, (lbl, val, kind) in enumerate(_ce_items):
+            _extra = _ce_note if kind == "sold_ce" else ""
+            with _ce_cols[i]:
+                ui.metric_card(lbl, f"{val:,.0f}", sub=_sub(kind, val, _extra), color=_col(kind))
+
+        # ── PE strip ─────────────────────────────────────────────────────────
+        _pe_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
+        # Loss triggers (below anchor, between PE_SOLD and CMP)
+        if pe_def_trig_spot > 0:
+            _pe_items.append(("PREP LOSS",  float(_pe_prep_trig),   "prep_loss"))
+            _pe_items.append(("BOOK LOSS",  float(pe_def_trig_spot), "book_loss"))
+        # Profit trigger (above anchor — market moved up, favorable for PE)
+        if pe_off_trig_spot > 0:
+            _pe_items.append(("PREP PROFIT", float(_pe_prep_prof),   "prep_profit"))
+            _pe_items.append(("BOOK PROFIT", float(pe_off_trig_spot), "book_profit"))
+        # EMA moats in corridor
         if pe_sold > 0:
-            _pe_items.append((f"PE {pe_sold:,}", float(pe_sold), "sold_pe"))
             for p, v in _all_emas:
                 if pe_sold < v < spot_now:
                     _pe_items.append((f"EMA{p}", v, "below"))
-        _pe_items.append(("CMP", float(spot_now), "cmp"))
-        if _anchor_val:
-            _pe_items.append(("ANCHOR", float(_anchor_val), "neutral"))
+            _pe_moat_count = sum(1 for _, v, k in _pe_items if k == "below")
+            _pe_note = f"{_pe_moat_count} moat{'s' if _pe_moat_count!=1 else ''}" if _pe_moat_count else "PATH CLEAR ⚠️"
+            _pe_items.append((f"PE {pe_sold:,}", float(pe_sold), "sold_pe"))
+        else:
+            _pe_moat_count, _pe_note = 0, ""
         _pe_items.sort(key=lambda x: x[1])
-        _pe_moat_count = sum(1 for _, _, k in _pe_items if k == "below")
 
-        _COLOR_MAP = {
-            "neutral": ("#dbeafe", "#1e3a5f"),
-            "cmp":     ("#bfdbfe", "#1e3a5f"),
-            "above":   ("#fee2e2", "#7f1d1d"),
-            "below":   ("#dcfce7", "#14532d"),
-            "sold_ce": ("#b91c1c", "white"),
-            "sold_pe": ("#15803d", "white"),
-        }
-
-        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor — price ascending left→right</div>", unsafe_allow_html=True)
-        _ce_cols = st.columns(max(len(_ce_items), 1))
-        for i, (lbl, val, kind) in enumerate(_ce_items):
-            _path_note = (f"{_ce_moat_count} moat{'s' if _ce_moat_count != 1 else ''}"
-                          if kind == "sold_ce" and _ce_moat_count > 0
-                          else "PATH CLEAR ⚠️" if kind == "sold_ce"
-                          else "")
-            with _ce_cols[i]:
-                ui.metric_card(lbl, f"{val:,.0f}",
-                               sub=_path_note if _path_note else (
-                                   "sold strike" if kind == "sold_ce" else
-                                   "current price" if kind == "cmp" else
-                                   "anchor" if kind == "neutral" else "moat EMA"),
-                               color=("red" if kind in ("above", "sold_ce") else
-                                      "blue" if kind == "cmp" else
-                                      "green" if kind in ("below", "sold_pe") else "default"))
-
-        st.markdown("<div style='font-size:10px;color:#64748b;margin:6px 0 3px;'>📉 PE Corridor — price ascending left→right (sold put leftmost)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:10px;color:#64748b;margin:8px 0 3px;'>📉 PE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
         _pe_cols = st.columns(max(len(_pe_items), 1))
         for i, (lbl, val, kind) in enumerate(_pe_items):
-            _path_note_pe = (f"{_pe_moat_count} moat{'s' if _pe_moat_count != 1 else ''}"
-                             if kind == "sold_pe" and _pe_moat_count > 0
-                             else "PATH CLEAR ⚠️" if kind == "sold_pe"
-                             else "")
+            _extra_pe = _pe_note if kind == "sold_pe" else ""
             with _pe_cols[i]:
-                ui.metric_card(lbl, f"{val:,.0f}",
-                               sub=_path_note_pe if _path_note_pe else (
-                                   "sold strike" if kind == "sold_pe" else
-                                   "current price" if kind == "cmp" else
-                                   "anchor" if kind == "neutral" else "moat EMA"),
-                               color=("green" if kind in ("below", "sold_pe") else
-                                      "blue" if kind == "cmp" else
-                                      "red" if kind in ("above", "sold_ce") else "default"))
+                ui.metric_card(lbl, f"{val:,.0f}", sub=_sub(kind, val, _extra_pe), color=_col(kind))
 
     _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
     st.caption(
