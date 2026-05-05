@@ -162,35 +162,76 @@ if src1 >= 3:
 elif src1 == 2:
     skew_label = "1:1 Forced"; skew_note = f"Gap Day 2 ({gap_pct:.0f}% ATR) — overrides momentum skew"; skew_col = "#ea580c"; skew_forced = True
 
-# Source 3 — Tuesday anchor: auto-computed from cached daily data
-# Uses last Tuesday, or last trading day before it if Tuesday was a holiday
+# Source 3 — Expiry anchor with phase-aware logic
+# Phases on expiry day (Tuesday):
+#   before 3:15 PM  → use PRIOR expiry's close (monitoring open position)
+#   3:15 – 3:30 PM  → use live spot as provisional anchor (position sizing)
+#   after  3:30 PM  → use today's expiry close (new week starts)
 import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
+anchor_mode = "NORMAL"  # NORMAL | PRE_EXPIRY | PROVISIONAL | POST_EXPIRY
 try:
     from data.live_fetcher import get_nifty_daily
     _daily = get_nifty_daily()
     if not _daily.empty:
-        _today = _dt.date.today()
+        _now_ist       = _dt.datetime.now(pytz.timezone("Asia/Kolkata"))
+        _today         = _now_ist.date()
+        _cur_mins      = _now_ist.hour * 60 + _now_ist.minute
+        _PROV_START    = 15 * 60 + 15   # 3:15 PM IST
+        _PROV_END      = 15 * 60 + 30   # 3:30 PM IST
         _days_since_tue = (_today.weekday() - 1) % 7
-        _last_tue = _today - _dt.timedelta(days=_days_since_tue)
+        _last_tue      = _today - _dt.timedelta(days=_days_since_tue)
         _trading_dates = set(_daily.index.date)
-        _anchor_date = None
-        for _offset in range(7):
-            _candidate = _last_tue - _dt.timedelta(days=_offset)
-            if _candidate in _trading_dates:
-                _anchor_date = _candidate
-                break
-        if _anchor_date:
-            _hist = _daily[_daily.index.date <= _anchor_date].tail(15)
-            tue_close = float(_hist["close"].iloc[-1])
-            _h, _l, _c = _hist["high"].values, _hist["low"].values, _hist["close"].values
-            _tr = [max(_h[i]-_l[i], abs(_h[i]-_c[i-1]), abs(_l[i]-_c[i-1]))
-                   for i in range(1, len(_hist))]
-            tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr))
-            tue_anchor_date = str(_anchor_date)
-            tue_anchor_available = True
+        _is_expiry_day = (_last_tue == _today) and (_today in _trading_dates)
+
+        def _find_anchor(target_tue):
+            for _off in range(7):
+                _c = target_tue - _dt.timedelta(days=_off)
+                if _c in _trading_dates:
+                    return _c
+            return None
+
+        def _load_anchor(date):
+            _h2 = _daily[_daily.index.date <= date].tail(15)
+            _cl = float(_h2["close"].iloc[-1])
+            _hh, _ll, _cc = _h2["high"].values, _h2["low"].values, _h2["close"].values
+            _tr = [max(_hh[i]-_ll[i], abs(_hh[i]-_cc[i-1]), abs(_ll[i]-_cc[i-1]))
+                   for i in range(1, len(_h2))]
+            _atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
+            return _cl, _atr
+
+        if _is_expiry_day and _cur_mins < _PROV_START:
+            # Before 3:15 on expiry day — use previous expiry close
+            anchor_mode = "PRE_EXPIRY"
+            _prev_tue = _last_tue - _dt.timedelta(days=7)
+            _ad = _find_anchor(_prev_tue)
+            if _ad:
+                tue_close, tue_atr = _load_anchor(_ad)
+                tue_anchor_date = str(_ad) + " (prior expiry)"
+                tue_anchor_available = True
+
+        elif _is_expiry_day and _PROV_START <= _cur_mins < _PROV_END:
+            # 3:15–3:30 PM provisional window — use live spot as anchor
+            anchor_mode = "PROVISIONAL"
+            tue_close = float(spot_now) if spot_now > 0 else 0.0
+            tue_anchor_date = f"PROVISIONAL {_now_ist.strftime('%H:%M')} IST"
+            tue_anchor_available = tue_close > 0
+            _hist_atr = _daily.tail(15)
+            _hh, _ll, _cc = _hist_atr["high"].values, _hist_atr["low"].values, _hist_atr["close"].values
+            _tr = [max(_hh[i]-_ll[i], abs(_hh[i]-_cc[i-1]), abs(_ll[i]-_cc[i-1]))
+                   for i in range(1, len(_hist_atr))]
+            tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
+
+        else:
+            # Normal: after 3:30 on expiry day OR any non-expiry day
+            anchor_mode = "POST_EXPIRY" if _is_expiry_day else "NORMAL"
+            _ad = _find_anchor(_last_tue)
+            if _ad:
+                tue_close, tue_atr = _load_anchor(_ad)
+                tue_anchor_date = str(_ad)
+                tue_anchor_available = True
 except Exception:
     pass
 
@@ -417,6 +458,35 @@ ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_prepare_loss, ce_book_profit
 # ROLL MATRIX — Defensive Book Loss · Offensive Book Profit
 # ══════════════════════════════════════════════════════════════════════════════
 show_page_header(spot, signals_ts)
+
+# ── Expiry-day phase banners ─────────────────────────────────────────────────
+if anchor_mode == "PROVISIONAL":
+    _prov_ce = int(round(spot_now * 1.035 / 50) * 50)
+    _prov_pe = int(round(spot_now * 0.960 / 50) * 50)
+    st.markdown(
+        f"<div style='background:#6d28d9;border-radius:8px;padding:14px 20px;"
+        f"margin-bottom:12px;border:2px solid #a78bfa;'>"
+        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>"
+        f"🟣 EXPIRY CLOSING WINDOW · 3:15–3:30 PM IST</div>"
+        f"<div style='color:white;font-size:20px;font-weight:900;margin:4px 0;'>"
+        f"PROVISIONAL STRIKES — NEXT WEEK</div>"
+        f"<div style='color:white;font-size:14px;'>"
+        f"Anchor = CMP {spot_now:,.0f} · "
+        f"Sell CE → <b>{_prov_ce:,}</b> (+3.5%) · "
+        f"Sell PE → <b>{_prov_pe:,}</b> (−4.0%)</div>"
+        f"<div style='color:rgba(255,255,255,0.65);font-size:11px;margin-top:4px;'>"
+        f"Anchor locks to today's EOD close after 3:30 PM</div>"
+        f"</div>", unsafe_allow_html=True)
+elif anchor_mode == "PRE_EXPIRY":
+    st.markdown(
+        f"<div style='background:#1e3a5f;border-radius:8px;padding:10px 16px;"
+        f"margin-bottom:10px;border:1px solid #3b82f6;'>"
+        f"<div style='color:#bfdbfe;font-size:12px;'>"
+        f"📅 <b>Expiry day</b> — monitoring open position against prior anchor "
+        f"<b>{tue_anchor_date}</b> ({tue_close:,.0f}). "
+        f"Provisional new-week strikes appear at <b>3:15 PM IST</b>.</div>"
+        f"</div>", unsafe_allow_html=True)
+
 ui.section_header("Roll Matrix",
                   "Four-filter defensive gate · Offensive theta harvest · Exact roll-to strikes")
 
