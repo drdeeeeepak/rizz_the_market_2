@@ -131,15 +131,17 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
         b_color = border
         bg = "#f8f9fb"
 
+    _sub_html = (f"<div style='font-size:13px;color:#334155;"
+                 f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
     st.markdown(
         f"<div style='border-top:3px solid {b_color};background:{bg};"
         f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
-        f"<div style='font-size:9px;color:#5a6b8a;text-transform:uppercase;"
+        f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;display:flex;align-items:center;'>{label}{tip_html}</div>"
         f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
         f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
-        f"{'<div style=\"font-size:10px;color:#5a6b8a;font-family:monospace;margin-top:3px;\">' + sub + '</div>' if sub else ''}"
+        f"{_sub_html}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -161,15 +163,17 @@ def metric_card(label: str, value: str, sub: str = "",
         b_color = border
         bg = "#f8f9fb"
 
+    _sub_html2 = (f"<div style='font-size:13px;color:#334155;"
+                  f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
     st.markdown(
         f"<div style='border-top:3px solid {b_color};background:{bg};"
         f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
-        f"<div style='font-size:9px;color:#5a6b8a;text-transform:uppercase;"
+        f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;'>{label}</div>"
         f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
         f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
-        f"{'<div style=\"font-size:10px;color:#5a6b8a;font-family:monospace;margin-top:3px;\">' + sub + '</div>' if sub else ''}"
+        f"{_sub_html2}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -270,10 +274,12 @@ def wall_dots(score: int, dominant_color: str = "#16a34a") -> str:
 
 
 def section_header(title: str, subtitle: str = "") -> None:
+    _sub_hdr = (f"<div style='font-size:13px;color:#475569;"
+                f"font-family:monospace;'>{subtitle}</div>") if subtitle else ""
     st.markdown(
         f"<div style='border-left:3px solid #2563eb;padding-left:10px;margin:16px 0 8px 0;'>"
         f"<div style='font-size:14px;font-weight:700;color:#0f1724;'>{title}</div>"
-        f"{'<div style=\"font-size:10px;color:#5a6b8a;font-family:monospace;\">' + subtitle + '</div>' if subtitle else ''}"
+        f"{_sub_hdr}"
         f"</div>",
         unsafe_allow_html=True,
     )

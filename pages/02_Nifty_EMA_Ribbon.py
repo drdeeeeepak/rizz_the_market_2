@@ -463,7 +463,7 @@ def _chip(lvl, palette):
     bg = BOTH_AMBER if _both_singing else palette.get(lvl, "#94a3b8")
     tc = "#1e293b" if bg in _LIGHT_COLS else "white"
     return (f"<span style='background:{bg};color:{tc};border-radius:3px;"
-            f"padding:2px 6px;font-size:11px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
+            f"padding:2px 6px;font-size:14px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
 
 # Roll state label + colour per side
 def _roll_state(bl, pl, bp, pp):
@@ -488,7 +488,7 @@ if anchor_mode == "PROVISIONAL":
     st.markdown(
         f"<div style='background:#6d28d9;border-radius:8px;padding:14px 20px;"
         f"margin-bottom:12px;border:2px solid #a78bfa;'>"
-        f"<div style='color:white;font-size:11px;font-weight:700;opacity:0.85;'>"
+        f"<div style='color:white;font-size:14px;font-weight:700;opacity:0.85;'>"
         f"🟣 EXPIRY CLOSING WINDOW · 3:15–3:30 PM IST</div>"
         f"<div style='color:white;font-size:20px;font-weight:900;margin:4px 0;'>"
         f"PROVISIONAL STRIKES — NEXT WEEK</div>"
@@ -496,7 +496,7 @@ if anchor_mode == "PROVISIONAL":
         f"Anchor = CMP {spot_now:,.0f} · "
         f"Sell CE → <b>{_prov_ce:,}</b> (+3.5%) · "
         f"Sell PE → <b>{_prov_pe:,}</b> (−4.0%)</div>"
-        f"<div style='color:rgba(255,255,255,0.65);font-size:11px;margin-top:4px;'>"
+        f"<div style='color:rgba(255,255,255,0.65);font-size:14px;margin-top:4px;'>"
         f"Anchor locks to today's EOD close after 3:30 PM</div>"
         f"</div>", unsafe_allow_html=True)
 elif anchor_mode == "PRE_EXPIRY":
@@ -581,24 +581,24 @@ else:
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
         f"border:1px solid #1e293b;margin-bottom:10px;'>"
-        f"<div style='font-size:10px;font-weight:700;color:#475569;"
+        f"<div style='font-size:13px;font-weight:700;color:#475569;"
         f"letter-spacing:1.5px;margin-bottom:8px;'>ENTRY STRIKES — LOCKED AT EXPIRY EOD</div>"
         f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
         # PE strike
         f"<div>"
-        f"<span style='font-size:11px;color:#94a3b8;'>PE SOLD </span>"
+        f"<span style='font-size:14px;color:#64748b;'>PE SOLD </span>"
         f"<span style='font-size:20px;font-weight:900;color:#16a34a;'>{pe_sold:,}</span>"
-        f"<div style='font-size:10px;color:#64748b;margin-top:2px;'>{_pe_strike_note}</div>"
-        + (f"<div style='font-size:11px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
+        f"<div style='font-size:13px;color:#475569;margin-top:2px;'>{_pe_strike_note}</div>"
+        + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ PE moats {_entry_put_moats}→{put_moats} · Support thinning · Strike locked</div>"
            if _pe_moat_warn else "")
         + f"</div>"
         # CE strike
         f"<div>"
-        f"<span style='font-size:11px;color:#94a3b8;'>CE SOLD </span>"
+        f"<span style='font-size:14px;color:#64748b;'>CE SOLD </span>"
         f"<span style='font-size:20px;font-weight:900;color:#dc2626;'>{ce_sold:,}</span>"
-        f"<div style='font-size:10px;color:#64748b;margin-top:2px;'>{_ce_strike_note}</div>"
-        + (f"<div style='font-size:11px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
+        f"<div style='font-size:13px;color:#475569;margin-top:2px;'>{_ce_strike_note}</div>"
+        + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ CE moats {_entry_call_moats}→{call_moats} · Resistance weakening · Strike locked</div>"
            if _ce_moat_warn else "")
         + f"</div>"
@@ -650,12 +650,12 @@ else:
             if is_ce:
                 vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
                             f"background:rgba(0,0,0,0.25);color:#fef08a;"
-                            f"font-size:11px;font-weight:700;'>"
+                            f"font-size:14px;font-weight:700;'>"
                             f"⚠️ VIX RISING {vix_chg_pct:+.1f}% — CAUTION: up moves may revert</div>")
             else:
                 vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
                             f"background:rgba(0,0,0,0.25);color:#bfdbfe;"
-                            f"font-size:11px;font-weight:700;'>"
+                            f"font-size:14px;font-weight:700;'>"
                             f"🔵 VIX RISING {vix_chg_pct:+.1f}% — EXTRA CONFIRMATION: fear-driven</div>")
 
         scorecard = (
@@ -666,13 +666,13 @@ else:
         )
         st.markdown(
             f"<div style='background:{bg};border-radius:10px;padding:14px 16px;margin-bottom:8px;'>"
-            f"<div style='color:{txt_col};font-size:11px;font-weight:700;"
+            f"<div style='color:{txt_col};font-size:14px;font-weight:700;"
             f"opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
             f"<div style='color:{txt_col};font-size:18px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
             f"<div style='color:{txt_col};font-size:12px;font-style:italic;"
             f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
-            f"<div style='color:#94a3b8;font-size:10px;font-weight:700;"
+            f"<div style='color:#64748b;font-size:13px;font-weight:700;"
             f"margin-bottom:4px;letter-spacing:1px;'>FILTER SCORECARD — {fp}/4 PASS</div>"
             + scorecard + f"</div>" + vix_line + f"</div>",
             unsafe_allow_html=True)
@@ -748,7 +748,7 @@ else:
             _ce_moat_count, _ce_note = 0, ""
         _ce_items.sort(key=lambda x: x[1])
 
-        st.markdown("<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>📈 CE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:13px;color:#475569;margin-bottom:3px;'>📈 CE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
         _ce_cols = st.columns(max(len(_ce_items), 1))
         for i, (lbl, val, kind) in enumerate(_ce_items):
             _extra = _ce_note if kind == "sold_ce" else ""
@@ -777,7 +777,7 @@ else:
             _pe_moat_count, _pe_note = 0, ""
         _pe_items.sort(key=lambda x: x[1])
 
-        st.markdown("<div style='font-size:10px;color:#64748b;margin:8px 0 3px;'>📉 PE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:13px;color:#475569;margin:8px 0 3px;'>📉 PE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
         _pe_cols = st.columns(max(len(_pe_items), 1))
         for i, (lbl, val, kind) in enumerate(_pe_items):
             _extra_pe = _pe_note if kind == "sold_pe" else ""
@@ -823,8 +823,8 @@ st.markdown(
     f"background:{_vc_col}10;margin-bottom:10px;'>"
     f"<div style='font-size:12px;font-weight:700;color:{_vc_col};margin-bottom:4px;'>VERDICT</div>"
     f"<div style='font-size:12px;color:#1e293b;margin-bottom:6px;'>{_verdict_main}</div>"
-    f"<div style='font-size:11px;color:{_rule1_col};margin-bottom:2px;'>{_rule1_text}</div>"
-    f"<div style='font-size:11px;color:{_rule2_col};'>{_rule2_text}</div>"
+    f"<div style='font-size:14px;color:{_rule1_col};margin-bottom:2px;'>{_rule1_text}</div>"
+    f"<div style='font-size:14px;color:{_rule2_col};'>{_rule2_text}</div>"
     f"</div>", unsafe_allow_html=True)
 
 src_data = [
@@ -867,7 +867,7 @@ def _src_card(label, lvl, palette, bg_override=None):
     lbl  = CANARY_LABEL.get(lvl, "—")
     st.markdown(
         f"<div style='background:{bg};border-radius:8px;padding:10px 16px;margin-bottom:6px;'>"
-        f"<div style='color:{txt};font-size:9px;font-weight:700;opacity:0.85;'>{label}</div>"
+        f"<div style='color:{txt};font-size:12px;font-weight:700;opacity:0.85;'>{label}</div>"
         f"<div style='color:{txt};font-size:15px;font-weight:900;margin:2px 0;'>{icon} {lbl}</div>"
         f"</div>", unsafe_allow_html=True)
 
@@ -877,7 +877,7 @@ for s in src_data:
             f"PE: {CANARY_LABEL.get(s['pe_lvl'],'—')} | CE: {CANARY_LABEL.get(s['ce_lvl'],'—')}",
             expanded=False):
         st.markdown(f"<small style='color:#334155;'>{s['what']}</small>", unsafe_allow_html=True)
-        st.markdown(f"<pre style='font-size:10px;color:#5a6b8a;margin-bottom:8px;'>{s['detail']}</pre>",
+        st.markdown(f"<pre style='font-size:13px;color:#334155;margin-bottom:8px;'>{s['detail']}</pre>",
                     unsafe_allow_html=True)
         if "Source 3" in s["source"] and tue_anchor_available:
             st.caption(f"Anchor: {tue_anchor_date} · close {tue_close:,.0f} · "
@@ -889,9 +889,9 @@ for s in src_data:
             st.markdown(
                 f"<div style='margin-top:4px;padding:8px 14px;border-radius:6px;"
                 f"background:{sc}18;border-left:3px solid {sc};'>"
-                f"<span style='font-size:11px;font-weight:700;color:{sc};'>"
+                f"<span style='font-size:14px;font-weight:700;color:{sc};'>"
                 f"IC SHAPE · {s['skew_label']}</span>"
-                f"<span style='font-size:10px;color:#334155;'> — {s['skew_note']}</span>"
+                f"<span style='font-size:13px;color:#334155;'> — {s['skew_note']}</span>"
                 f"</div>", unsafe_allow_html=True)
 
 st.divider()
@@ -1013,38 +1013,38 @@ if e3 and e8 and e16 and e30 and spot > 0:
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
         f"border:1px solid #1e293b;margin-top:10px;'>"
-        f"<div style='font-size:10px;font-weight:700;color:#475569;"
+        f"<div style='font-size:13px;font-weight:700;color:#475569;"
         f"letter-spacing:1.5px;margin-bottom:10px;'>LIVE CLUSTER STATE</div>"
         # Cluster bands
         f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;'>"
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-        f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
+        f"<div style='font-size:13px;color:#475569;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
-        f"<div style='font-size:10px;color:{_slope_col};margin-top:2px;'>"
+        f"<div style='font-size:13px;color:{_slope_col};margin-top:2px;'>"
         f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div></div>"
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-        f"<div style='font-size:10px;color:#64748b;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
+        f"<div style='font-size:13px;color:#475569;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
-        f"<div style='font-size:10px;color:#94a3b8;margin-top:2px;'>"
+        f"<div style='font-size:13px;color:#64748b;margin-top:2px;'>"
         f"Spot: {_spot_pos} · width {_slow_hi-_slow_lo:.0f} pts</div></div>"
         f"</div>"
         # Gap row
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 12px;margin-bottom:8px;'>"
         f"<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>"
         f"<div>"
-        f"<span style='font-size:11px;color:#94a3b8;'>Gap </span>"
+        f"<span style='font-size:14px;color:#64748b;'>Gap </span>"
         f"<span style='font-size:22px;font-weight:900;color:{_gap_col};'>{_gap:+.0f} pts</span>"
         f"<span style='font-size:12px;font-weight:700;color:{_gap_col};margin-left:6px;'>{_gap_lbl}</span>"
-        f"<span style='font-size:10px;color:#64748b;margin-left:8px;'>{_gap_pct_str}</span>"
+        f"<span style='font-size:13px;color:#475569;margin-left:8px;'>{_gap_pct_str}</span>"
         f"</div>"
-        + (f"<div style='font-size:11px;font-weight:700;color:{_cross_col};'>{_cross_note}</div>"
+        + (f"<div style='font-size:14px;font-weight:700;color:{_cross_col};'>{_cross_note}</div>"
            if _cross_note else "")
         + f"</div></div>"
         # Regime row
         f"<div style='display:flex;gap:6px;flex-wrap:wrap;align-items:center;'>"
         + (f"<div style='background:{_entry_reg_col}33;border:1px solid {_entry_reg_col}66;"
            f"border-radius:5px;padding:4px 10px;'>"
-           f"<span style='color:{_entry_reg_col};font-size:11px;font-weight:700;'>"
+           f"<span style='color:{_entry_reg_col};font-size:14px;font-weight:700;'>"
            f"ENTRY: {_entry_regime}</span></div>"
            f"<span style='color:#475569;font-size:14px;'>→</span>"
            if _regime_changed else "")
@@ -1052,7 +1052,7 @@ if e3 and e8 and e16 and e30 and spot > 0:
         f"<span style='color:white;font-size:12px;font-weight:700;'>"
         + ("NOW: " if _regime_changed else "") + f"{regime}</span></div>"
         + (f"<div style='background:#7c2d12;border-radius:5px;padding:4px 10px;'>"
-           f"<span style='color:#fca5a5;font-size:11px;font-weight:700;'>"
+           f"<span style='color:#fca5a5;font-size:14px;font-weight:700;'>"
            f"⚠️ REGIME CHANGED</span></div>" if _regime_changed else "")
         + f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
         f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Shape {_reg_ic}</span></div>"
