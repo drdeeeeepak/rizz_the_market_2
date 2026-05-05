@@ -234,19 +234,22 @@ try:
             anchor_mode = "POST_EXPIRY" if _is_expiry_day else "NORMAL"
             _ad = _find_anchor(_last_tue)
             if _ad:
-                tue_close, tue_atr = _load_anchor(_ad)
+                _hist_close, tue_atr = _load_anchor(_ad)
                 tue_anchor_date = str(_ad)
-                tue_anchor_available = True
-            # POST_EXPIRY: daily feed may not yet have today's EOD candle.
-            # If the best anchor found is before today, override with spot_now —
-            # the market has closed so spot_now IS the expiry close.
-            if _is_expiry_day and spot_now > 0 and (_ad is None or _ad != _last_tue):
+
+            if _is_expiry_day and spot_now > 0:
+                # POST_EXPIRY: market has settled — spot_now IS the expiry close.
+                # Never trust the daily cache for today's close; it may have been
+                # populated before 3:30 PM and contains an intraday price.
                 tue_close = float(spot_now)
-                tue_anchor_date = f"{_last_tue} (live close)"
+                tue_anchor_date = f"{_last_tue} (expiry close)"
                 tue_anchor_available = True
                 if not _ad:
-                    # No historical ATR available — use a safe default
                     tue_atr = 200.0
+            elif _ad:
+                # Non-expiry day: use historical close normally
+                tue_close = _hist_close
+                tue_anchor_available = True
 except Exception:
     pass
 
