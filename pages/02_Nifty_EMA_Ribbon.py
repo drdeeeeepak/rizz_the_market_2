@@ -611,7 +611,7 @@ else:
         return (
             f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
             f"<span style='font-size:13px;'>{icon}</span>"
-            f"<span style='font-size:12px;color:#93c5fd;flex:1;'>{label}</span>"
+            f"<span style='font-size:12px;color:#a78bfa;flex:1;'>{label}</span>"
             f"<span style='font-size:12px;font-weight:700;color:{col};'>{value_str}</span>"
             f"</div>"
         )
