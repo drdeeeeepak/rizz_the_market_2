@@ -581,23 +581,23 @@ else:
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
         f"border:1px solid #1e293b;margin-bottom:10px;'>"
-        f"<div style='font-size:13px;font-weight:700;color:#475569;"
+        f"<div style='font-size:13px;font-weight:700;color:#94a3b8;"
         f"letter-spacing:1.5px;margin-bottom:8px;'>ENTRY STRIKES — LOCKED AT EXPIRY EOD</div>"
         f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
         # PE strike
         f"<div>"
-        f"<span style='font-size:14px;color:#64748b;'>PE SOLD </span>"
+        f"<span style='font-size:14px;color:#94a3b8;'>PE SOLD </span>"
         f"<span style='font-size:20px;font-weight:900;color:#16a34a;'>{pe_sold:,}</span>"
-        f"<div style='font-size:13px;color:#475569;margin-top:2px;'>{_pe_strike_note}</div>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_pe_strike_note}</div>"
         + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ PE moats {_entry_put_moats}→{put_moats} · Support thinning · Strike locked</div>"
            if _pe_moat_warn else "")
         + f"</div>"
         # CE strike
         f"<div>"
-        f"<span style='font-size:14px;color:#64748b;'>CE SOLD </span>"
+        f"<span style='font-size:14px;color:#94a3b8;'>CE SOLD </span>"
         f"<span style='font-size:20px;font-weight:900;color:#dc2626;'>{ce_sold:,}</span>"
-        f"<div style='font-size:13px;color:#475569;margin-top:2px;'>{_ce_strike_note}</div>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_ce_strike_note}</div>"
         + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ CE moats {_entry_call_moats}→{call_moats} · Resistance weakening · Strike locked</div>"
            if _ce_moat_warn else "")
@@ -672,7 +672,7 @@ else:
             f"<div style='color:{txt_col};font-size:12px;font-style:italic;"
             f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
-            f"<div style='color:#64748b;font-size:13px;font-weight:700;"
+            f"<div style='color:#e2e8f0;font-size:13px;font-weight:700;"
             f"margin-bottom:4px;letter-spacing:1px;'>FILTER SCORECARD — {fp}/4 PASS</div>"
             + scorecard + f"</div>" + vix_line + f"</div>",
             unsafe_allow_html=True)
@@ -1013,29 +1013,29 @@ if e3 and e8 and e16 and e30 and spot > 0:
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:14px 16px;"
         f"border:1px solid #1e293b;margin-top:10px;'>"
-        f"<div style='font-size:13px;font-weight:700;color:#475569;"
+        f"<div style='font-size:13px;font-weight:700;color:#94a3b8;"
         f"letter-spacing:1.5px;margin-bottom:10px;'>LIVE CLUSTER STATE</div>"
         # Cluster bands
         f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;'>"
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-        f"<div style='font-size:13px;color:#475569;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-bottom:3px;'>FAST  EMA3 · EMA8</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
         f"<div style='font-size:13px;color:{_slope_col};margin-top:2px;'>"
         f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div></div>"
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
-        f"<div style='font-size:13px;color:#475569;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-bottom:3px;'>SLOW  EMA16 · EMA30</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
-        f"<div style='font-size:13px;color:#64748b;margin-top:2px;'>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>"
         f"Spot: {_spot_pos} · width {_slow_hi-_slow_lo:.0f} pts</div></div>"
         f"</div>"
         # Gap row
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 12px;margin-bottom:8px;'>"
         f"<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>"
         f"<div>"
-        f"<span style='font-size:14px;color:#64748b;'>Gap </span>"
+        f"<span style='font-size:14px;color:#94a3b8;'>Gap </span>"
         f"<span style='font-size:22px;font-weight:900;color:{_gap_col};'>{_gap:+.0f} pts</span>"
         f"<span style='font-size:12px;font-weight:700;color:{_gap_col};margin-left:6px;'>{_gap_lbl}</span>"
-        f"<span style='font-size:13px;color:#475569;margin-left:8px;'>{_gap_pct_str}</span>"
+        f"<span style='font-size:13px;color:#94a3b8;margin-left:8px;'>{_gap_pct_str}</span>"
         f"</div>"
         + (f"<div style='font-size:14px;font-weight:700;color:{_cross_col};'>{_cross_note}</div>"
            if _cross_note else "")
@@ -1046,7 +1046,7 @@ if e3 and e8 and e16 and e30 and spot > 0:
            f"border-radius:5px;padding:4px 10px;'>"
            f"<span style='color:{_entry_reg_col};font-size:14px;font-weight:700;'>"
            f"ENTRY: {_entry_regime}</span></div>"
-           f"<span style='color:#475569;font-size:14px;'>→</span>"
+           f"<span style='color:#94a3b8;font-size:14px;'>→</span>"
            if _regime_changed else "")
         + f"<div style='background:{_reg_col2};border-radius:5px;padding:4px 10px;'>"
         f"<span style='color:white;font-size:12px;font-weight:700;'>"
