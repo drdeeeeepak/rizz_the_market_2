@@ -717,9 +717,9 @@ else:
             return f"{pct:+.2f}% · {base}"
 
         def _col(kind):
-            return {"neutral":"default","cmp":"blue",
-                    "above":"red","sold_ce":"red",
-                    "below":"green","sold_pe":"green",
+            return {"neutral":"anchor","cmp":"blue",
+                    "above":"red","sold_ce":"sold_ce",
+                    "below":"green","sold_pe":"sold_pe",
                     "book_loss":"red","prep_loss":"red",
                     "book_profit":"green","prep_profit":"green"}.get(kind,"default")
 

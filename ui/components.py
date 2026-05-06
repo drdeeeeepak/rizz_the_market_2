@@ -120,11 +120,14 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
     """
     tip_html = tooltip(tip_term, tip1, tip2, tip3) if tip_term else ""
     named = {
-        "green":   ("#16a34a", "#f0fdf4"),
-        "red":     ("#dc2626", "#fef2f2"),
-        "amber":   ("#d97706", "#fffbeb"),
-        "blue":    ("#2563eb", "#eff6ff"),
-        "default": ("#e2e6ef", "#f8f9fb"),
+        "green":      ("#16a34a", "#f0fdf4"),
+        "red":        ("#dc2626", "#fef2f2"),
+        "amber":      ("#d97706", "#fffbeb"),
+        "blue":       ("#2563eb", "#eff6ff"),
+        "default":    ("#e2e6ef", "#f8f9fb"),
+        "anchor":     ("#f59e0b", "#fef9e7"),
+        "sold_ce":    ("#7f1d1d", "#fde8e8"),
+        "sold_pe":    ("#14532d", "#d1fae5"),
     }
     b_color, bg = named.get(color, named["default"])
     if border:
@@ -152,12 +155,16 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
 def metric_card(label: str, value: str, sub: str = "",
                 color: str = "default", border: str = "") -> None:
     named = {
-        "green":   ("#16a34a", "#f0fdf4"),
-        "red":     ("#dc2626", "#fef2f2"),
-        "amber":   ("#d97706", "#fffbeb"),
-        "blue":    ("#2563eb", "#eff6ff"),
-        "default": ("#e2e6ef", "#f8f9fb"),
+        "green":      ("#16a34a", "#f0fdf4"),
+        "red":        ("#dc2626", "#fef2f2"),
+        "amber":      ("#d97706", "#fffbeb"),
+        "blue":       ("#2563eb", "#eff6ff"),
+        "default":    ("#e2e6ef", "#f8f9fb"),
+        "anchor":     ("#f59e0b", "#fef9e7"),
+        "sold_ce":    ("#7f1d1d", "#fde8e8"),
+        "sold_pe":    ("#14532d", "#d1fae5"),
     }
+    _thick = color in ("anchor", "sold_ce", "sold_pe")
     b_color, bg = named.get(color, named["default"])
     if border:
         b_color = border
@@ -165,8 +172,9 @@ def metric_card(label: str, value: str, sub: str = "",
 
     _sub_html2 = (f"<div style='font-size:13px;color:#334155;"
                   f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
+    _bw = "5px" if _thick else "3px"
     st.markdown(
-        f"<div style='border-top:3px solid {b_color};background:{bg};"
+        f"<div style='border-top:{_bw} solid {b_color};background:{bg};"
         f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
         f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
