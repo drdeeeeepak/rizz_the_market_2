@@ -107,8 +107,10 @@ else:
 put_label,  _ = _mlab(put_moats)
 call_label, _ = _mlab(call_moats)
 
-# For three-source display — legacy canary is single-source, we display what we have
-# Source 1 approximation from existing canary logic
+# Source 1 — EMA3/EMA8 gap (LIVE) · thresholds: 55/35/15/5 % of ATR
+# Direction computed live from actual EMA values, not stale EOD can_dir
+# EMA3 > EMA8 → BULL → only CE threatened (PE always D0)
+# EMA3 < EMA8 → BEAR → only PE threatened (CE always D0)
 e3  = sig.get("ema3",  ema_vals.get(3,  0))
 e8  = sig.get("ema8",  ema_vals.get(8,  0))
 e16 = sig.get("ema16", ema_vals.get(16, 0))
@@ -116,13 +118,18 @@ e30 = sig.get("ema30", ema_vals.get(30, 0))
 gap_pts = abs(e3 - e8) if e3 and e8 else 0
 gap_pct = gap_pts / atr14 * 100 if atr14 > 0 else 0
 
-# Source 1 — EMA3/EMA8 gap · thresholds: 55/35/15 % of ATR
-# Direction: BULL = CE threatened · BEAR = PE threatened
-if   gap_pct > 55: src1 = 0   # Singing — structure wide, safe
-elif gap_pct > 35: src1 = 1   # Stable trend
-elif gap_pct > 15: src1 = 2   # Compressing — flatten skew to 1:1
-elif gap_pct >  2: src1 = 3   # Cross imminent — exit heavy side
-else:              src1 = 4   # Cross — close all
+# Live direction from EMA values
+can_dir_live = "BULL" if (e3 and e8 and e3 > e8) else "BEAR" if (e3 and e8 and e3 < e8) else can_dir
+
+if   gap_pct > 55: _src1_day = 0   # Singing — wide gap, trend healthy
+elif gap_pct > 35: _src1_day = 1   # Stable
+elif gap_pct > 15: _src1_day = 2   # Compressing — flatten skew to 1:1
+elif gap_pct >  5: _src1_day = 3   # Cross imminent — exit heavy side
+else:              _src1_day = 4   # Crossed/touching — close all
+
+src1    = _src1_day                               # scalar used by skew-override logic
+src1_pe = _src1_day if can_dir_live == "BEAR" else 0
+src1_ce = _src1_day if can_dir_live == "BULL" else 0
 
 # Source 2 — Momentum % of ATR/day · PE + CE = 4, except flat zone = 0 + 0
 def _src2_levels(score):
@@ -340,8 +347,9 @@ else:
     ce_off_pct, pe_off_pct = (3.5, 4.0) if dte >= 5 else (2.5, 3.0)
 
 # Overall PE and CE canary (max across sources)
-pe_canary = max(src1 if can_dir == "BEAR" else 0, src2_pe, src3_pe)
-ce_canary = max(src1 if can_dir == "BULL" else 0, src2_ce, src3_ce)
+# src1_pe/src1_ce already encode direction — no need for can_dir check here
+pe_canary = max(src1_pe, src2_pe, src3_pe)
+ce_canary = max(src1_ce, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
 
 # ── India VIX ────────────────────────────────────────────────────────────────
@@ -403,16 +411,13 @@ def _txt(lvl): return "#1e293b" if lvl >= 3 else "white"
 BOTH_AMBER = "#d97706"
 
 # ── Driver attribution (needed by header) ────────────────────────────────────
-src1_pe_eff = src1 if can_dir == "BEAR" else 0
-src1_ce_eff = src1 if can_dir == "BULL" else 0
-
 def _driver(s1, s2, s3):
     if s1 >= s2 and s1 >= s3 and s1 > 0:
         return "Source 1 (EMA Gap)"
     return "Source 2" if s2 >= s3 else "Source 3"
 
-pe_driver = _driver(src1_pe_eff, src2_pe, src3_pe)
-ce_driver = _driver(src1_ce_eff, src2_ce, src3_ce)
+pe_driver = _driver(src1_pe, src2_pe, src3_pe)
+ce_driver = _driver(src1_ce, src2_ce, src3_ce)
 
 # ── Page header colour ───────────────────────────────────────────────────────
 CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
@@ -814,9 +819,10 @@ else:
                      f"{CANARY_ACTION.get(_vc_lvl,'WATCH')} on the {_vc_side} side.")
 
 _rule1_col  = "#dc2626" if src1 >= 3 else "#ea580c" if src1 == 2 else "#16a34a"
-_rule1_text = (f"Rule 1 — Gap Day {src1} ({gap_pct:.0f}% ATR): exit heavy side immediately." if src1 >= 3 else
-               f"Rule 1 — Gap Day 2 ({gap_pct:.0f}% ATR): skew overridden → flatten 1:1." if src1 == 2 else
-               f"Rule 1 — Gap Day {src1} ({gap_pct:.0f}% ATR, {can_dir}): {skew_label} skew stands.")
+_rule1_text = (f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 "
+               f"({'CE' if can_dir_live=='BULL' else 'PE'} side threatened): exit heavy side immediately." if src1 >= 3 else
+               f"EMA Gap — D2 ({gap_pct:.0f}% ATR) · compressing → skew forced to 1:1." if src1 == 2 else
+               f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · {skew_label} skew stands.")
 _rule2_col  = _vc_col if _vc_lvl > 0 else "#16a34a"
 _rule2_text = (f"Rule 2 — Harshest signal wins: {_vc_drv} at {CANARY_LABEL.get(_vc_lvl)}." if _vc_lvl > 0 else
                "Rule 2 — No source firing. Max() across all sources = Singing.")
