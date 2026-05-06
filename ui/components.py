@@ -128,19 +128,21 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
         "anchor":     ("#d97706", "#fde68a",  None),
         "sold_ce":    ("#991b1b", "#fca5a5",  None),
         "sold_pe":    ("#166534", "#86efac",  None),
-        "loss":       ("#991b1b", "#fef2f2",  "#991b1b"),
-        "profit":     ("#166534", "#f0fdf4",  "#166534"),
+        "loss":       ("#991b1b", "#fecaca"),
+        "profit":     ("#166534", "#bbf7d0"),
     }
-    b_color, bg, _ = named.get(color, named["default"])
+    _stripe = color in ("loss", "profit")
+    b_color, bg = named.get(color, named["default"])
     if border:
         b_color = border
         bg = "#f8f9fb"
 
     _sub_html = (f"<div style='font-size:13px;color:#334155;"
                  f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
+    _bd = (f"border-top:3px solid {b_color};border-left:4px solid {b_color};"
+           f"border-radius:0 6px 6px 0;") if _stripe else f"border-top:3px solid {b_color};border-radius:6px;"
     st.markdown(
-        f"<div style='border-top:3px solid {b_color};background:{bg};"
-        f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
+        f"<div style='{_bd}background:{bg};padding:12px 14px;min-height:72px;'>"
         f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;display:flex;align-items:center;'>{label}{tip_html}</div>"
@@ -166,29 +168,27 @@ def metric_card(label: str, value: str, sub: str = "",
         "anchor":     ("#d97706", "#fde68a",  None),
         "sold_ce":    ("#991b1b", "#fca5a5",  None),
         "sold_pe":    ("#166534", "#86efac",  None),
-        "loss":       ("#991b1b", "#fef2f2",  "#991b1b"),   # deep red text
-        "profit":     ("#166534", "#f0fdf4",  "#166534"),   # deep green text
+        "loss":       ("#991b1b", "#fecaca"),
+        "profit":     ("#166534", "#bbf7d0"),
     }
-    _thick = color in ("anchor", "sold_ce", "sold_pe")
-    b_color, bg, txt = named.get(color, named["default"])
+    _thick  = color in ("anchor", "sold_ce", "sold_pe")
+    _stripe = color in ("loss", "profit")
+    b_color, bg = named.get(color, named["default"])
     if border:
         b_color = border
         bg = "#f8f9fb"
 
-    _lbl_col = txt if txt else "#334155"
-    _val_col = txt if txt else "#0f1724"
-    _sub_col = txt if txt else "#334155"
-
-    _sub_html2 = (f"<div style='font-size:13px;color:{_sub_col};"
+    _sub_html2 = (f"<div style='font-size:13px;color:#334155;"
                   f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
     _bw = "5px" if _thick else "3px"
+    _bd = (f"border-top:{_bw} solid {b_color};border-left:4px solid {b_color};"
+           f"border-radius:0 6px 6px 0;") if _stripe else f"border-top:{_bw} solid {b_color};border-radius:6px;"
     st.markdown(
-        f"<div style='border-top:{_bw} solid {b_color};background:{bg};"
-        f"border-radius:6px;padding:12px 14px;min-height:72px;'>"
-        f"<div style='font-size:12px;color:{_lbl_col};text-transform:uppercase;"
+        f"<div style='{_bd}background:{bg};padding:12px 14px;min-height:72px;'>"
+        f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;'>{label}</div>"
-        f"<div style='font-size:22px;font-weight:800;color:{_val_col};"
+        f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
         f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
         f"{_sub_html2}"
         f"</div>",
