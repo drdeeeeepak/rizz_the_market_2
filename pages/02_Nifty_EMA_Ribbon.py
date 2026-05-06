@@ -737,8 +737,8 @@ else:
             return {"neutral":"anchor","cmp":"blue",
                     "above":"red","sold_ce":"sold_ce",
                     "below":"green","sold_pe":"sold_pe",
-                    "book_loss":"red","prep_loss":"red",
-                    "book_profit":"green","prep_profit":"green"}.get(kind,"default")
+                    "book_loss":"loss","prep_loss":"loss",
+                    "book_profit":"profit","prep_profit":"profit"}.get(kind,"default")
 
         # ── CE strip ─────────────────────────────────────────────────────────
         _ce_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
