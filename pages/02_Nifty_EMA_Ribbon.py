@@ -833,9 +833,9 @@ src_data = [
         "detail":     (f"EMA3 slope: {ema3_slope:+.1f} pts/day  (60% weight)\n"
                        f"EMA8 slope: {ema8_slope:+.1f} pts/day  (40% weight)\n"
                        f"Combined score: {mom_score:+.1f}% of ATR/day\n"
-                       f"Bullish → CE only:  >32%=D4  ·  20–32%=D3  ·  11–20%=D2  ·  5–11%=D1  (PE always D0)\n"
-                       f"Bearish → PE only:  >32%=D4  ·  20–32%=D3  ·  11–20%=D2  ·  5–11%=D1  (CE always D0)\n"
-                       f"Flat zone: ±5% = both Day 0 (amber)  ·  Bearish: mirror"),
+                       f"Bullish → CE only:  >+32%=D4  ·  +20–32%=D3  ·  +11–20%=D2  ·  +5–11%=D1  (PE always D0)\n"
+                       f"Flat zone: ±5% = both Day 0\n"
+                       f"Bearish → PE only:  <-32%=D4  ·  -20–32%=D3  ·  -11–20%=D2  ·  -5–11%=D1  (CE always D0)"),
         "skew_label": skew_label, "skew_note": skew_note, "skew_col": skew_col,
     },
     {
