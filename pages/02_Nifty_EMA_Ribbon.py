@@ -121,15 +121,18 @@ gap_pct = gap_pts / atr14 * 100 if atr14 > 0 else 0
 # Live direction from EMA values
 can_dir_live = "BULL" if (e3 and e8 and e3 > e8) else "BEAR" if (e3 and e8 and e3 < e8) else can_dir
 
-if   gap_pct > 55: _src1_day = 0   # Singing — wide gap, trend healthy
-elif gap_pct > 35: _src1_day = 1   # Stable
-elif gap_pct > 15: _src1_day = 2   # Compressing — flatten skew to 1:1
-elif gap_pct >  5: _src1_day = 3   # Cross imminent — exit heavy side
-else:              _src1_day = 4   # Crossed/touching — close all
+# Source 1 threatened-side scale (reversed):
+# Wide gap = strong trend = MORE danger for the threatened leg.
+# Safe side always D0. Gap closing toward cross = momentum dying = D0 on threatened side too.
+if   gap_pct > 55: _src1_threatened = 4   # Strong established trend — maximum threat
+elif gap_pct > 35: _src1_threatened = 3   # Solid trend
+elif gap_pct > 15: _src1_threatened = 2   # Moderate — flatten skew
+elif gap_pct >  5: _src1_threatened = 1   # Weakening — threat reducing
+else:              _src1_threatened = 0   # Cross imminent/done — momentum dying, D0
 
-src1    = _src1_day                               # scalar used by skew-override logic
-src1_pe = _src1_day if can_dir_live == "BEAR" else 0
-src1_ce = _src1_day if can_dir_live == "BULL" else 0
+src1    = _src1_threatened                            # scalar used by skew-override logic
+src1_pe = _src1_threatened if can_dir_live == "BEAR" else 0
+src1_ce = _src1_threatened if can_dir_live == "BULL" else 0
 
 # Source 2 — Momentum % of ATR/day · PE + CE = 4, except flat zone = 0 + 0
 def _src2_levels(score):
@@ -165,11 +168,14 @@ if abs(mom_score) > 20:
 else:
     skew_label = "1:1 Balanced"; skew_note = "no directional edge · balanced condor"; skew_col = "#d97706"
 
-# Rule 1: Gap overrides skew at Day 2+
-if src1 >= 3:
-    skew_label = "EXIT heavy side"; skew_note = f"Gap Day {src1} ({gap_pct:.0f}% ATR) — structure broken"; skew_col = "#dc2626"; skew_forced = True
+# Rule 1: strong trend (D3/D4 = wide gap) overrides skew
+_thr_side = "CE" if can_dir_live == "BULL" else "PE"
+if src1 >= 4:
+    skew_label = f"EXIT {_thr_side}"; skew_note = f"Gap D4 ({gap_pct:.0f}% ATR) — strong trend, exit {_thr_side} immediately"; skew_col = "#dc2626"; skew_forced = True
+elif src1 == 3:
+    skew_label = f"REDUCE {_thr_side}"; skew_note = f"Gap D3 ({gap_pct:.0f}% ATR) — solid trend, cut {_thr_side} exposure"; skew_col = "#ea580c"; skew_forced = True
 elif src1 == 2:
-    skew_label = "1:1 Forced"; skew_note = f"Gap Day 2 ({gap_pct:.0f}% ATR) — overrides momentum skew"; skew_col = "#ea580c"; skew_forced = True
+    skew_label = "1:1 Forced"; skew_note = f"Gap D2 ({gap_pct:.0f}% ATR) — moderate trend, flatten skew"; skew_col = "#d97706"; skew_forced = True
 
 # Source 3 — Expiry anchor with phase-aware logic
 # Phases on expiry day (Tuesday):
@@ -818,11 +824,9 @@ else:
     _verdict_main = (f"{_vc_drv} is driving {_vc_side} to {CANARY_LABEL.get(_vc_lvl)} — "
                      f"{CANARY_ACTION.get(_vc_lvl,'WATCH')} on the {_vc_side} side.")
 
-_rule1_col  = "#dc2626" if src1 >= 3 else "#ea580c" if src1 == 2 else "#16a34a"
-_rule1_text = (f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 "
-               f"({'CE' if can_dir_live=='BULL' else 'PE'} side threatened): exit heavy side immediately." if src1 >= 3 else
-               f"EMA Gap — D2 ({gap_pct:.0f}% ATR) · compressing → skew forced to 1:1." if src1 == 2 else
-               f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · {skew_label} skew stands.")
+_rule1_col  = "#dc2626" if src1 >= 4 else "#ea580c" if src1 == 3 else "#d97706" if src1 == 2 else "#16a34a"
+_rule1_text = (f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · {skew_label}." if src1 >= 2 else
+               f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · trend weak/crossing · {skew_label}.")
 _rule2_col  = _vc_col if _vc_lvl > 0 else "#16a34a"
 _rule2_text = (f"Rule 2 — Harshest signal wins: {_vc_drv} at {CANARY_LABEL.get(_vc_lvl)}." if _vc_lvl > 0 else
                "Rule 2 — No source firing. Max() across all sources = Singing.")
@@ -847,7 +851,8 @@ src_data = [
                    f"Gap: {gap_pts:.0f} pts = {gap_pct:.1f}% of ATR14 ({atr14:.0f})\n"
                    f"Direction: EMA3 {'>' if can_dir_live=='BULL' else '<'} EMA8 "
                    f"→ {'CE threatened · PE always D0' if can_dir_live=='BULL' else 'PE threatened · CE always D0'}\n"
-                   f"Thresholds:  >55%=D0 (singing)  ·  35–55%=D1  ·  15–35%=D2  ·  5–15%=D3  ·  ≤5%=D4"),
+                   f"Threatened side:  >55%=D4  ·  35–55%=D3  ·  15–35%=D2  ·  5–15%=D1  ·  ≤5%=D0\n"
+                   f"Safe side: always D0"),
     },
     {
         "source":     "Source 2 — Momentum Score (% of ATR/day)",
