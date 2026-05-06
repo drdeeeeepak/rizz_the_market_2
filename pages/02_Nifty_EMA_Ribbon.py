@@ -814,30 +814,39 @@ ui.section_header("Canary Sources",
 
 # Verdict block
 _vc_lvl  = max(pe_canary, ce_canary)
-_vc_side = "CE" if ce_canary >= pe_canary else "PE"
-_vc_drv  = ce_driver if ce_canary >= pe_canary else pe_driver
 _vc_col  = CANARY_HEADER_COLOUR.get(_vc_lvl, "#94a3b8")
 
-if _vc_lvl == 0:
-    _verdict_main = "All three sources are clear. EMA structure intact, no drift pressure. Hold with confidence."
-else:
-    _verdict_main = (f"{_vc_drv} is driving {_vc_side} to {CANARY_LABEL.get(_vc_lvl)} — "
-                     f"{CANARY_ACTION.get(_vc_lvl,'WATCH')} on the {_vc_side} side.")
+# Line 1: PE status · CE status → action
+_pe_lbl = f"PE · D{pe_canary}" if pe_canary > 0 else "PE · Clear"
+_ce_lbl = f"CE · D{ce_canary}" if ce_canary > 0 else "CE · Clear"
+_pe_col = CANARY_HEADER_COLOUR.get(pe_canary, "#16a34a") if pe_canary > 0 else "#16a34a"
+_ce_col = CANARY_HEADER_COLOUR.get(ce_canary, "#16a34a") if ce_canary > 0 else "#16a34a"
+_act    = CANARY_ACTION.get(_vc_lvl, "WATCH")
 
-_rule1_col  = "#dc2626" if src1 >= 4 else "#ea580c" if src1 == 3 else "#d97706" if src1 == 2 else "#16a34a"
-_rule1_text = (f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · {skew_label}." if src1 >= 2 else
-               f"EMA Gap — D{src1} ({gap_pct:.0f}% ATR) · EMA3{'>' if can_dir_live=='BULL' else '<'}EMA8 · trend weak/crossing · {skew_label}.")
-_rule2_col  = _vc_col if _vc_lvl > 0 else "#16a34a"
-_rule2_text = (f"Rule 2 — Harshest signal wins: {_vc_drv} at {CANARY_LABEL.get(_vc_lvl)}." if _vc_lvl > 0 else
-               "Rule 2 — No source firing. Max() across all sources = Singing.")
+# Line 2: dominant driver detail only
+if _vc_lvl == 0:
+    _detail_line = f"EMA Gap D{src1} · Momentum {mom_score:+.1f}% · Drift {drift_pct:+.2f}% — all quiet"
+    _detail_col  = "#16a34a"
+else:
+    _vc_drv = ce_driver if ce_canary >= pe_canary else pe_driver
+    _detail_line = (f"{_vc_drv} · {skew_label}"
+                    + (f" · {gap_pct:.0f}% ATR gap" if "Source 1" in _vc_drv else
+                       f" · score {mom_score:+.1f}% ATR" if "Source 2" in _vc_drv else
+                       f" · drift {drift_pct:+.2f}%"))
+    _detail_col  = _vc_col
 
 st.markdown(
     f"<div style='border-left:4px solid {_vc_col};padding:10px 16px;border-radius:0 6px 6px 0;"
-    f"background:{_vc_col}10;margin-bottom:10px;'>"
-    f"<div style='font-size:12px;font-weight:700;color:{_vc_col};margin-bottom:4px;'>VERDICT</div>"
-    f"<div style='font-size:12px;color:#1e293b;margin-bottom:6px;'>{_verdict_main}</div>"
-    f"<div style='font-size:14px;color:{_rule1_col};margin-bottom:2px;'>{_rule1_text}</div>"
-    f"<div style='font-size:14px;color:{_rule2_col};'>{_rule2_text}</div>"
+    f"background:{_vc_col}18;margin-bottom:10px;'>"
+    f"<div style='font-size:12px;font-weight:700;color:{_vc_col};margin-bottom:6px;'>VERDICT</div>"
+    f"<div style='display:flex;gap:16px;align-items:center;margin-bottom:6px;'>"
+    f"<span style='font-size:15px;font-weight:800;color:{_pe_col};'>{_pe_lbl}</span>"
+    f"<span style='font-size:13px;color:#94a3b8;'>·</span>"
+    f"<span style='font-size:15px;font-weight:800;color:{_ce_col};'>{_ce_lbl}</span>"
+    f"<span style='font-size:13px;color:#94a3b8;'>→</span>"
+    f"<span style='font-size:15px;font-weight:900;color:{_vc_col};'>{_act}</span>"
+    f"</div>"
+    f"<div style='font-size:13px;color:{_detail_col};'>{_detail_line}</div>"
     f"</div>", unsafe_allow_html=True)
 
 src_data = [
