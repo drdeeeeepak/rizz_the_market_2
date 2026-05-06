@@ -766,8 +766,18 @@ else:
         _ce_cols = st.columns(max(len(_ce_items), 1))
         for i, (lbl, val, kind) in enumerate(_ce_items):
             _extra = _ce_note if kind == "sold_ce" else ""
+            _stxt  = _sub(kind, val, _extra)
             with _ce_cols[i]:
-                ui.metric_card(lbl, f"{val:,.0f}", sub=_sub(kind, val, _extra), color=_col(kind))
+                if kind == "book_loss":
+                    st.error(f"🔴 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
+                elif kind == "prep_loss":
+                    st.warning(f"🟠 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
+                elif kind == "book_profit":
+                    st.success(f"🟢 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
+                elif kind == "prep_profit":
+                    st.success(f"🔵 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
+                else:
+                    ui.metric_card(lbl, f"{val:,.0f}", sub=_stxt, color=_col(kind))
 
         # ── PE strip ─────────────────────────────────────────────────────────
         _pe_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
@@ -795,8 +805,18 @@ else:
         _pe_cols = st.columns(max(len(_pe_items), 1))
         for i, (lbl, val, kind) in enumerate(_pe_items):
             _extra_pe = _pe_note if kind == "sold_pe" else ""
+            _stxt_pe  = _sub(kind, val, _extra_pe)
             with _pe_cols[i]:
-                ui.metric_card(lbl, f"{val:,.0f}", sub=_sub(kind, val, _extra_pe), color=_col(kind))
+                if kind == "book_loss":
+                    st.error(f"🔴 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
+                elif kind == "prep_loss":
+                    st.warning(f"🟠 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
+                elif kind == "book_profit":
+                    st.success(f"🟢 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
+                elif kind == "prep_profit":
+                    st.success(f"🔵 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
+                else:
+                    ui.metric_card(lbl, f"{val:,.0f}", sub=_stxt_pe, color=_col(kind))
 
     _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
     st.caption(
