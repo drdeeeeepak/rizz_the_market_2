@@ -823,7 +823,7 @@ _pe_col = CANARY_HEADER_COLOUR.get(pe_canary, "#16a34a") if pe_canary > 0 else "
 _ce_col = CANARY_HEADER_COLOUR.get(ce_canary, "#16a34a") if ce_canary > 0 else "#16a34a"
 _act    = CANARY_ACTION.get(_vc_lvl, "WATCH")
 
-# Line 2: dominant driver detail only
+# Line 2: dominant driver detail
 if _vc_lvl == 0:
     _detail_line = f"EMA Gap D{src1} · Momentum {mom_score:+.1f}% · Drift {drift_pct:+.2f}% — all quiet"
     _detail_col  = "#16a34a"
@@ -834,6 +834,22 @@ else:
                        f" · score {mom_score:+.1f}% ATR" if "Source 2" in _vc_drv else
                        f" · drift {drift_pct:+.2f}%"))
     _detail_col  = _vc_col
+
+# IC Shape — entry (locked) vs now (live)
+_ic_entry_map = {
+    "STRONG_BULL":     "1:2 CE further",
+    "BULL_COMPRESSED": "1:2 CE further",
+    "INSIDE_BULL":     "1:1 Symmetric",
+    "RECOVERING":      "1:1 Symmetric",
+    "INSIDE_BEAR":     "1:1 Symmetric",
+    "BEAR_COMPRESSED": "2:1 PE further",
+    "STRONG_BEAR":     "2:1 PE further",
+}
+_ic_entry      = _ic_entry_map.get(_entry_regime, "1:1 Symmetric")
+_ic_now        = skew_label
+_ic_changed    = _ic_entry != _ic_now
+_ic_entry_col  = "#475569"
+_ic_now_col    = "#dc2626" if skew_forced else "#16a34a" if not _ic_changed else "#d97706"
 
 st.markdown(
     f"<div style='border-left:4px solid {_vc_col};padding:10px 16px;border-radius:0 6px 6px 0;"
@@ -846,7 +862,12 @@ st.markdown(
     f"<span style='font-size:13px;color:#94a3b8;'>→</span>"
     f"<span style='font-size:15px;font-weight:900;color:{_vc_col};'>{_act}</span>"
     f"</div>"
-    f"<div style='font-size:13px;color:{_detail_col};'>{_detail_line}</div>"
+    f"<div style='font-size:13px;color:{_detail_col};margin-bottom:6px;'>{_detail_line}</div>"
+    f"<div style='font-size:13px;'>"
+    f"<span style='color:{_ic_entry_col};'>IC Shape · Entry: {_ic_entry} ({_entry_regime})</span>"
+    f"<span style='color:#94a3b8;'> → </span>"
+    f"<span style='color:{_ic_now_col};font-weight:700;'>Now: {_ic_now}</span>"
+    f"</div>"
     f"</div>", unsafe_allow_html=True)
 
 src_data = [
