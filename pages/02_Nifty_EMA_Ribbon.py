@@ -405,8 +405,14 @@ BOTH_AMBER = "#d97706"
 # ── Driver attribution (needed by header) ────────────────────────────────────
 src1_pe_eff = src1 if can_dir == "BEAR" else 0
 src1_ce_eff = src1 if can_dir == "BULL" else 0
-pe_driver = "Source 2" if src2_pe >= src3_pe else "Source 3"
-ce_driver = "Source 2" if src2_ce >= src3_ce else "Source 3"
+
+def _driver(s1, s2, s3):
+    if s1 >= s2 and s1 >= s3 and s1 > 0:
+        return "Source 1 (EMA Gap)"
+    return "Source 2" if s2 >= s3 else "Source 3"
+
+pe_driver = _driver(src1_pe_eff, src2_pe, src3_pe)
+ce_driver = _driver(src1_ce_eff, src2_ce, src3_ce)
 
 # ── Page header colour ───────────────────────────────────────────────────────
 CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
