@@ -125,9 +125,9 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
         "amber":      ("#d97706", "#fffbeb"),
         "blue":       ("#2563eb", "#eff6ff"),
         "default":    ("#e2e6ef", "#f8f9fb"),
-        "anchor":     ("#f59e0b", "#fef9e7"),
-        "sold_ce":    ("#7f1d1d", "#fde8e8"),
-        "sold_pe":    ("#14532d", "#d1fae5"),
+        "anchor":     ("#d97706", "#fde68a"),
+        "sold_ce":    ("#991b1b", "#fca5a5"),
+        "sold_pe":    ("#166534", "#86efac"),
     }
     b_color, bg = named.get(color, named["default"])
     if border:
@@ -160,9 +160,9 @@ def metric_card(label: str, value: str, sub: str = "",
         "amber":      ("#d97706", "#fffbeb"),
         "blue":       ("#2563eb", "#eff6ff"),
         "default":    ("#e2e6ef", "#f8f9fb"),
-        "anchor":     ("#f59e0b", "#fef9e7"),
-        "sold_ce":    ("#7f1d1d", "#fde8e8"),
-        "sold_pe":    ("#14532d", "#d1fae5"),
+        "anchor":     ("#d97706", "#fde68a"),
+        "sold_ce":    ("#991b1b", "#fca5a5"),
+        "sold_pe":    ("#166534", "#86efac"),
     }
     _thick = color in ("anchor", "sold_ce", "sold_pe")
     b_color, bg = named.get(color, named["default"])
