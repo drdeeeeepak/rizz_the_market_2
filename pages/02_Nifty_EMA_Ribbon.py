@@ -838,6 +838,18 @@ st.markdown(
 
 src_data = [
     {
+        "source": "Source 1 — EMA3/EMA8 Gap (Live)",
+        "what":   (f"Gap: {gap_pts:.0f} pts ({gap_pct:.1f}% ATR) · "
+                   f"EMA3 {'>' if can_dir_live=='BULL' else '<'} EMA8 · "
+                   f"{'CE side threatened · PE D0' if can_dir_live=='BULL' else 'PE side threatened · CE D0'}"),
+        "pe_lvl": src1_pe, "ce_lvl": src1_ce,
+        "detail": (f"EMA3: {e3:,.0f}  |  EMA8: {e8:,.0f}\n"
+                   f"Gap: {gap_pts:.0f} pts = {gap_pct:.1f}% of ATR14 ({atr14:.0f})\n"
+                   f"Direction: EMA3 {'>' if can_dir_live=='BULL' else '<'} EMA8 "
+                   f"→ {'CE threatened · PE always D0' if can_dir_live=='BULL' else 'PE threatened · CE always D0'}\n"
+                   f"Thresholds:  >55%=D0 (singing)  ·  35–55%=D1  ·  15–35%=D2  ·  5–15%=D3  ·  ≤5%=D4"),
+    },
+    {
         "source":     "Source 2 — Momentum Score (% of ATR/day)",
         "what":       f"Score: {mom_score:+.1f}% of ATR/day · IC Shape: {skew_label}",
         "pe_lvl":     src2_pe, "ce_lvl": src2_ce,
