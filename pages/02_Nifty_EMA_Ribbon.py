@@ -126,28 +126,25 @@ else:              src1 = 4   # Cross — close all
 
 # Source 2 — Momentum % of ATR/day · PE + CE = 4, except flat zone = 0 + 0
 def _src2_levels(score):
-    if -5.0 <= score <= 5.0:  return 0, 0          # flat: both singing (amber)
-    elif score > 0:                                  # bullish
+    if -5.0 <= score <= 5.0:  return 0, 0          # flat: both D0
+    elif score > 0:                                  # bullish — CE threatened only, PE always D0
         if   score > 32: return 0, 4
-        elif score > 20: return 1, 3
-        elif score > 11: return 2, 2
-        else:            return 3, 1                # 5–11%
-    else:                                            # bearish
+        elif score > 20: return 0, 3
+        elif score > 11: return 0, 2
+        else:            return 0, 1                # 5–11%
+    else:                                            # bearish — PE threatened only, CE always D0
         s = abs(score)
         if   s > 32: return 4, 0
-        elif s > 20: return 3, 1
-        elif s > 11: return 2, 2
-        else:        return 1, 3                    # 5–11%
+        elif s > 20: return 3, 0
+        elif s > 11: return 2, 0
+        else:        return 1, 0                    # 5–11%
 
 src2_pe, src2_ce = _src2_levels(mom_score)
 
 # Color overrides for Source 2 cards
-if src2_pe == 0 and src2_ce == 0:                  # flat: amber both
+# With directional logic, PE and CE are never both non-zero simultaneously.
+if src2_pe == 0 and src2_ce == 0:                  # flat or safe side: amber both
     src2_pe_col = src2_ce_col = "#d97706"
-elif src2_pe == 2 and src2_ce == 2 and mom_score > 0:  # bullish 2/2: PE light green, CE real red
-    src2_pe_col = "#bbf7d0"; src2_ce_col = "#dc2626"   # CE_RED[1]
-elif src2_pe == 2 and src2_ce == 2 and mom_score < 0:  # bearish 2/2: PE real green, CE light red
-    src2_pe_col = "#16a34a"; src2_ce_col = "#fca5a5"   # CE_RED[3]
 else:
     src2_pe_col = src2_ce_col = None               # use standard LEVEL_COLOUR
 
@@ -836,8 +833,8 @@ src_data = [
         "detail":     (f"EMA3 slope: {ema3_slope:+.1f} pts/day  (60% weight)\n"
                        f"EMA8 slope: {ema8_slope:+.1f} pts/day  (40% weight)\n"
                        f"Combined score: {mom_score:+.1f}% of ATR/day\n"
-                       f"Bullish (PE/CE):  >32% = D0/D4  ·  20–32% = D1/D3"
-                       f"  ·  11–20% = D2/D2  ·  5–11% = D3/D1\n"
+                       f"Bullish → CE only:  >32%=D4  ·  20–32%=D3  ·  11–20%=D2  ·  5–11%=D1  (PE always D0)\n"
+                       f"Bearish → PE only:  >32%=D4  ·  20–32%=D3  ·  11–20%=D2  ·  5–11%=D1  (CE always D0)\n"
                        f"Flat zone: ±5% = both Day 0 (amber)  ·  Bearish: mirror"),
         "skew_label": skew_label, "skew_note": skew_note, "skew_col": skew_col,
     },
