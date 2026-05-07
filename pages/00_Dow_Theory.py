@@ -273,6 +273,14 @@ ui.section_header("Section 4 — Structural Level Map",
                   "Last 10 days of 1H candles · Pivot markers · Breach levels · Proximity zones")
 
 nifty_1h_full = st.session_state.get("nifty_1h", pd.DataFrame())
+if nifty_1h_full.empty:
+    try:
+        from data.live_fetcher import get_nifty_1h_phase as _g1h
+        nifty_1h_full = _g1h()
+        if not nifty_1h_full.empty:
+            st.session_state["nifty_1h"] = nifty_1h_full
+    except Exception:
+        pass
 
 if ph_last > 0 and pl_last > 0 and not nifty_1h_full.empty:
     df_chart = nifty_1h_full.tail(60).copy()

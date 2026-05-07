@@ -45,7 +45,7 @@ from data.live_fetcher import (
     get_near_far_expiries, get_nifty_1h_phase,
     get_nifty_15m, get_nifty_30m, get_nifty_5m,
 )
-from analytics.compute_signals import compute_all_signals, load_saved_signals
+from analytics.compute_signals import compute_all_signals, load_saved_signals, save_signals
 import ui.components as ui
 
 with st.spinner("Computing all signals…"):
@@ -86,14 +86,30 @@ data_ok = not nifty_df.empty and "close" in nifty_df.columns and len(nifty_df) >
 if data_ok and spot == 0:
     spot = float(nifty_df["close"].iloc[-1])
 
+_now_ist = datetime.datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%-d %b %-I:%M %p IST")
+
 if not data_ok:
     saved = load_saved_signals()
     if saved:
-        st.info("⚠️ Live data unavailable. Showing last EOD computation.")
+        st.info("⚠️ Live historical data unavailable. Showing last EOD computation.")
         sig = saved
     else:
-        st.warning("⚠️ No data. Check Kite token in sidebar.")
-        sig = {}
+        # Historical API unavailable — compute with live spot/VIX + empty OHLCV
+        # All EMA/RSI/Bollinger signals default; strike/DTE/VIX signals still work
+        st.info("📊 Historical data temporarily unavailable. Using live spot + defaults.")
+        try:
+            _chains2 = get_dual_expiry_chains(spot if spot > 0 else 24000)
+            sig = compute_all_signals(
+                pd.DataFrame(), stock_dfs, vix_live, vix_hist, _chains2,
+                spot if spot > 0 else 24000,
+            )
+            sig["_saved_at"] = _now_ist
+            try:
+                save_signals(sig)
+            except Exception:
+                pass
+        except Exception:
+            sig = {}
 else:
     sig = compute_all_signals(
         nifty_df, stock_dfs, vix_live, vix_hist, chains, spot,
@@ -102,7 +118,11 @@ else:
         nifty_15m = nifty_15m,
         nifty_5m  = nifty_5m,
     )
-    sig["_saved_at"] = datetime.datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%-d %b %-I:%M %p IST")
+    sig["_saved_at"] = _now_ist
+    try:
+        save_signals(sig)
+    except Exception:
+        pass
 
 st.session_state["signals"] = sig
 st.session_state["nifty_1h"] = nifty_1h   # used by Dow Theory page for candlestick chart
