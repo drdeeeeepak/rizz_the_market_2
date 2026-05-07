@@ -502,12 +502,16 @@ try:
             pass
 
         # Days-to-breach: gap to each trigger ÷ daily ATR pace
-        _dp_pct = (atr14 / spot * 100 * _thr_rm) if (spot > 0 and _thr_rm > 0 and atr14 > 0) else 0
-        _dtb_str = ""
+        _dp_pct   = (atr14 / spot * 100 * _thr_rm) if (spot > 0 and _thr_rm > 0 and atr14 > 0) else 0
+        _ce_dtb_s = _pe_dtb_s = "—"
         if _dp_pct > 0 and _ce_def_trig > 0 and _pe_def_trig > 0:
             _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
             _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
-            _dtb_str   = f" · CE {_ce_gap_rm/_dp_pct:.1f}d · PE {_pe_gap_rm/_dp_pct:.1f}d"
+            _ce_dtb_s  = f"{_ce_gap_rm / _dp_pct:.1f}d"
+            _pe_dtb_s  = f"{_pe_gap_rm / _dp_pct:.1f}d"
+
+        _thr_col  = "#ef4444" if _thr_rm > 1.15 else "#22c55e"
+        _vix_col  = "#ef4444" if _vix_rm > 20 else "#f59e0b" if _vix_rm > 16 else "#22c55e"
 
         _vix_note = ""
         if _vix_rising_rm:
@@ -515,14 +519,30 @@ try:
                          f"⚠️ VIX RISING — CE caution · PE confirmed</div>")
 
         st.markdown(
-            f"<div style='margin-bottom:2px;'>"
+            # ── metadata line ────────────────────────────────────────────────
+            f"<div style='margin-bottom:4px;'>"
             f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
-            f"ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · "
-            f"Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%"
-            + (f" · VIX {_vix_rm:.1f}" if _vix_rm > 0 else "")
-            + _dtb_str
-            + f"</span></div>"
-            + f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
+            f"ROLL MATRIX · DTE {_dte_rm} · Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%"
+            f"</span></div>"
+            # ── metrics row: Threat | VIX | Days-to-Breach ───────────────────
+            f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
+            f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
+            f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>THREAT MULT</div>"
+            f"<div style='color:{_thr_col};font-size:15px;font-weight:900;line-height:1.2;'>{_thr_rm:.2f}</div>"
+            f"</div>"
+            f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
+            f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>INDIA VIX</div>"
+            f"<div style='color:{_vix_col};font-size:15px;font-weight:900;line-height:1.2;'>{_vix_rm:.1f}</div>"
+            f"</div>"
+            f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
+            f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>DAYS TO BREACH</div>"
+            f"<div style='color:white;font-size:13px;font-weight:900;line-height:1.2;'>"
+            f"CE {_ce_dtb_s} · PE {_pe_dtb_s}</div>"
+            f"<div style='color:#64748b;font-size:7px;'>gap ÷ ATR×threat pace</div>"
+            f"</div>"
+            f"</div>"
+            # ── CE / PE state chips ───────────────────────────────────────────
+            f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
             + _rm_state_chip("CE · CALL", False,
                              _ce_book_loss, _ce_prep_loss, _ce_book_profit, _ce_prep_profit,
                              _ce_adv, _ce_fav, _ce_fp, _ce_def_roll, _ce_off_roll,
