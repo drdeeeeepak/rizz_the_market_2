@@ -259,6 +259,20 @@ try:
 except Exception:
     pass
 
+# Anchor fallback: use anchors file written by EOD job when _daily unavailable
+if not tue_anchor_available:
+    try:
+        from analytics.constituent_ema import _load_anchors as _la
+        _anch = _la().get("NIFTY", {})
+        if _anch.get("close") and _anch.get("date"):
+            tue_close          = float(_anch["close"])
+            tue_atr            = float(_anch.get("atr", atr14))
+            tue_anchor_date    = str(_anch["date"]) + " (cached)"
+            tue_anchor_available = True
+            anchor_mode        = "NORMAL"
+    except Exception:
+        pass
+
 # ── DTE & Threat Multiplier ──────────────────────────────────────────────────
 try:
     from data.live_fetcher import get_dte as _get_dte, next_tuesday as _next_tue
@@ -278,6 +292,11 @@ try:
         threat_mult   = abs(daily_ret_pct) * rel_vol
 except Exception:
     pass
+# Threat fallback: use values stored in signals.json from EOD job
+if threat_mult == 0.0:
+    daily_ret_pct = float(sig.get("daily_ret_pct", 0.0))
+    rel_vol       = float(sig.get("rel_vol",       1.0))
+    threat_mult   = float(sig.get("threat_mult",   0.0))
 
 spot_now = spot
 # Fallback: if Kite returns 0 pre-market, use last EOD close from daily data

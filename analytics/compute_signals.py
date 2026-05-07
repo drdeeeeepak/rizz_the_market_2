@@ -51,6 +51,22 @@ def compute_all_signals(
     sig = {}
     sig["spot"] = spot   # always store so bootstrap_signals() fallback works
 
+    # Store daily candle metrics for pre-market fallback (threat_mult)
+    if nifty_df is not None and not nifty_df.empty and len(nifty_df) >= 2:
+        try:
+            import numpy as _np2
+            _td_c  = float(nifty_df["close"].iloc[-1])
+            _pr_c  = float(nifty_df["close"].iloc[-2])
+            _td_v  = float(nifty_df["volume"].iloc[-1])
+            _vs14  = float(nifty_df["volume"].rolling(14).mean().iloc[-1]) if len(nifty_df) >= 14 else _td_v
+            _dret  = (_td_c - _pr_c) / _pr_c * 100 if _pr_c > 0 else 0.0
+            _rv    = _td_v / _vs14 if _vs14 > 0 else 1.0
+            sig["daily_ret_pct"] = round(_dret, 3)
+            sig["rel_vol"]       = round(_rv, 3)
+            sig["threat_mult"]   = round(abs(_dret) * _rv, 4)
+        except Exception:
+            pass
+
     # ── Pages 1+2: EMA ────────────────────────────────────────────────────
     try:
         ema_sig = EMAEngine().signals(nifty_df.copy())
