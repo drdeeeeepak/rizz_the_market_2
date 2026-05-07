@@ -423,16 +423,34 @@ try:
     _canary_dir_rm = sig.get("canary_direction", "NONE")
     _canary_lvl_rm = sig.get("canary_level", 0)
     _mom_score_rm  = sig.get("cr_mom_score", 0.0)
-    # Approximate per-side canary from overall
     _pe_can_rm = _canary_lvl_rm if _canary_dir_rm == "BEAR" else 0
     _ce_can_rm = _canary_lvl_rm if _canary_dir_rm == "BULL" else 0
 
+    # ── Rolled positions — per-side effective anchors ─────────────────────────
+    from data.rolled_positions import (
+        load_rolled as _lr_rm, maybe_update_anchors as _mua_rm,
+    )
+    import pytz as _pytz_rm
+    _rolled_rm   = _lr_rm()
+    _ist_rm      = _dt_rm.datetime.now(_pytz_rm.timezone("Asia/Kolkata"))
+    _mins_rm     = _ist_rm.hour * 60 + _ist_rm.minute
+    if _mins_rm >= 15 * 60 + 15:
+        _rolled_rm = _mua_rm(spot, _tc_rm, sig, _rolled_rm,
+                             ce_canary=_ce_can_rm, pe_canary=_pe_can_rm)
+    _ce_roll_rm  = _rolled_rm.get("CE", {})
+    _pe_roll_rm  = _rolled_rm.get("PE", {})
+    _ce_is_rolled_rm = bool(_ce_roll_rm.get("active"))
+    _pe_is_rolled_rm = bool(_pe_roll_rm.get("active"))
+    # Per-side anchors
+    _ce_anc_rm = float(_ce_roll_rm["anchor"]) if _ce_is_rolled_rm else _tc_rm
+    _pe_anc_rm = float(_pe_roll_rm["anchor"]) if _pe_is_rolled_rm else _tc_rm
+
     if _anc_rm and _tc_rm > 0:
         _DEF = 2.5;  _OFF = 1.8
-        _ce_adv = max(_drift_rm,  0.0)
-        _pe_adv = max(-_drift_rm, 0.0)
-        _pe_fav = max(_drift_rm,  0.0)
-        _ce_fav = max(-_drift_rm, 0.0)
+        _ce_adv = max((spot - _ce_anc_rm) / _ce_anc_rm * 100, 0.0) if _ce_anc_rm > 0 else 0.0
+        _pe_adv = max((_pe_anc_rm - spot) / _pe_anc_rm * 100, 0.0) if _pe_anc_rm > 0 else 0.0
+        _pe_fav = max((spot - _pe_anc_rm) / _pe_anc_rm * 100, 0.0) if _pe_anc_rm > 0 else 0.0
+        _ce_fav = max((_ce_anc_rm - spot) / _ce_anc_rm * 100, 0.0) if _ce_anc_rm > 0 else 0.0
 
         # 4-filter states
         _ce_f1 = _ce_adv >= _DEF;  _ce_f2 = _thr_rm > 1.15
@@ -451,39 +469,45 @@ try:
         _ce_prep_profit  = not _ce_book_profit and _ce_fav >= _OFF * 0.75
         _pe_prep_profit  = not _pe_book_profit and _pe_fav >= _OFF * 0.75
 
-        # Strike targets
-        _ce_off_pct = 3.5 if _dte_rm >= 5 else 2.5
-        _pe_off_pct = 4.0 if _dte_rm >= 5 else 3.0
-        _ce_def_roll = int(round(_tc_rm * 1.05 / 50) * 50)
-        _pe_def_roll = int(round(_tc_rm * 0.95 / 50) * 50)
-        _ce_off_roll = int(round(spot * (1 + _ce_off_pct/100) / 50) * 50)
-        _pe_off_roll = int(round(spot * (1 - _pe_off_pct/100) / 50) * 50)
-        _ce_def_trig = int(round(_tc_rm * (1 + _DEF/100) / 50) * 50)
-        _pe_def_trig = int(round(_tc_rm * (1 - _DEF/100) / 50) * 50)
+        # Strike targets — 3.5% CE / 4% PE from CMP for all rolls
+        _ce_def_roll = int(round(spot * 1.035 / 50) * 50)
+        _pe_def_roll = int(round(spot * 0.960 / 50) * 50)
+        _ce_off_roll = int(round(spot * 1.035 / 50) * 50)
+        _pe_off_roll = int(round(spot * 0.960 / 50) * 50)
+        _ce_def_trig = int(round(_ce_anc_rm * (1 + _DEF/100) / 50) * 50)
+        _pe_def_trig = int(round(_pe_anc_rm * (1 - _DEF/100) / 50) * 50)
 
         def _rm_state_chip(side, is_loss_side,
                            book_loss, prep_loss, book_profit, prep_profit,
                            adv, fav, fp, def_roll, off_roll, def_trig, off_trig):
+            _is_ce_chip = "CE" in side
+            _roll_pct   = "3.5%" if _is_ce_chip else "4%"
             if book_loss:
                 bg = "#b91c1c" if not is_loss_side else "#14532d"
                 ico = "🔴"; headline = "BOOK LOSS"
-                sub = f"Roll OUT → {def_roll:,}"
+                sub = f"Roll OUT {_roll_pct} → {def_roll:,}"
             elif prep_loss:
                 bg = "#ea580c"; ico = "⚠️"; headline = "PREPARE LOSS"
                 sub = f"Trig @ {def_trig:,} · {fp}/4 filters"
             elif book_profit:
                 bg = "#0f766e"; ico = "🟢"; headline = "BOOK PROFIT"
-                sub = f"Roll IN → {off_roll:,}"
+                sub = f"Roll IN {_roll_pct} → {off_roll:,}"
             elif prep_profit:
                 bg = "#0369a1"; ico = "🔵"; headline = "PREP PROFIT"
-                sub = f"Fav {fav:.1f}% · Roll IN→{off_roll:,}"
+                sub = f"Fav {fav:.1f}% · Roll IN {_roll_pct}→{off_roll:,}"
             else:
                 bg = "#1e293b" if not is_loss_side else "#14532d"
                 ico = "✅"; headline = "HOLD"
                 sub = f"Adv {adv:.1f}% · Fav {fav:.1f}%"
+            # Rolled badge prefix
+            _roll_badge = ""
+            if _is_ce_chip and _ce_is_rolled_rm:
+                _roll_badge = "🔄 "
+            elif not _is_ce_chip and _pe_is_rolled_rm:
+                _roll_badge = "🔄 "
             return (
                 f"<div style='flex:1;background:{bg};border-radius:7px;padding:7px 10px;'>"
-                f"<div style='color:rgba(255,255,255,0.7);font-size:8px;font-weight:700;'>{side}</div>"
+                f"<div style='color:rgba(255,255,255,0.7);font-size:8px;font-weight:700;'>{_roll_badge}{side}</div>"
                 f"<div style='color:white;font-size:12px;font-weight:900;'>{ico} {headline}</div>"
                 f"<div style='color:rgba(255,255,255,0.8);font-size:8px;margin-top:1px;'>{sub}</div>"
                 f"</div>"
@@ -540,8 +564,12 @@ try:
             # ── metadata line ────────────────────────────────────────────────
             f"<div style='margin-bottom:4px;'>"
             f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
-            f"ROLL MATRIX · DTE {_dte_rm} · Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%"
-            f"</span></div>"
+            f"ROLL MATRIX · DTE {_dte_rm}"
+            + (f" · CE {'🔄' if _ce_is_rolled_rm else '⚓'}{_ce_anc_rm:,.0f}"
+               f" · PE {'🔄' if _pe_is_rolled_rm else '⚓'}{_pe_anc_rm:,.0f}"
+               if (_ce_is_rolled_rm or _pe_is_rolled_rm)
+               else f" · Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%")
+            + f"</span></div>"
             # ── metrics row: Threat | VIX | Days-to-Breach ───────────────────
             f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
             f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"

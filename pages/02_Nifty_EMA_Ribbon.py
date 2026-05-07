@@ -323,6 +323,21 @@ if spot_now == 0:
 src3_pe = src3_ce = 0
 pe_sold = ce_sold = 0
 drift_pct = 0.0
+
+# ── Rolled positions ──────────────────────────────────────────────────────────
+from data.rolled_positions import (
+    load_rolled, maybe_update_anchors as _mua, rolled_strike as _rs,
+)
+import datetime as _dtrp, pytz as _pyrp
+_rolled = load_rolled()
+_ist_rp = _dtrp.datetime.now(_pyrp.timezone("Asia/Kolkata"))
+if _ist_rp.hour * 60 + _ist_rp.minute >= 15 * 60 + 15:
+    # ce_canary/pe_canary computed later; _mua falls back to sig.canary_direction
+    _rolled = _mua(spot_now, float(tue_close or 0), sig, _rolled)
+_ce_rolled   = _rolled.get("CE", {})
+_pe_rolled   = _rolled.get("PE", {})
+ce_is_rolled = bool(_ce_rolled.get("active"))
+pe_is_rolled = bool(_pe_rolled.get("active"))
 # Source 3: expiry close = Tuesday close (or last trading day before Tuesday if holiday)
 # PE sold 4% below expiry close, CE sold 3.5% above expiry close (rounded to nearest 50-pt strike)
 # Canary triggers based on % drift from expiry close toward the sold strike
@@ -337,6 +352,11 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     _ce_pull  = _moat_pull(_entry_call_moats)
     pe_sold   = int(round((tue_close * 0.96  + _pe_pull) / 50) * 50)
     ce_sold   = int(round((tue_close * 1.035 - _ce_pull) / 50) * 50)
+    # Override with rolled strike when active
+    if ce_is_rolled and _ce_rolled.get("strike"):
+        ce_sold = int(_ce_rolled["strike"])
+    if pe_is_rolled and _pe_rolled.get("strike"):
+        pe_sold = int(_pe_rolled["strike"])
     drift_pct = (spot_now - tue_close) / tue_close * 100
     # CE side: sold at +3.5% → canary thresholds at +1.5%, +2.0%, +2.5%, +3.0%
     if   drift_pct >= 3.0: src3_ce = 4
@@ -353,16 +373,20 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
 _DEF_THR, _OFF_THR = 2.5, 1.8    # defensive: 2.5% adverse (all 4 filters) · offensive: 1.8% favorable
 
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
-    # Exact spot prices where triggers fire (nearest 50pt)
-    ce_def_trig_spot = int(round(tue_close * (1 + _DEF_THR / 100) / 50) * 50)
-    pe_def_trig_spot = int(round(tue_close * (1 - _DEF_THR / 100) / 50) * 50)
-    pe_off_trig_spot = int(round(tue_close * (1 + _OFF_THR / 100) / 50) * 50)
-    ce_off_trig_spot = int(round(tue_close * (1 - _OFF_THR / 100) / 50) * 50)
+    # Per-side effective anchors (rolled if active, else Tuesday close)
+    _ce_anc = float(_ce_rolled["anchor"]) if ce_is_rolled else float(tue_close)
+    _pe_anc = float(_pe_rolled["anchor"]) if pe_is_rolled else float(tue_close)
 
-    ce_adverse = max(drift_pct,  0.0)
-    pe_adverse = max(-drift_pct, 0.0)
-    pe_favor   = max(drift_pct,  0.0)
-    ce_favor   = max(-drift_pct, 0.0)
+    # Exact spot prices where triggers fire (nearest 50pt)
+    ce_def_trig_spot = int(round(_ce_anc * (1 + _DEF_THR / 100) / 50) * 50)
+    pe_def_trig_spot = int(round(_pe_anc * (1 - _DEF_THR / 100) / 50) * 50)
+    pe_off_trig_spot = int(round(_pe_anc * (1 + _OFF_THR / 100) / 50) * 50)
+    ce_off_trig_spot = int(round(_ce_anc * (1 - _OFF_THR / 100) / 50) * 50)
+
+    ce_adverse = max((spot_now - _ce_anc) / _ce_anc * 100, 0.0)
+    pe_adverse = max((_pe_anc - spot_now) / _pe_anc * 100, 0.0)
+    pe_favor   = max((spot_now - _pe_anc) / _pe_anc * 100, 0.0)
+    ce_favor   = max((_ce_anc - spot_now) / _ce_anc * 100, 0.0)
 
     ce_def_fired = ce_adverse >= _DEF_THR and threat_mult > 1.15
     pe_def_fired = pe_adverse >= _DEF_THR and threat_mult > 1.15
@@ -371,32 +395,37 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     ce_off_fired = ce_favor >= _OFF_THR
     pe_off_fired = pe_favor >= _OFF_THR
 
-    # Defensive: roll OUT to 5% from anchor close
-    ce_def_roll_to = int(round(tue_close * 1.05 / 50) * 50)
-    pe_def_roll_to = int(round(tue_close * 0.95 / 50) * 50)
+    # Defensive: roll OUT 3.5% (CE) / 4% (PE) from CMP
+    ce_def_roll_to = int(round(spot_now * 1.035 / 50) * 50)
+    pe_def_roll_to = int(round(spot_now * 0.960 / 50) * 50)
 
-    # Offensive: roll IN from current spot
-    # Wed/Thu (DTE>=5): standard IC distances — 3.5% CE, 4.0% PE from CMP
-    # Fri/Mon/Tue (DTE<=4): tighter — 2.5% CE, 3.0% PE from CMP
-    if dte >= 5:
-        ce_off_pct, pe_off_pct = 3.5, 4.0
-    else:
-        ce_off_pct, pe_off_pct = 2.5, 3.0
-    ce_off_roll_to = int(round(spot_now * (1 + ce_off_pct / 100) / 50) * 50)  # new CE above spot
-    pe_off_roll_to = int(round(spot_now * (1 - pe_off_pct / 100) / 50) * 50)  # new PE below spot
+    # Offensive: roll IN 3.5% (CE) / 4% (PE) from CMP — unified with defensive
+    ce_off_pct, pe_off_pct = 3.5, 4.0
+    ce_off_roll_to = int(round(spot_now * (1 + ce_off_pct / 100) / 50) * 50)
+    pe_off_roll_to = int(round(spot_now * (1 - pe_off_pct / 100) / 50) * 50)
 else:
+    _ce_anc = _pe_anc = 0.0
     ce_adverse = pe_adverse = pe_favor = ce_favor = 0.0
     ce_def_fired = pe_def_fired = ce_def_near = pe_def_near = False
     ce_off_fired = pe_off_fired = False
     ce_def_trig_spot = pe_def_trig_spot = pe_off_trig_spot = ce_off_trig_spot = 0
     ce_def_roll_to = pe_def_roll_to = ce_off_roll_to = pe_off_roll_to = 0
-    ce_off_pct, pe_off_pct = (3.5, 4.0) if dte >= 5 else (2.5, 3.0)
+    ce_off_pct, pe_off_pct = 3.5, 4.0
 
 # Overall PE and CE canary (max across sources)
 # src1_pe/src1_ce already encode direction — no need for can_dir check here
 pe_canary = max(src1_pe, src2_pe, src3_pe)
 ce_canary = max(src1_ce, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
+
+# Re-run anchor update now that per-side canary counts are known
+if _ist_rp.hour * 60 + _ist_rp.minute >= 15 * 60 + 15:
+    _rolled = _mua(spot_now, float(tue_close or 0), sig, _rolled,
+                   ce_canary=ce_canary, pe_canary=pe_canary)
+    _ce_rolled   = _rolled.get("CE", {})
+    _pe_rolled   = _rolled.get("PE", {})
+    ce_is_rolled = bool(_ce_rolled.get("active"))
+    pe_is_rolled = bool(_pe_rolled.get("active"))
 
 # ── India VIX ────────────────────────────────────────────────────────────────
 vix_current = vix_chg_pct = 0.0
@@ -665,31 +694,49 @@ if not tue_anchor_available:
     else:
         st.warning("⚠️ Expiry anchor unavailable. Click ↻ refresh to reload data.")
 else:
-    # ── Entry strike card (moat-adjusted, locked for the week) ────────────────
+    # ── Entry / rolled strike card ────────────────────────────────────────────
     _pe_pull = _moat_pull(_entry_put_moats)
     _ce_pull = _moat_pull(_entry_call_moats)
     _pe_base = int(round(tue_close * 0.96  / 50) * 50)
     _ce_base = int(round(tue_close * 1.035 / 50) * 50)
-    _pe_moat_warn = put_moats < _entry_put_moats
-    _ce_moat_warn = call_moats < _entry_call_moats
+    _pe_moat_warn = put_moats < _entry_put_moats and not pe_is_rolled
+    _ce_moat_warn = call_moats < _entry_call_moats and not ce_is_rolled
 
-    _pe_strike_note = (f"−4% base {_pe_base:,}"
-                       + (f" + {_pe_pull}pt moat pull ({_entry_put_moats} moats at entry)"
-                          if _pe_pull else " · 0 moats at entry"))
-    _ce_strike_note = (f"+3.5% base {_ce_base:,}"
-                       + (f" − {_ce_pull}pt moat pull ({_entry_call_moats} moats at entry)"
-                          if _ce_pull else " · 0 moats at entry"))
+    # Strike note: original formula or rolled context
+    if pe_is_rolled:
+        _pe_strike_note = (f"🔄 ROLLED {_pe_rolled.get('roll_type','?')} · "
+                           f"anchor {_pe_rolled.get('anchor',0):,.0f} · "
+                           f"date {_pe_rolled.get('anchor_date','?')}")
+    else:
+        _pe_strike_note = (f"−4% base {_pe_base:,}"
+                           + (f" + {_pe_pull}pt moat pull ({_entry_put_moats} moats at entry)"
+                              if _pe_pull else " · 0 moats at entry"))
+    if ce_is_rolled:
+        _ce_strike_note = (f"🔄 ROLLED {_ce_rolled.get('roll_type','?')} · "
+                           f"anchor {_ce_rolled.get('anchor',0):,.0f} · "
+                           f"date {_ce_rolled.get('anchor_date','?')}")
+    else:
+        _ce_strike_note = (f"+3.5% base {_ce_base:,}"
+                           + (f" − {_ce_pull}pt moat pull ({_entry_call_moats} moats at entry)"
+                              if _ce_pull else " · 0 moats at entry"))
+
+    _card_title = "ENTRY STRIKES"
+    if ce_is_rolled or pe_is_rolled:
+        _rolled_sides = " + ".join(
+            (["CE"] if ce_is_rolled else []) + (["PE"] if pe_is_rolled else []))
+        _card_title = f"ENTRY STRIKES · {_rolled_sides} ROLLED"
 
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
         f"border:1px solid #1e293b;margin-bottom:10px;'>"
         f"<div style='font-size:13px;font-weight:700;color:#94a3b8;"
-        f"letter-spacing:1.5px;margin-bottom:8px;'>ENTRY STRIKES — LOCKED AT EXPIRY EOD</div>"
+        f"letter-spacing:1.5px;margin-bottom:8px;'>{_card_title}</div>"
         f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
         # PE strike
         f"<div>"
         f"<span style='font-size:14px;color:#94a3b8;'>PE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;color:#16a34a;'>{pe_sold:,}</span>"
+        f"<span style='font-size:20px;font-weight:900;"
+        f"color:{'#fbbf24' if pe_is_rolled else '#16a34a'};'>{pe_sold:,}</span>"
         f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_pe_strike_note}</div>"
         + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ PE moats {_entry_put_moats}→{put_moats} · Support thinning · Strike locked</div>"
@@ -698,7 +745,8 @@ else:
         # CE strike
         f"<div>"
         f"<span style='font-size:14px;color:#94a3b8;'>CE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;color:#dc2626;'>{ce_sold:,}</span>"
+        f"<span style='font-size:20px;font-weight:900;"
+        f"color:{'#fbbf24' if ce_is_rolled else '#dc2626'};'>{ce_sold:,}</span>"
         f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_ce_strike_note}</div>"
         + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
            f"⚠️ CE moats {_entry_call_moats}→{call_moats} · Resistance weakening · Strike locked</div>"
@@ -722,11 +770,13 @@ else:
                    book_loss, prep_loss, book_profit, prep_profit,
                    adverse, favor,
                    def_roll_to, off_roll_to, def_trig_spot, off_trig_spot,
-                   f1, f2, f3, f4, fp, canary_val, is_ce):
+                   f1, f2, f3, f4, fp, canary_val, is_ce,
+                   rolled_info=None):
+        _roll_pct = "3.5%" if is_ce else "4%"
         if book_loss:
             bg    = palette[0]
             state = "🔴 BOOK LOSS — ROLL OUT"
-            action = f"Buy back losing leg · Roll OUT to 5% from anchor → {def_roll_to:,}"
+            action = f"Buy back losing leg · Roll OUT {_roll_pct} from CMP → {def_roll_to:,}"
         elif prep_loss:
             bg    = "#ea580c"
             state = "⚠️ PREPARE TO BOOK LOSS"
@@ -734,8 +784,7 @@ else:
         elif book_profit:
             bg    = "#0f766e"
             state = "🟢 BOOK PROFIT — ROLL IN"
-            _pct  = ce_off_pct if is_ce else pe_off_pct
-            action = f"Buy back dead leg · Roll IN {_pct}% from spot → {off_roll_to:,}"
+            action = f"Buy back dead leg · Roll IN {_roll_pct} from CMP → {off_roll_to:,}"
         elif prep_profit:
             bg    = "#0369a1"
             state = "🔵 PREPARE TO BOOK PROFIT"
@@ -746,7 +795,20 @@ else:
             action = (f"Def gap {_DEF_THR - adverse:.2f}% · Off gap {_OFF_THR - favor:.2f}% · "
                       f"Def trig {def_trig_spot:,} · Off trig {off_trig_spot:,}")
 
-        txt_col  = "#1e293b" if bg in _LIGHT_COLS else "white"
+        txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
+
+        rolled_banner = ""
+        if rolled_info and rolled_info.get("active"):
+            rolled_banner = (
+                f"<div style='background:rgba(0,0,0,0.30);border-radius:6px;"
+                f"padding:5px 10px;margin-bottom:8px;"
+                f"font-size:11px;font-weight:700;color:#fbbf24;'>"
+                f"🔄 ROLLED {rolled_info.get('roll_type','?')} · "
+                f"anchor {float(rolled_info.get('anchor') or 0):,.0f} · "
+                f"date {rolled_info.get('anchor_date','?')}"
+                f"</div>"
+            )
+
         vix_line = ""
         if vix_available and vix_rising:
             if is_ce:
@@ -771,7 +833,8 @@ else:
             f"<div style='color:{txt_col};font-size:14px;font-weight:700;"
             f"opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
             f"<div style='color:{txt_col};font-size:18px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
-            f"<div style='color:{txt_col};font-size:12px;font-weight:700;"
+            + rolled_banner
+            + f"<div style='color:{txt_col};font-size:12px;font-weight:700;"
             f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
             f"<div style='color:#e2e8f0;font-size:13px;font-weight:700;"
@@ -785,13 +848,15 @@ else:
                    ce_book_loss, ce_prepare_loss, ce_book_profit, ce_prepare_profit,
                    ce_adverse, ce_favor,
                    ce_def_roll_to, ce_off_roll_to, ce_def_trig_spot, ce_off_trig_spot,
-                   ce_f1, ce_f2, ce_f3, ce_f4, ce_fp, ce_canary, is_ce=True)
+                   ce_f1, ce_f2, ce_f3, ce_f4, ce_fp, ce_canary, is_ce=True,
+                   rolled_info=_ce_rolled)
     with col_pe:
         _side_card("PE · PUT SIDE", PE_GREEN,
                    pe_book_loss, pe_prepare_loss, pe_book_profit, pe_prepare_profit,
                    pe_adverse, pe_favor,
                    pe_def_roll_to, pe_off_roll_to, pe_def_trig_spot, pe_off_trig_spot,
-                   pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False)
+                   pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False,
+                   rolled_info=_pe_rolled)
 
     # ── Strike-Path Corridor ──────────────────────────────────────────────────
     if ema_vals and spot_now > 0 and tue_anchor_available:
