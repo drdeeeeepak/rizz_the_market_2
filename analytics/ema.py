@@ -29,8 +29,8 @@ from config import (
 )
 
 # ── Cluster definitions ────────────────────────────────────────────────────
-FAST_CLUSTER      = [8, 16, 30]
-SLOW_CLUSTER      = [60, 120, 200]
+FAST_CLUSTER      = [3, 8]      # SHORT-TERM MOMENTUM — matches Live Cluster State display
+SLOW_CLUSTER      = [16, 30]    # INTERMEDIATE TREND  — matches Live Cluster State display
 MOAT_SET          = [8, 16, 30, 60, 120, 200]
 MOAT_CLUSTER_DIST = 50      # pts — moats this close count as one
 ATR_WEEKLY_MULT   = 2.0
