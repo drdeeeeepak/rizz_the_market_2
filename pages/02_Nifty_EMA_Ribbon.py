@@ -259,7 +259,7 @@ try:
 except Exception:
     pass
 
-# Anchor fallback: use anchors file written by EOD job when _daily unavailable
+# Anchor fallback 1: tuesday_anchors.json written by EOD job
 if not tue_anchor_available:
     try:
         from analytics.constituent_ema import _load_anchors as _la
@@ -272,6 +272,17 @@ if not tue_anchor_available:
             anchor_mode        = "NORMAL"
     except Exception:
         pass
+
+# Anchor fallback 2: signals.json / session_state (stored by compute_all_signals every run)
+if not tue_anchor_available:
+    _fb_tc = float(sig.get("tue_close", 0))
+    _fb_td = sig.get("tue_date", "")
+    if _fb_tc > 0 and _fb_td:
+        tue_close          = _fb_tc
+        tue_atr            = float(sig.get("tue_atr", atr14))
+        tue_anchor_date    = _fb_td + " (signals)"
+        tue_anchor_available = True
+        anchor_mode        = "NORMAL"
 
 # ── DTE & Threat Multiplier ──────────────────────────────────────────────────
 try:

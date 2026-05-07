@@ -51,10 +51,11 @@ def compute_all_signals(
     sig = {}
     sig["spot"] = spot   # always store so bootstrap_signals() fallback works
 
-    # Store daily candle metrics for pre-market fallback (threat_mult)
+    # Store daily candle metrics for pre-market fallback (threat_mult, anchor)
     if nifty_df is not None and not nifty_df.empty and len(nifty_df) >= 2:
         try:
             import numpy as _np2
+            from datetime import timedelta as _td
             _td_c  = float(nifty_df["close"].iloc[-1])
             _pr_c  = float(nifty_df["close"].iloc[-2])
             _td_v  = float(nifty_df["volume"].iloc[-1])
@@ -64,6 +65,25 @@ def compute_all_signals(
             sig["daily_ret_pct"] = round(_dret, 3)
             sig["rel_vol"]       = round(_rv, 3)
             sig["threat_mult"]   = round(abs(_dret) * _rv, 4)
+
+            # Tuesday anchor — computed every run, not just on Tuesdays.
+            # Page 02 uses this as a fallback when get_nifty_daily() is unavailable.
+            _idx_dates = set(nifty_df.index.date) if hasattr(nifty_df.index, "date") else set()
+            _today2    = date.today()
+            _last_tue2 = _today2 - _td(days=(_today2.weekday() - 1) % 7)
+            for _off in range(7):
+                _cand = _last_tue2 - _td(days=_off)
+                if _cand in _idx_dates:
+                    _ah = nifty_df[nifty_df.index.date <= _cand].tail(15)
+                    if not _ah.empty:
+                        _ah_h = _ah["high"].values; _ah_l = _ah["low"].values; _ah_c = _ah["close"].values
+                        _tr2 = [max(_ah_h[i]-_ah_l[i], abs(_ah_h[i]-_ah_c[i-1]), abs(_ah_l[i]-_ah_c[i-1]))
+                                for i in range(1, len(_ah))]
+                        sig["tue_close"] = float(_ah_c[-1])
+                        sig["tue_atr"]   = round(float(_np2.mean(_tr2[-14:])) if len(_tr2) >= 14
+                                                 else float(_np2.mean(_tr2)) if _tr2 else 200.0, 1)
+                        sig["tue_date"]  = str(_cand)
+                    break
         except Exception:
             pass
 
