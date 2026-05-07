@@ -120,33 +120,37 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
     """
     tip_html = tooltip(tip_term, tip1, tip2, tip3) if tip_term else ""
     named = {
-        "green":      ("#16a34a", "#f0fdf4",  None),
-        "red":        ("#dc2626", "#fef2f2",  None),
-        "amber":      ("#d97706", "#fffbeb",  None),
-        "blue":       ("#2563eb", "#eff6ff",  None),
-        "default":    ("#e2e6ef", "#f8f9fb",  None),
-        "anchor":     ("#d97706", "#fde68a",  None),
-        "sold_ce":    ("#991b1b", "#fca5a5",  None),
-        "sold_pe":    ("#166534", "#86efac",  None),
-        "loss":       ("#991b1b", "#fecaca"),
-        "profit":     ("#166534", "#bbf7d0"),
+        "green":    ("#16a34a", "#f0fdf4", None),
+        "red":      ("#dc2626", "#fef2f2", None),
+        "amber":    ("#d97706", "#fffbeb", None),
+        "blue":     ("#2563eb", "#eff6ff", None),
+        "default":  ("#e2e6ef", "#f8f9fb", None),
+        "anchor":   ("#d97706", "#fde68a", None),
+        "sold_ce":  ("#991b1b", "#fca5a5", "#7f1d1d"),
+        "sold_pe":  ("#166534", "#86efac", "#14532d"),
+        "loss":     ("#991b1b", "#fecaca", None),
+        "profit":   ("#166534", "#bbf7d0", None),
     }
     _stripe = color in ("loss", "profit")
-    b_color, bg = named.get(color, named["default"])
+    b_color, bg, txt = named.get(color, named["default"])
     if border:
         b_color = border
         bg = "#f8f9fb"
 
-    _sub_html = (f"<div style='font-size:13px;color:#334155;"
+    _lbl = txt if txt else "#334155"
+    _val = txt if txt else "#0f1724"
+    _sub_col = txt if txt else "#334155"
+
+    _sub_html = (f"<div style='font-size:13px;color:{_sub_col};"
                  f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
     _bd = (f"border-top:3px solid {b_color};border-left:4px solid {b_color};"
            f"border-radius:0 6px 6px 0;") if _stripe else f"border-top:3px solid {b_color};border-radius:6px;"
     st.markdown(
         f"<div style='{_bd}background:{bg};padding:12px 14px;min-height:72px;'>"
-        f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
+        f"<div style='font-size:12px;color:{_lbl};text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;display:flex;align-items:center;'>{label}{tip_html}</div>"
-        f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
+        f"<div style='font-size:22px;font-weight:800;color:{_val};"
         f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
         f"{_sub_html}"
         f"</div>",
@@ -158,37 +162,40 @@ def metric_card_with_tip(label: str, value: str, sub: str = "",
 
 def metric_card(label: str, value: str, sub: str = "",
                 color: str = "default", border: str = "") -> None:
-    # (border, bg, text) — text=None means use default dark
     named = {
-        "green":      ("#16a34a", "#f0fdf4",  None),
-        "red":        ("#dc2626", "#fef2f2",  None),
-        "amber":      ("#d97706", "#fffbeb",  None),
-        "blue":       ("#2563eb", "#eff6ff",  None),
-        "default":    ("#e2e6ef", "#f8f9fb",  None),
-        "anchor":     ("#d97706", "#fde68a",  None),
-        "sold_ce":    ("#991b1b", "#fca5a5",  None),
-        "sold_pe":    ("#166534", "#86efac",  None),
-        "loss":       ("#991b1b", "#fecaca"),
-        "profit":     ("#166534", "#bbf7d0"),
+        "green":    ("#16a34a", "#f0fdf4", None),
+        "red":      ("#dc2626", "#fef2f2", None),
+        "amber":    ("#d97706", "#fffbeb", None),
+        "blue":     ("#2563eb", "#eff6ff", None),
+        "default":  ("#e2e6ef", "#f8f9fb", None),
+        "anchor":   ("#d97706", "#fde68a", None),
+        "sold_ce":  ("#991b1b", "#fca5a5", "#7f1d1d"),
+        "sold_pe":  ("#166534", "#86efac", "#14532d"),
+        "loss":     ("#991b1b", "#fecaca", None),
+        "profit":   ("#166534", "#bbf7d0", None),
     }
     _thick  = color in ("anchor", "sold_ce", "sold_pe")
     _stripe = color in ("loss", "profit")
-    b_color, bg = named.get(color, named["default"])
+    b_color, bg, txt = named.get(color, named["default"])
     if border:
         b_color = border
         bg = "#f8f9fb"
 
-    _sub_html2 = (f"<div style='font-size:13px;color:#334155;"
+    _lbl = txt if txt else "#334155"
+    _val = txt if txt else "#0f1724"
+    _sub_col = txt if txt else "#334155"
+
+    _sub_html2 = (f"<div style='font-size:13px;color:{_sub_col};"
                   f"font-family:monospace;margin-top:3px;'>{sub}</div>") if sub else ""
     _bw = "5px" if _thick else "3px"
     _bd = (f"border-top:{_bw} solid {b_color};border-left:4px solid {b_color};"
            f"border-radius:0 6px 6px 0;") if _stripe else f"border-top:{_bw} solid {b_color};border-radius:6px;"
     st.markdown(
         f"<div style='{_bd}background:{bg};padding:12px 14px;min-height:72px;'>"
-        f"<div style='font-size:12px;color:#334155;text-transform:uppercase;"
+        f"<div style='font-size:12px;color:{_lbl};text-transform:uppercase;"
         f"letter-spacing:.7px;font-family:monospace;margin-bottom:4px;"
         f"font-weight:600;'>{label}</div>"
-        f"<div style='font-size:22px;font-weight:800;color:#0f1724;"
+        f"<div style='font-size:22px;font-weight:800;color:{_val};"
         f"line-height:1.1;letter-spacing:-0.3px;'>{value}</div>"
         f"{_sub_html2}"
         f"</div>",
