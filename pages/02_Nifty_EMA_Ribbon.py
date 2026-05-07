@@ -621,7 +621,7 @@ else:
         unsafe_allow_html=True)
     def _frow(label, passed, value_str):
         icon = "✅" if passed else "❌"
-        col  = "#16a34a" if passed else "#dc2626"
+        col  = "#14532d" if passed else "#7f1d1d"
         return (
             f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
             f"<span style='font-size:13px;'>{icon}</span>"
