@@ -626,7 +626,7 @@ else:
             f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
             f"<span style='font-size:13px;'>{icon}</span>"
             f"<span style='font-size:15px;color:#000000;flex:1;'>{label}</span>"
-            f"<span style='font-size:12px;font-weight:700;color:{col};'>{value_str}</span>"
+            f"<span style='font-size:16px;font-weight:700;color:{col};'>{value_str}</span>"
             f"</div>"
         )
 
