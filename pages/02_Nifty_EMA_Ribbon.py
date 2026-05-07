@@ -601,48 +601,45 @@ with st.expander("Roll Matrix — Reference", expanded=False):
         "> 1.15 = institutional backing confirmed. Below 1.15 = possible noise."
     )
 
-# Metrics bar — chip design
+# Metrics bar
 _daily_pace_pct = (atr14 / spot_now * 100 * threat_mult) if (spot_now > 0 and threat_mult > 0) else 0
-_ce_dtb_02 = _pe_dtb_02 = "—"
-if tue_anchor_available and _daily_pace_pct > 0 and ce_def_trig_spot > 0 and pe_def_trig_spot > 0:
-    _ce_gap_02 = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100)
-    _pe_gap_02 = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100)
-    _ce_dtb_02 = f"{_ce_gap_02 / _daily_pace_pct:.1f}d"
-    _pe_dtb_02 = f"{_pe_gap_02 / _daily_pace_pct:.1f}d"
+if tue_anchor_available and _daily_pace_pct > 0:
+    _ce_gap = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100) if ce_def_trig_spot > 0 else 0
+    _pe_gap = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100) if pe_def_trig_spot > 0 else 0
+    _ce_days = _ce_gap / _daily_pace_pct
+    _pe_days = _pe_gap / _daily_pace_pct
+    _dtb_val = f"CE {_ce_days:.1f}d · PE {_pe_days:.1f}d"
+    _dtb_sub = "gap ÷ ATR×threat pace"
+    _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
+else:
+    _dtb_val = "—"
+    _dtb_sub = "anchor needed"
+    _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
 
-_thr_col_02 = "#ef4444" if threat_mult > 1.15 else "#22c55e"
-_vix_val_02 = f"{vix_current:.1f}" if vix_available else "N/A"
-_vix_col_02 = "#ef4444" if (vix_available and vix_current > 20) else "#f59e0b" if (vix_available and vix_current > 16) else "#22c55e"
-_vix_sub_02 = ("⚠️ RISING" if vix_rising else "stable") if vix_available else "unavailable"
-_anc_txt_02 = f"{tue_close:,.0f}" if tue_anchor_available else "N/A"
-_drift_txt_02 = f"{drift_pct:+.2f}%" if tue_anchor_available else "—"
-
-st.markdown(
-    # ── metadata line ──────────────────────────────────────────────────────
-    f"<div style='margin-bottom:4px;'>"
-    f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
-    f"ROLL MATRIX · DTE {dte} · Anchor {_anc_txt_02} · Drift {_drift_txt_02}"
-    f"</span></div>"
-    # ── metrics chips: Threat | VIX | Days-to-Breach ───────────────────────
-    f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
-    f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
-    f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>THREAT MULT</div>"
-    f"<div style='color:{_thr_col_02};font-size:15px;font-weight:900;line-height:1.2;'>{threat_mult:.2f}</div>"
-    f"<div style='color:#64748b;font-size:7px;'>{'> 1.15 institutional' if threat_mult > 1.15 else '≤ 1.15 noise'}</div>"
-    f"</div>"
-    f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
-    f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>INDIA VIX</div>"
-    f"<div style='color:{_vix_col_02};font-size:15px;font-weight:900;line-height:1.2;'>{_vix_val_02}</div>"
-    f"<div style='color:#64748b;font-size:7px;'>{_vix_sub_02}</div>"
-    f"</div>"
-    f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
-    f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>DAYS TO BREACH</div>"
-    f"<div style='color:white;font-size:13px;font-weight:900;line-height:1.2;'>"
-    f"CE {_ce_dtb_02} · PE {_pe_dtb_02}</div>"
-    f"<div style='color:#64748b;font-size:7px;'>gap ÷ ATR×threat pace</div>"
-    f"</div>"
-    f"</div>",
-    unsafe_allow_html=True)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+with c1: ui.metric_card("DTE", f"{dte}",
+                         sub="Wed/Thu — std IC" if dte >= 5 else "Fri/Mon/Tue — tight IC")
+with c2: ui.metric_card("THREAT MULT", f"{threat_mult:.2f}",
+                         sub=_thr_sub,
+                         color="red" if threat_mult > 1.15 else "green")
+with c3: ui.metric_card("ANCHOR CLOSE",
+                         f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
+                         sub=f"Anchor: {tue_anchor_date}" if tue_anchor_available else "No anchor")
+with c4: ui.metric_card("DRIFT FROM ANCHOR",
+                         f"{drift_pct:+.2f}%" if tue_anchor_available else "—",
+                         sub=f"Spot {spot_now:,.0f}" + (" · prev close" if _spot_is_fallback else ""),
+                         color="red" if abs(drift_pct) >= 2.0 else "default")
+with c5:
+    if vix_available:
+        _vix_sub = "prev close · live N/A" if _vix_is_fallback else f"Chg {vix_chg_pct:+.1f}% · {'⚠️ RISING' if vix_rising else 'stable'}"
+        _vix_color = "red" if vix_current > 20 else "default"
+        ui.metric_card("INDIA VIX", f"{vix_current:.2f}",
+                        sub=_vix_sub, color=_vix_color)
+    else:
+        ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
+with c6: ui.metric_card("DAYS TO BREACH", _dtb_val,
+                         sub=_dtb_sub,
+                         color="default")
 
 if not tue_anchor_available:
     import datetime as _dtnow, pytz as _pynow
