@@ -513,10 +513,28 @@ try:
         _thr_col  = "#ef4444" if _thr_rm > 1.15 else "#22c55e"
         _vix_col  = "#ef4444" if _vix_rm > 20 else "#f59e0b" if _vix_rm > 16 else "#22c55e"
 
+        # VIX contextual interpretation — 4-case market regime
+        _mkt_up_rm = _ret_rm > 0.1 if not _daily_rm.empty else _drift_rm > 0.1
+        _mkt_dn_rm = _ret_rm < -0.1 if not _daily_rm.empty else _drift_rm < -0.1
+        if _vix_rising_rm and _mkt_up_rm:
+            _vix_interp_rm = "⚠️ VIX↑ + mkt↑ → mean revert risk · CE caution"
+            _vix_note_col  = "#fef08a"
+        elif _vix_rising_rm and _mkt_dn_rm:
+            _vix_interp_rm = "🔴 VIX↑ + mkt↓ → fall may continue · PE confirmed"
+            _vix_note_col  = "#fca5a5"
+        elif not _vix_rising_rm and _mkt_up_rm:
+            _vix_interp_rm = "✅ VIX↓ + mkt↑ → move confirmed · CE safe"
+            _vix_note_col  = "#86efac"
+        elif not _vix_rising_rm and _mkt_dn_rm:
+            _vix_interp_rm = "⚠️ VIX↓ + mkt↓ → complacency · watch bounce"
+            _vix_note_col  = "#fef08a"
+        else:
+            _vix_interp_rm = ""
+            _vix_note_col  = "#94a3b8"
         _vix_note = ""
-        if _vix_rising_rm:
-            _vix_note = (f"<div style='margin-top:4px;font-size:8px;font-weight:700;color:#fef08a;'>"
-                         f"⚠️ VIX RISING — CE caution · PE confirmed</div>")
+        if _vix_interp_rm:
+            _vix_note = (f"<div style='margin-top:4px;font-size:8px;font-weight:700;"
+                         f"color:{_vix_note_col};'>{_vix_interp_rm}</div>")
 
         st.markdown(
             # ── metadata line ────────────────────────────────────────────────

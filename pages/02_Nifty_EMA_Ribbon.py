@@ -631,10 +631,24 @@ with c4: ui.metric_card("DRIFT FROM ANCHOR",
                          color="red" if abs(drift_pct) >= 2.0 else "default")
 with c5:
     if vix_available:
-        _vix_sub = "prev close · live N/A" if _vix_is_fallback else f"Chg {vix_chg_pct:+.1f}% · {'⚠️ RISING' if vix_rising else 'stable'}"
+        if _vix_is_fallback:
+            _vix_interp = "prev close · live N/A"
+        else:
+            _mkt_up = daily_ret_pct > 0.1
+            _mkt_dn = daily_ret_pct < -0.1
+            if vix_rising and _mkt_up:
+                _vix_interp = "⚠️ VIX↑+mkt↑ → mean revert risk"
+            elif vix_rising and _mkt_dn:
+                _vix_interp = "🔴 VIX↑+mkt↓ → fall may continue"
+            elif not vix_rising and _mkt_up:
+                _vix_interp = "✅ VIX↓+mkt↑ → move confirmed"
+            elif not vix_rising and _mkt_dn:
+                _vix_interp = "⚠️ VIX↓+mkt↓ → complacency"
+            else:
+                _vix_interp = f"Chg {vix_chg_pct:+.1f}% · stable"
         _vix_color = "red" if vix_current > 20 else "default"
         ui.metric_card("INDIA VIX", f"{vix_current:.2f}",
-                        sub=_vix_sub, color=_vix_color)
+                        sub=_vix_interp, color=_vix_color)
     else:
         ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
 with c6: ui.metric_card("DAYS TO BREACH", _dtb_val,
