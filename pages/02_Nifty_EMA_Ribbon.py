@@ -1328,7 +1328,9 @@ if e3 and e8 and e16 and e30 and spot > 0:
            f"<span style='color:#fca5a5;font-size:14px;font-weight:700;'>"
            f"⚠️ REGIME CHANGED</span></div>" if _regime_changed else "")
         + f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
-        f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Shape {_reg_ic}</span></div>"
+        f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>"
+        + f"{_reg_ic.split(':')[0]}CE : {_reg_ic.split(':')[1]}PE"
+        + f"</span></div>"
         f"<div style='background:#1e293b;border-radius:5px;padding:4px 10px;'>"
         f"<span style='color:#e2e8f0;font-size:12px;font-weight:700;'>Size {_reg_sz}</span></div>"
         f"</div>"
