@@ -280,6 +280,16 @@ except Exception:
     pass
 
 spot_now = spot
+# Fallback: if Kite returns 0 pre-market, use last EOD close from daily data
+_spot_is_fallback = False
+if spot_now == 0:
+    try:
+        _fb = get_nifty_daily()
+        if _fb is not None and not _fb.empty:
+            spot_now = float(_fb["close"].iloc[-1])
+            _spot_is_fallback = True
+    except Exception:
+        pass
 src3_pe = src3_ce = 0
 pe_sold = ce_sold = 0
 drift_pct = 0.0
@@ -361,6 +371,7 @@ overall_canary = max(pe_canary, ce_canary, canary)  # include legacy for safety
 # ── India VIX ────────────────────────────────────────────────────────────────
 vix_current = vix_chg_pct = 0.0
 vix_available = vix_rising = False
+_vix_is_fallback = False
 try:
     from data.live_fetcher import get_india_vix_detail as _get_vix
     vix_current, vix_chg_pct = _get_vix()
@@ -368,6 +379,14 @@ try:
     vix_rising = vix_chg_pct > 5.0
 except Exception:
     pass
+if not vix_available:
+    _fb_vix = sig.get("vix", 0.0) or 0.0
+    if _fb_vix > 0:
+        vix_current = _fb_vix
+        vix_chg_pct = 0.0
+        vix_available = True
+        vix_rising = False
+        _vix_is_fallback = True
 
 # ── Multi-filter roll states ─────────────────────────────────────────────────
 # Four required gates per side. VIX is advisory only (not a gate).
@@ -564,13 +583,13 @@ with c3: ui.metric_card("ANCHOR CLOSE",
                          sub=f"Anchor: {tue_anchor_date}" if tue_anchor_available else "No anchor")
 with c4: ui.metric_card("DRIFT FROM ANCHOR",
                          f"{drift_pct:+.2f}%" if tue_anchor_available else "—",
-                         sub=f"Spot {spot_now:,.0f}",
+                         sub=f"Spot {spot_now:,.0f}" + (" · prev close" if _spot_is_fallback else ""),
                          color="red" if abs(drift_pct) >= 2.0 else "default")
 with c5:
     if vix_available:
+        _vix_sub = "prev close · live N/A" if _vix_is_fallback else f"Chg {vix_chg_pct:+.1f}% · {'⚠️ RISING' if vix_rising else 'stable'}"
         ui.metric_card("INDIA VIX", f"{vix_current:.2f}",
-                        sub=f"Chg {vix_chg_pct:+.1f}% · {'⚠️ RISING' if vix_rising else 'stable'}",
-                        color="red" if vix_rising else "default")
+                        sub=_vix_sub, color="default")
     else:
         ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
 
