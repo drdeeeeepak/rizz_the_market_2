@@ -108,21 +108,34 @@ def get_nifty_daily_live(days: int = 400) -> pd.DataFrame:
 def get_nifty_daily(days: int = 400) -> pd.DataFrame:
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
-    try:
-        to_date   = date.today()
-        from_date = to_date - timedelta(days=days)
-        data = kite.historical_data(
+
+    def _fetch(to_dt) -> pd.DataFrame:
+        from_dt = to_dt - timedelta(days=days)
+        data    = kite.historical_data(
             NIFTY_INDEX_TOKEN,
-            from_date.strftime("%Y-%m-%d"),
-            to_date.strftime("%Y-%m-%d"),
-            "day"
+            from_dt.strftime("%Y-%m-%d"),
+            to_dt.strftime("%Y-%m-%d"),
+            "day",
         )
+        if not data:
+            return pd.DataFrame()
         df = pd.DataFrame(data)
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date").sort_index()
         return df[["open", "high", "low", "close", "volume"]]
-    except Exception as e:
-        log.error("Nifty daily fetch failed: %s", e); return pd.DataFrame()
+
+    # Pre-market: Kite returns empty list for today (no candle yet).
+    # Retry with yesterday so historical data is always available regardless of time.
+    for _delta in (0, 1):
+        try:
+            result = _fetch(date.today() - timedelta(days=_delta))
+            if not result.empty:
+                return result
+        except Exception as e:
+            log.warning("Nifty daily fetch (delta=%d) failed: %s", _delta, e)
+
+    log.error("Nifty daily: all fetch attempts failed")
+    return pd.DataFrame()
 
 
 # ─── Nifty 1H OHLCV — Dow Theory Phase Window ────────────────────────────────

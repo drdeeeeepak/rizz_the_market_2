@@ -633,7 +633,14 @@ with c5:
         ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
 
 if not tue_anchor_available:
-    st.info("Expiry anchor not available — load data to activate roll matrix.")
+    import datetime as _dtnow, pytz as _pynow
+    _ist_now2 = _dtnow.datetime.now(_pynow.timezone("Asia/Kolkata"))
+    _pre_mkt  = _ist_now2.hour * 60 + _ist_now2.minute < 9 * 60 + 15
+    if _pre_mkt:
+        st.info("⏳ Pre-market: Kite historical data not available yet. "
+                "Open **Home** page once after 9:15 AM — anchor will persist for all future sessions.")
+    else:
+        st.warning("⚠️ Expiry anchor unavailable. Click ↻ refresh to reload data.")
 else:
     # ── Entry strike card (moat-adjusted, locked for the week) ────────────────
     _pe_pull = _moat_pull(_entry_put_moats)
