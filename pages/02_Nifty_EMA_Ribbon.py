@@ -575,8 +575,17 @@ with st.expander("Roll Matrix — Reference", expanded=False):
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1: ui.metric_card("DTE", f"{dte}",
                          sub="Wed/Thu — std IC" if dte >= 5 else "Fri/Mon/Tue — tight IC")
+_daily_pace_pct = (atr14 / spot_now * 100 * threat_mult) if (spot_now > 0 and threat_mult > 0) else 0
+if tue_anchor_available and _daily_pace_pct > 0:
+    _ce_gap = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100) if ce_def_trig_spot > 0 else 0
+    _pe_gap = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100) if pe_def_trig_spot > 0 else 0
+    _ce_days = _ce_gap / _daily_pace_pct
+    _pe_days = _pe_gap / _daily_pace_pct
+    _dtb_sub = f"CE {_ce_days:.1f}d · PE {_pe_days:.1f}d (gap÷pace)"
+else:
+    _dtb_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
 with c2: ui.metric_card("THREAT MULT", f"{threat_mult:.2f}",
-                         sub=f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}",
+                         sub=_dtb_sub,
                          color="red" if threat_mult > 1.15 else "green")
 with c3: ui.metric_card("ANCHOR CLOSE",
                          f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
@@ -908,6 +917,31 @@ st.markdown(
     f"<span style='color:{_ic_now_col};font-weight:700;'>Now: {_ic_now}</span>"
     f"</div>"
     f"</div>", unsafe_allow_html=True)
+
+with st.expander("IC Shape — Reference Rules", expanded=False):
+    st.markdown("""
+| Entry Regime | IC Shape at Entry | Why |
+|---|---|---|
+| STRONG_BULL | 1:2 CE further out | Bull trend — CE side has more buffer needed |
+| BULL_COMPRESSED | 1:2 CE further out | Compressed but bullish — protect CE side |
+| INSIDE_BULL | 1:1 Symmetric | Inside range, mild bull — balanced |
+| RECOVERING | 1:1 Symmetric | Trend unclear — stay symmetric |
+| INSIDE_BEAR | 1:1 Symmetric | Inside range, mild bear — balanced |
+| BEAR_COMPRESSED | 2:1 PE further out | Compressed but bearish — protect PE side |
+| STRONG_BEAR | 2:1 PE further out | Bear trend — PE side has more buffer needed |
+
+**Now (live skew):**
+| Signal | Shape Override |
+|---|---|
+| S1 Gap ≥ D4 | EXIT threatened side |
+| S1 Gap = D3 | REDUCE threatened side |
+| S1 Gap = D2 | 1:1 Forced (flatten skew) |
+| S1 BULL, S2 BULL | 2:1 PE heavy (sell more puts) |
+| S1 BEAR, S2 BEAR | 1:2 CE heavy (sell more calls) |
+| No directional signal | 1:1 Balanced |
+
+*Entry shape is locked from the regime at entry. Live shape is driven by S1+S2 momentum.*
+""")
 
 src_data = [
     {

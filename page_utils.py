@@ -77,6 +77,14 @@ def bootstrap_signals() -> tuple[dict, float, str]:
         spot = float(sig.get("spot", 0))
     if spot == 0:
         spot = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
+    if spot == 0:
+        try:
+            from data.live_fetcher import get_nifty_daily
+            _fb = get_nifty_daily()
+            if _fb is not None and not _fb.empty:
+                spot = float(_fb["close"].iloc[-1])
+        except Exception:
+            pass
 
     # ── Signals timestamp ───────────────────────────────────────────────────
     ts_str = sig.get("_saved_at", "")
