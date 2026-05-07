@@ -478,14 +478,24 @@ try:
                 f"</div>"
             )
 
-        # VIX advisory
+        # VIX — with fallback to vix_live (pre-market quote API works)
         _vix_cur, _vix_chg = 0.0, 0.0
         try:
             from data.live_fetcher import get_india_vix_detail as _gvd
             _vix_cur, _vix_chg = _gvd()
         except Exception:
             pass
+        if _vix_cur == 0:
+            _vix_cur = vix_live if vix_live > 0 else float(sig.get("vix", 0))
         _vix_rising_rm = _vix_chg > 5.0
+
+        # Days-to-breach: gap to each trigger ÷ daily ATR pace
+        _dp_pct = (atr14 / spot * 100 * _thr_rm) if (spot > 0 and _thr_rm > 0 and atr14 > 0) else 0
+        _dtb_str = ""
+        if _dp_pct > 0 and _ce_def_trig > 0 and _pe_def_trig > 0:
+            _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
+            _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
+            _dtb_str   = f" · CE {_ce_gap_rm/_dp_pct:.1f}d · PE {_pe_gap_rm/_dp_pct:.1f}d"
 
         _vix_note = ""
         if _vix_rising_rm:
@@ -496,9 +506,11 @@ try:
             f"<div style='margin-bottom:2px;'>"
             f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
             f"ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · "
-            f"Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%</span>"
-            f"</div>"
-            f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
+            f"Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%"
+            + (f" · VIX {_vix_cur:.1f}" if _vix_cur > 0 else "")
+            + _dtb_str
+            + f"</span></div>"
+            + f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
             + _rm_state_chip("CE · CALL", False,
                              _ce_book_loss, _ce_prep_loss, _ce_book_profit, _ce_prep_profit,
                              _ce_adv, _ce_fav, _ce_fp, _ce_def_roll, _ce_off_roll,
