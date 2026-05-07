@@ -105,7 +105,10 @@ def get_nifty_daily_live(days: int = 400) -> pd.DataFrame:
 # ─── Nifty daily OHLCV ───────────────────────────────────────────────────────
 
 @st.cache_data(ttl=TTL_DAILY, show_spinner=False)
-def get_nifty_daily(days: int = 400) -> pd.DataFrame:
+def _get_nifty_daily_cached(days: int = 400) -> pd.DataFrame:
+    """Raises RuntimeError on empty — prevents Streamlit from caching failures.
+    Streamlit only caches successful (non-exception) returns, so the next call
+    after a pre-market empty-result will retry fresh once market data is available."""
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
 
@@ -124,8 +127,6 @@ def get_nifty_daily(days: int = 400) -> pd.DataFrame:
         df = df.set_index("date").sort_index()
         return df[["open", "high", "low", "close", "volume"]]
 
-    # Pre-market: Kite returns empty list for today (no candle yet).
-    # Retry with yesterday so historical data is always available regardless of time.
     for _delta in (0, 1):
         try:
             result = _fetch(date.today() - timedelta(days=_delta))
@@ -134,8 +135,16 @@ def get_nifty_daily(days: int = 400) -> pd.DataFrame:
         except Exception as e:
             log.warning("Nifty daily fetch (delta=%d) failed: %s", _delta, e)
 
-    log.error("Nifty daily: all fetch attempts failed")
-    return pd.DataFrame()
+    raise RuntimeError("Nifty daily: all fetch attempts returned empty")
+
+
+def get_nifty_daily(days: int = 400) -> pd.DataFrame:
+    """Public wrapper — returns empty DataFrame on failure, never raises."""
+    try:
+        return _get_nifty_daily_cached(days)
+    except Exception as e:
+        log.error("Nifty daily (all failed): %s", e)
+        return pd.DataFrame()
 
 
 # ─── Nifty 1H OHLCV — Dow Theory Phase Window ────────────────────────────────

@@ -398,6 +398,15 @@ try:
             _drift_rm = (spot - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
             _anc_rm   = True
 
+    # Anchor fallback from sig when _daily_rm is unavailable
+    if not _anc_rm:
+        _fb_tc = float(sig.get("tue_close", 0))
+        _fb_td = sig.get("tue_date", "")
+        if _fb_tc > 0 and _fb_td:
+            _tc_rm    = _fb_tc
+            _drift_rm = (spot - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
+            _anc_rm   = True
+
     # Threat multiplier
     _thr_rm = _mom_score_rm = 0.0
     if not _daily_rm.empty and len(_daily_rm) >= 15:
@@ -407,6 +416,8 @@ try:
         _pcl     = float(_daily_rm["close"].iloc[-2])
         _ret_rm  = (_tcl - _pcl) / _pcl * 100 if _pcl > 0 else 0.0
         _thr_rm  = abs(_ret_rm) * (_tvol / _vs14 if _vs14 > 0 else 1.0)
+    if _thr_rm == 0.0:
+        _thr_rm = float(sig.get("threat_mult", 0.0))
 
     # Canary and momentum from signals dict
     _canary_dir_rm = sig.get("canary_direction", "NONE")
@@ -478,16 +489,17 @@ try:
                 f"</div>"
             )
 
-        # VIX — with fallback to vix_live (pre-market quote API works)
-        _vix_cur, _vix_chg = 0.0, 0.0
+        # VIX — use already-fetched vix_live (avoids extra API call; sig fallback for pre-market)
+        _vix_rm = vix_live if vix_live > 0 else float(sig.get("vix", 0))
+        _vix_rising_rm = False
         try:
             from data.live_fetcher import get_india_vix_detail as _gvd
-            _vix_cur, _vix_chg = _gvd()
+            _vc, _vchg = _gvd()
+            if _vc > 0:
+                _vix_rm = _vc
+                _vix_rising_rm = _vchg > 5.0
         except Exception:
             pass
-        if _vix_cur == 0:
-            _vix_cur = vix_live if vix_live > 0 else float(sig.get("vix", 0))
-        _vix_rising_rm = _vix_chg > 5.0
 
         # Days-to-breach: gap to each trigger ÷ daily ATR pace
         _dp_pct = (atr14 / spot * 100 * _thr_rm) if (spot > 0 and _thr_rm > 0 and atr14 > 0) else 0
@@ -500,14 +512,14 @@ try:
         _vix_note = ""
         if _vix_rising_rm:
             _vix_note = (f"<div style='margin-top:4px;font-size:8px;font-weight:700;color:#fef08a;'>"
-                         f"⚠️ VIX +{_vix_chg:.1f}% RISING — CE caution · PE confirmed</div>")
+                         f"⚠️ VIX RISING — CE caution · PE confirmed</div>")
 
         st.markdown(
             f"<div style='margin-bottom:2px;'>"
             f"<span style='font-size:9px;font-weight:700;color:#64748b;'>"
             f"ROLL MATRIX · DTE {_dte_rm} · Threat {_thr_rm:.2f} · "
             f"Anchor {_tc_rm:,.0f} · Drift {_drift_rm:+.2f}%"
-            + (f" · VIX {_vix_cur:.1f}" if _vix_cur > 0 else "")
+            + (f" · VIX {_vix_rm:.1f}" if _vix_rm > 0 else "")
             + _dtb_str
             + f"</span></div>"
             + f"<div style='display:flex;gap:4px;margin-bottom:6px;'>"
