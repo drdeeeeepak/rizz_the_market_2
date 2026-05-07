@@ -1336,3 +1336,32 @@ if e3 and e8 and e16 and e30 and spot > 0:
         f"</div>"
         f"</div>",
         unsafe_allow_html=True)
+
+    with st.expander("Live Cluster State — Reference", expanded=False):
+        st.markdown(
+            "**Clusters**\n\n"
+            "- **SHORT-TERM MOMENTUM (EMA3 – EMA8):** The fast cluster. "
+            "EMA3 is the most reactive; EMA8 smooths it. "
+            "When EMA3 > EMA8, short-term momentum is bullish. "
+            "The slope (pts/day) shows how fast the cluster is moving.\n"
+            "- **INTERMEDIATE TREND (EMA16 – EMA30):** The slow cluster. "
+            "Represents the weekly/fortnightly trend. "
+            "When the fast cluster is above it, the trend is bullish. "
+            "When fast is below it, the trend is bearish.\n\n"
+            "---\n\n"
+            "**Gap labels** — distance in points between the two clusters:\n\n"
+            "| Label | Gap | Meaning |\n"
+            "|-------|-----|----------|\n"
+            "| BREATHING | > 150 pts | Clusters well separated — trend firmly established |\n"
+            "| COMPRESSING | 30–150 pts | Closing in — trend weakening, watch for cross |\n"
+            "| TOUCHING | 0–30 pts | Nearly overlapping — cross imminent |\n"
+            "| ENTANGLED | negative | Clusters overlapping — no clear trend |\n\n"
+            "---\n\n"
+            "**Cross proximity** — based on fast cluster slope direction:\n\n"
+            "- **Diverging** — fast slope moving *away* from slow cluster. "
+            "Gap is widening. Trend strengthening in its current direction.\n"
+            "- **~Xd to touch** — fast slope moving *toward* slow cluster at current pace. "
+            "Days until clusters touch. ≤ 2d = red (imminent) · ≤ 5d = orange (near) · > 5d = amber (watch).\n\n"
+            "Converging triggers when: fast above slow and slope falling, "
+            "OR fast below slow and slope rising, OR clusters already entangled."
+        )
