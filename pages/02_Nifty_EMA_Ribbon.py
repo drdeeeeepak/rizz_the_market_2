@@ -1223,9 +1223,9 @@ if e3 and e8 and e16 and e30 and spot > 0:
     else:
         _gap = -(max(_fast_lo, _slow_lo) - min(_fast_hi, _slow_hi))
 
-    _gap_lbl = ("BREATHING"   if _gap > 150 else
-                "COMPRESSING" if _gap > 30  else
-                "TOUCHING"    if _gap >= 0  else
+    _gap_lbl = ("WIDE"      if _gap > 150 else
+                "NARROW"    if _gap > 30  else
+                "TIGHT"     if _gap >= 0  else
                 "ENTANGLED")
     _gap_col = ("#16a34a" if _gap > 150 else
                 "#d97706" if _gap > 30  else
@@ -1352,9 +1352,9 @@ if e3 and e8 and e16 and e30 and spot > 0:
             "**Gap labels** — distance in points between the two clusters:\n\n"
             "| Label | Gap | Meaning |\n"
             "|-------|-----|----------|\n"
-            "| BREATHING | > 150 pts | Clusters well separated — trend firmly established |\n"
-            "| COMPRESSING | 30–150 pts | Closing in — trend weakening, watch for cross |\n"
-            "| TOUCHING | 0–30 pts | Nearly overlapping — cross imminent |\n"
+            "| WIDE | > 150 pts | Clusters well separated — trend firmly established |\n"
+            "| NARROW | 30–150 pts | Gap closing — convergence underway, watch for cross |\n"
+            "| TIGHT | 0–30 pts | Nearly overlapping — inflection zone, cross imminent |\n"
             "| ENTANGLED | negative | Clusters overlapping — no clear trend |\n\n"
             "---\n\n"
             "**Cross proximity** — based on fast cluster slope direction:\n\n"
