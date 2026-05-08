@@ -292,23 +292,49 @@ except Exception:
     dte = 7
 
 threat_mult = rel_vol = daily_ret_pct = vol_sma14 = 0.0
+ce_threat_mult = pe_threat_mult = 0.0
+_yday_ce_thr = _yday_pe_thr = 0.0
+_today_move_pts = _yday_move_pts = 0.0
+_prev_close_live = 0.0
 try:
-    if not _daily.empty and len(_daily) >= 15:
-        vol_sma14     = float(_daily["volume"].rolling(14).mean().iloc[-1])
-        _td_vol       = float(_daily["volume"].iloc[-1])
-        _td_close     = float(_daily["close"].iloc[-1])
-        _prev_close   = float(_daily["close"].iloc[-2])
-        daily_ret_pct = (_td_close - _prev_close) / _prev_close * 100 if _prev_close > 0 else 0.0
-        rel_vol       = _td_vol / vol_sma14 if vol_sma14 > 0 else 1.0
-        threat_mult   = abs(daily_ret_pct) * rel_vol
+    from data.live_fetcher import get_nifty_daily_live as _gdl
+    _dlive = _gdl()
+    if not _dlive.empty and len(_dlive) >= 3:
+        vol_sma14        = float(_dlive["volume"].rolling(14).mean().iloc[-1])
+        _today_row       = _dlive.iloc[-1]   # today's partial candle (live)
+        _yday_row        = _dlive.iloc[-2]   # yesterday's complete candle
+        _d2ago_row       = _dlive.iloc[-3]   # 2 days ago
+        _prev_close_live = float(_yday_row["close"])
+        _d2ago_close     = float(_d2ago_row["close"])
+
+        # Today's volume projected to full day based on elapsed market time
+        _now_ist_t   = _dtrp.datetime.now(_pyrp.timezone("Asia/Kolkata"))
+        _mkt_open    = _now_ist_t.replace(hour=9, minute=15, second=0, microsecond=0)
+        _elapsed_min = max(1, int((_now_ist_t - _mkt_open).total_seconds() / 60))
+        _elapsed_frac = min(_elapsed_min / 375.0, 1.0)
+        _today_vol_proj = float(_today_row["volume"]) / _elapsed_frac
+        rel_vol         = _today_vol_proj / vol_sma14 if vol_sma14 > 0 else 1.0
+
+        # Today's move from yesterday's close (live, in points and %)
+        _today_move_pts = spot if spot > 0 else float(_today_row["close"])
+        _today_move_pts = _today_move_pts - _prev_close_live
+        daily_ret_pct   = _today_move_pts / _prev_close_live * 100 if _prev_close_live > 0 else 0.0
+        threat_mult     = abs(daily_ret_pct) * rel_vol
+
+        # Yesterday's reference
+        _yday_move_pts = _prev_close_live - _d2ago_close
+        _yday_ret_pct  = _yday_move_pts / _d2ago_close * 100 if _d2ago_close > 0 else 0.0
+        _yday_rel_vol  = float(_yday_row["volume"]) / vol_sma14 if vol_sma14 > 0 else 1.0
+        _yday_ce_thr   = max(_yday_ret_pct,  0.0) * _yday_rel_vol
+        _yday_pe_thr   = max(-_yday_ret_pct, 0.0) * _yday_rel_vol
 except Exception:
     pass
-# Threat fallback: use values stored in signals.json from EOD job
+# Fallback to EOD signals.json
 if threat_mult == 0.0:
     daily_ret_pct = float(sig.get("daily_ret_pct", 0.0))
     rel_vol       = float(sig.get("rel_vol",       1.0))
     threat_mult   = float(sig.get("threat_mult",   0.0))
-# Directional threat: CE is threatened only when market rises; PE only when market falls
+# Directional threat: CE threatened only when market rises; PE only when market falls
 ce_threat_mult = max(daily_ret_pct,  0.0) * rel_vol
 pe_threat_mult = max(-daily_ret_pct, 0.0) * rel_vol
 
@@ -652,28 +678,35 @@ with st.expander("Roll Matrix — Reference", expanded=False):
         "bounce setup or slow bleed. **Watch for reversal before acting on PE.** |"
     )
 
-# Metrics bar — DTB = gap% ÷ (today's directional change% × rel_vol)
-# ce_threat_mult / pe_threat_mult are exactly this pace; show "—" when no directional move
-_ce_pace_pct = ce_threat_mult   # max(daily_ret_pct, 0) × rel_vol
-_pe_pace_pct = pe_threat_mult   # max(-daily_ret_pct, 0) × rel_vol
+# Metrics bar — DTB in points: gap_pts ÷ today's directional move_pts
+# Yesterday shown as sub-line for comparison
+_thr_sub  = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
+_yday_thr_sub = (f"Yday: CE {_yday_ce_thr:.2f} · PE {_yday_pe_thr:.2f}"
+                 if (_yday_ce_thr > 0 or _yday_pe_thr > 0) else "")
 if tue_anchor_available and ce_def_trig_spot > 0 and pe_def_trig_spot > 0:
-    _ce_gap  = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100)
-    _pe_gap  = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100)
-    _ce_days_s = f"{_ce_gap / _ce_pace_pct:.1f}d" if _ce_pace_pct > 0 else "—"
-    _pe_days_s = f"{_pe_gap / _pe_pace_pct:.1f}d" if _pe_pace_pct > 0 else "—"
-    _dtb_val = f"CE {_ce_days_s} · PE {_pe_days_s}"
-    _dtb_sub = "gap ÷ today's move × vol"
-    _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
+    _ce_gap_pts = max(0, ce_def_trig_spot - spot_now)
+    _pe_gap_pts = max(0, spot_now - pe_def_trig_spot)
+    _ce_days_s  = f"{_ce_gap_pts / _today_move_pts:.1f}d"  if _today_move_pts > 0 else "—"
+    _pe_days_s  = f"{_pe_gap_pts / abs(_today_move_pts):.1f}d" if _today_move_pts < 0 else "—"
+    _dtb_val    = f"CE {_ce_days_s} · PE {_pe_days_s}"
+    # Yesterday's DTB from yday close at yday pace
+    if _yday_move_pts != 0 and _prev_close_live > 0:
+        _yd_cl       = _prev_close_live
+        _yd_ce_gap   = max(0, ce_def_trig_spot - _yd_cl)
+        _yd_pe_gap   = max(0, _yd_cl - pe_def_trig_spot)
+        _yd_ce_s     = f"{_yd_ce_gap / _yday_move_pts:.1f}d"      if _yday_move_pts > 0 else "—"
+        _yd_pe_s     = f"{_yd_pe_gap / abs(_yday_move_pts):.1f}d" if _yday_move_pts < 0 else "—"
+        _dtb_sub     = f"Yday: CE {_yd_ce_s} · PE {_yd_pe_s}"
+    else:
+        _dtb_sub = "gap_pts ÷ move_pts"
 else:
-    _dtb_val = "—"
-    _dtb_sub = "anchor needed"
-    _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
+    _dtb_val = "—"; _dtb_sub = "anchor needed"
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: ui.metric_card("DTE", f"{dte}",
                          sub="Wed/Thu — std IC" if dte >= 5 else "Fri/Mon/Tue — tight IC")
 with c2: ui.metric_card("THREAT MULT", f"CE {ce_threat_mult:.2f} · PE {pe_threat_mult:.2f}",
-                         sub=_thr_sub,
+                         sub=_yday_thr_sub or _thr_sub,
                          color="red" if (ce_threat_mult > 1.15 or pe_threat_mult > 1.15) else "green")
 with c3: ui.metric_card("ANCHOR CLOSE",
                          f"{tue_close:,.0f}" if tue_anchor_available else "N/A",

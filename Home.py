@@ -407,21 +407,44 @@ try:
             _drift_rm = (spot - _tc_rm) / _tc_rm * 100 if _tc_rm > 0 else 0.0
             _anc_rm   = True
 
-    # Threat multiplier
-    _thr_rm = _mom_score_rm = 0.0
-    if not _daily_rm.empty and len(_daily_rm) >= 15:
-        _vs14    = float(_daily_rm["volume"].rolling(14).mean().iloc[-1])
-        _tvol    = float(_daily_rm["volume"].iloc[-1])
-        _tcl     = float(_daily_rm["close"].iloc[-1])
-        _pcl     = float(_daily_rm["close"].iloc[-2])
-        _ret_rm  = (_tcl - _pcl) / _pcl * 100 if _pcl > 0 else 0.0
-        _thr_rm  = abs(_ret_rm) * (_tvol / _vs14 if _vs14 > 0 else 1.0)
+    # Threat multiplier — live daily for today's move + volume; yday for reference
+    _thr_rm = _ret_rm = _rvol_rm = 0.0
+    _ce_thr_rm = _pe_thr_rm = 0.0
+    _yday_ce_thr_rm = _yday_pe_thr_rm = 0.0
+    _today_move_pts_rm = _yday_move_pts_rm = 0.0
+    _prev_close_rm = 0.0
+    try:
+        from data.live_fetcher import get_nifty_daily_live as _gdl_rm
+        _dlrm = _gdl_rm()
+        if not _dlrm.empty and len(_dlrm) >= 3:
+            _vs14          = float(_dlrm["volume"].rolling(14).mean().iloc[-1])
+            _today_row_rm  = _dlrm.iloc[-1]
+            _yday_row_rm   = _dlrm.iloc[-2]
+            _d2ago_row_rm  = _dlrm.iloc[-3]
+            _prev_close_rm = float(_yday_row_rm["close"])
+            _d2ago_cl_rm   = float(_d2ago_row_rm["close"])
+            import datetime as _dt_thr, pytz as _ptz_thr
+            _now_t   = _dt_thr.datetime.now(_ptz_thr.timezone("Asia/Kolkata"))
+            _mo      = _now_t.replace(hour=9, minute=15, second=0, microsecond=0)
+            _el_min  = max(1, int((_now_t - _mo).total_seconds() / 60))
+            _el_frac = min(_el_min / 375.0, 1.0)
+            _tvol_proj = float(_today_row_rm["volume"]) / _el_frac
+            _rvol_rm   = _tvol_proj / _vs14 if _vs14 > 0 else 1.0
+            _today_move_pts_rm = (spot if spot > 0 else float(_today_row_rm["close"])) - _prev_close_rm
+            _ret_rm    = _today_move_pts_rm / _prev_close_rm * 100 if _prev_close_rm > 0 else 0.0
+            _thr_rm    = abs(_ret_rm) * _rvol_rm
+            _yday_move_pts_rm = _prev_close_rm - _d2ago_cl_rm
+            _yd_ret_rm = _yday_move_pts_rm / _d2ago_cl_rm * 100 if _d2ago_cl_rm > 0 else 0.0
+            _yd_rv_rm  = float(_yday_row_rm["volume"]) / _vs14 if _vs14 > 0 else 1.0
+            _yday_ce_thr_rm = max(_yd_ret_rm,  0.0) * _yd_rv_rm
+            _yday_pe_thr_rm = max(-_yd_ret_rm, 0.0) * _yd_rv_rm
+    except Exception:
+        pass
     if _thr_rm == 0.0:
-        _thr_rm  = float(sig.get("threat_mult", 0.0))
-        _ret_rm  = float(sig.get("daily_ret_pct", 0.0))
-    _rvol_rm     = (_tvol / _vs14 if _vs14 > 0 else 1.0) if not _daily_rm.empty else 1.0
-    _ce_thr_rm   = max(_ret_rm,  0.0) * _rvol_rm
-    _pe_thr_rm   = max(-_ret_rm, 0.0) * _rvol_rm
+        _thr_rm = float(sig.get("threat_mult", 0.0))
+        _ret_rm = float(sig.get("daily_ret_pct", 0.0))
+    _ce_thr_rm = max(_ret_rm,  0.0) * _rvol_rm
+    _pe_thr_rm = max(-_ret_rm, 0.0) * _rvol_rm
 
     # Canary and momentum from signals dict
     _canary_dir_rm = sig.get("canary_direction", "NONE")
@@ -529,14 +552,21 @@ try:
         except Exception:
             pass
 
-        # DTB = gap% ÷ (today's directional change% × rel_vol); "—" when no directional move
+        # DTB = gap_pts ÷ today's directional move_pts; yday reference computed too
         _ce_dtb_s = _pe_dtb_s = "—"
-        if _ce_def_trig > 0 and _ce_thr_rm > 0:
-            _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
-            _ce_dtb_s  = f"{_ce_gap_rm / _ce_thr_rm:.1f}d"
-        if _pe_def_trig > 0 and _pe_thr_rm > 0:
-            _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
-            _pe_dtb_s  = f"{_pe_gap_rm / _pe_thr_rm:.1f}d"
+        _yd_ce_dtb_s = _yd_pe_dtb_s = "—"
+        if _ce_def_trig > 0:
+            _ce_gap_pts_rm = max(0, _ce_def_trig - spot)
+            if _today_move_pts_rm > 0:
+                _ce_dtb_s = f"{_ce_gap_pts_rm / _today_move_pts_rm:.1f}d"
+            if _prev_close_rm > 0 and _yday_move_pts_rm > 0:
+                _yd_ce_dtb_s = f"{max(0, _ce_def_trig - _prev_close_rm) / _yday_move_pts_rm:.1f}d"
+        if _pe_def_trig > 0:
+            _pe_gap_pts_rm = max(0, spot - _pe_def_trig)
+            if _today_move_pts_rm < 0:
+                _pe_dtb_s = f"{_pe_gap_pts_rm / abs(_today_move_pts_rm):.1f}d"
+            if _prev_close_rm > 0 and _yday_move_pts_rm < 0:
+                _yd_pe_dtb_s = f"{max(0, _prev_close_rm - _pe_def_trig) / abs(_yday_move_pts_rm):.1f}d"
 
         _thr_col  = "#ef4444" if (_ce_thr_rm > 1.15 or _pe_thr_rm > 1.15) else "#22c55e"
         _vix_col  = "#ef4444" if _vix_rm > 20 else "#f59e0b" if _vix_rm > 16 else "#22c55e"
@@ -580,6 +610,7 @@ try:
             f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>THREAT MULT</div>"
             f"<div style='color:{_thr_col};font-size:12px;font-weight:900;line-height:1.2;'>"
             f"CE {_ce_thr_rm:.2f} · PE {_pe_thr_rm:.2f}</div>"
+            f"<div style='color:#64748b;font-size:7px;'>Yday CE {_yday_ce_thr_rm:.2f} · PE {_yday_pe_thr_rm:.2f}</div>"
             f"</div>"
             f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
             f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>INDIA VIX</div>"
@@ -589,7 +620,7 @@ try:
             f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>DAYS TO BREACH</div>"
             f"<div style='color:white;font-size:13px;font-weight:900;line-height:1.2;'>"
             f"CE {_ce_dtb_s} · PE {_pe_dtb_s}</div>"
-            f"<div style='color:#64748b;font-size:7px;'>gap ÷ ATR×threat pace</div>"
+            f"<div style='color:#64748b;font-size:7px;'>Yday CE {_yd_ce_dtb_s} · PE {_yd_pe_dtb_s}</div>"
             f"</div>"
             f"</div>"
             # ── CE / PE state chips ───────────────────────────────────────────
