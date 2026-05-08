@@ -417,7 +417,11 @@ try:
         _ret_rm  = (_tcl - _pcl) / _pcl * 100 if _pcl > 0 else 0.0
         _thr_rm  = abs(_ret_rm) * (_tvol / _vs14 if _vs14 > 0 else 1.0)
     if _thr_rm == 0.0:
-        _thr_rm = float(sig.get("threat_mult", 0.0))
+        _thr_rm  = float(sig.get("threat_mult", 0.0))
+        _ret_rm  = float(sig.get("daily_ret_pct", 0.0))
+    _rvol_rm     = (_tvol / _vs14 if _vs14 > 0 else 1.0) if not _daily_rm.empty else 1.0
+    _ce_thr_rm   = max(_ret_rm,  0.0) * _rvol_rm
+    _pe_thr_rm   = max(-_ret_rm, 0.0) * _rvol_rm
 
     # Canary and momentum from signals dict
     _canary_dir_rm = sig.get("canary_direction", "NONE")
@@ -453,9 +457,9 @@ try:
         _ce_fav = max((_ce_anc_rm - spot) / _ce_anc_rm * 100, 0.0) if _ce_anc_rm > 0 else 0.0
 
         # 4-filter states
-        _ce_f1 = _ce_adv >= _DEF;  _ce_f2 = _thr_rm > 1.15
+        _ce_f1 = _ce_adv >= _DEF;  _ce_f2 = _ce_thr_rm > 1.15
         _ce_f3 = _ce_can_rm >= 2;  _ce_f4 = _mom_score_rm > 0
-        _pe_f1 = _pe_adv >= _DEF;  _pe_f2 = _thr_rm > 1.15
+        _pe_f1 = _pe_adv >= _DEF;  _pe_f2 = _pe_thr_rm > 1.15
         _pe_f3 = _pe_can_rm >= 2;  _pe_f4 = _mom_score_rm < 0
         _ce_fp = sum([_ce_f1, _ce_f2, _ce_f3, _ce_f4])
         _pe_fp = sum([_pe_f1, _pe_f2, _pe_f3, _pe_f4])
@@ -525,16 +529,18 @@ try:
         except Exception:
             pass
 
-        # Days-to-breach: gap to each trigger ÷ daily ATR pace
-        _dp_pct   = (atr14 / spot * 100 * _thr_rm) if (spot > 0 and _thr_rm > 0 and atr14 > 0) else 0
+        # Days-to-breach: directional pace per side; floor at 1.0× ATR baseline
+        _ce_dp_rm = (atr14 / spot * 100) * max(_ce_thr_rm, 1.0) if (spot > 0 and atr14 > 0) else 0
+        _pe_dp_rm = (atr14 / spot * 100) * max(_pe_thr_rm, 1.0) if (spot > 0 and atr14 > 0) else 0
         _ce_dtb_s = _pe_dtb_s = "—"
-        if _dp_pct > 0 and _ce_def_trig > 0 and _pe_def_trig > 0:
+        if _ce_dp_rm > 0 and _ce_def_trig > 0:
             _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
+            _ce_dtb_s  = f"{_ce_gap_rm / _ce_dp_rm:.1f}d"
+        if _pe_dp_rm > 0 and _pe_def_trig > 0:
             _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
-            _ce_dtb_s  = f"{_ce_gap_rm / _dp_pct:.1f}d"
-            _pe_dtb_s  = f"{_pe_gap_rm / _dp_pct:.1f}d"
+            _pe_dtb_s  = f"{_pe_gap_rm / _pe_dp_rm:.1f}d"
 
-        _thr_col  = "#ef4444" if _thr_rm > 1.15 else "#22c55e"
+        _thr_col  = "#ef4444" if (_ce_thr_rm > 1.15 or _pe_thr_rm > 1.15) else "#22c55e"
         _vix_col  = "#ef4444" if _vix_rm > 20 else "#f59e0b" if _vix_rm > 16 else "#22c55e"
 
         # VIX contextual interpretation — 4-case market regime
@@ -574,7 +580,8 @@ try:
             f"<div style='display:flex;gap:4px;margin-bottom:4px;'>"
             f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
             f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>THREAT MULT</div>"
-            f"<div style='color:{_thr_col};font-size:15px;font-weight:900;line-height:1.2;'>{_thr_rm:.2f}</div>"
+            f"<div style='color:{_thr_col};font-size:12px;font-weight:900;line-height:1.2;'>"
+            f"CE {_ce_thr_rm:.2f} · PE {_pe_thr_rm:.2f}</div>"
             f"</div>"
             f"<div style='flex:1;background:#1e293b;border-radius:6px;padding:5px 10px;'>"
             f"<div style='color:#94a3b8;font-size:8px;font-weight:700;'>INDIA VIX</div>"

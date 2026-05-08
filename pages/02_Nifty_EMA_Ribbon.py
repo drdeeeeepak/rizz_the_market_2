@@ -308,6 +308,9 @@ if threat_mult == 0.0:
     daily_ret_pct = float(sig.get("daily_ret_pct", 0.0))
     rel_vol       = float(sig.get("rel_vol",       1.0))
     threat_mult   = float(sig.get("threat_mult",   0.0))
+# Directional threat: CE is threatened only when market rises; PE only when market falls
+ce_threat_mult = max(daily_ret_pct,  0.0) * rel_vol
+pe_threat_mult = max(-daily_ret_pct, 0.0) * rel_vol
 
 spot_now = spot
 # Fallback: if Kite returns 0 pre-market, use last EOD close from daily data
@@ -388,8 +391,8 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
     pe_favor   = max((spot_now - _pe_anc) / _pe_anc * 100, 0.0)
     ce_favor   = max((_ce_anc - spot_now) / _ce_anc * 100, 0.0)
 
-    ce_def_fired = ce_adverse >= _DEF_THR and threat_mult > 1.15
-    pe_def_fired = pe_adverse >= _DEF_THR and threat_mult > 1.15
+    ce_def_fired = ce_adverse >= _DEF_THR and ce_threat_mult > 1.15
+    pe_def_fired = pe_adverse >= _DEF_THR and pe_threat_mult > 1.15
     ce_def_near  = not ce_def_fired and ce_adverse >= _DEF_THR * 0.75
     pe_def_near  = not pe_def_fired and pe_adverse >= _DEF_THR * 0.75
     ce_off_fired = ce_favor >= _OFF_THR
@@ -454,13 +457,13 @@ if not vix_available:
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
     # CE side filters (spot rallied above CE strike)
     ce_f1 = ce_adverse >= _DEF_THR           # 2.5% adverse drift
-    ce_f2 = threat_mult > 1.15              # institutional backing
+    ce_f2 = ce_threat_mult > 1.15           # institutional backing (up move)
     ce_f3 = ce_canary >= 2                  # canary Day 2+
     ce_f4 = mom_score > 0                   # bullish momentum (hurts CE)
     ce_fp = int(ce_f1) + int(ce_f2) + int(ce_f3) + int(ce_f4)
     # PE side filters (spot fell below PE strike)
     pe_f1 = pe_adverse >= _DEF_THR
-    pe_f2 = threat_mult > 1.15
+    pe_f2 = pe_threat_mult > 1.15           # institutional backing (down move)
     pe_f3 = pe_canary >= 2
     pe_f4 = mom_score < 0                   # bearish momentum (hurts PE)
     pe_fp = int(pe_f1) + int(pe_f2) + int(pe_f3) + int(pe_f4)
@@ -649,15 +652,17 @@ with st.expander("Roll Matrix — Reference", expanded=False):
         "bounce setup or slow bleed. **Watch for reversal before acting on PE.** |"
     )
 
-# Metrics bar
-_daily_pace_pct = (atr14 / spot_now * 100 * threat_mult) if (spot_now > 0 and threat_mult > 0) else 0
-if tue_anchor_available and _daily_pace_pct > 0:
-    _ce_gap = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100) if ce_def_trig_spot > 0 else 0
-    _pe_gap = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100) if pe_def_trig_spot > 0 else 0
-    _ce_days = _ce_gap / _daily_pace_pct
-    _pe_days = _pe_gap / _daily_pace_pct
+# Metrics bar — directional threat pace per side
+# Floor at 1.0 so DTB always shows a finite baseline even when opposite-direction day
+_ce_pace_pct = (atr14 / spot_now * 100) * max(ce_threat_mult, 1.0) if spot_now > 0 else 0
+_pe_pace_pct = (atr14 / spot_now * 100) * max(pe_threat_mult, 1.0) if spot_now > 0 else 0
+if tue_anchor_available and _ce_pace_pct > 0 and _pe_pace_pct > 0:
+    _ce_gap  = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100) if ce_def_trig_spot > 0 else 0
+    _pe_gap  = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100) if pe_def_trig_spot > 0 else 0
+    _ce_days = _ce_gap / _ce_pace_pct
+    _pe_days = _pe_gap / _pe_pace_pct
     _dtb_val = f"CE {_ce_days:.1f}d · PE {_pe_days:.1f}d"
-    _dtb_sub = "gap ÷ ATR×threat pace"
+    _dtb_sub = "gap ÷ directional ATR pace"
     _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
 else:
     _dtb_val = "—"
@@ -667,9 +672,9 @@ else:
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: ui.metric_card("DTE", f"{dte}",
                          sub="Wed/Thu — std IC" if dte >= 5 else "Fri/Mon/Tue — tight IC")
-with c2: ui.metric_card("THREAT MULT", f"{threat_mult:.2f}",
+with c2: ui.metric_card("THREAT MULT", f"CE {ce_threat_mult:.2f} · PE {pe_threat_mult:.2f}",
                          sub=_thr_sub,
-                         color="red" if threat_mult > 1.15 else "green")
+                         color="red" if (ce_threat_mult > 1.15 or pe_threat_mult > 1.15) else "green")
 with c3: ui.metric_card("ANCHOR CLOSE",
                          f"{tue_close:,.0f}" if tue_anchor_available else "N/A",
                          sub=f"Anchor: {tue_anchor_date}" if tue_anchor_available else "No anchor")
@@ -843,7 +848,7 @@ else:
 
         scorecard = (
             _frow("Drift ≥ 2.5% adverse",  f1, f"{adverse:.2f}%")
-            + _frow("Threat Mult > 1.15",   f2, f"{threat_mult:.2f}")
+            + _frow("Threat Mult > 1.15",   f2, f"{ce_threat_mult:.2f}" if is_ce else f"{pe_threat_mult:.2f}")
             + _frow(f"Canary ≥ Day 2 ({canary_val}/4)", f3, f"Day {canary_val}")
             + _frow(f"Mom {'> 0 bullish' if is_ce else '< 0 bearish'}", f4, f"{mom_score:+.1f}%ATR")
         )
@@ -993,7 +998,7 @@ else:
     _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
     st.caption(
         f"Anchor {tue_close:,.0f} · Spot {spot_now:,.0f} · Drift {drift_pct:+.2f}% · "
-        f"Threat {threat_mult:.2f} · VIX {vix_current:.2f} · {_off_rule}"
+        f"Threat CE {ce_threat_mult:.2f} · PE {pe_threat_mult:.2f} · VIX {vix_current:.2f} · {_off_rule}"
     )
 
 st.divider()
