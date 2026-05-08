@@ -417,22 +417,30 @@ try:
         from data.live_fetcher import get_nifty_daily_live as _gdl_rm
         _dlrm = _gdl_rm()
         if not _dlrm.empty and len(_dlrm) >= 3:
-            _vs14          = float(_dlrm["volume"].rolling(14).mean().iloc[-1])
-            _today_row_rm  = _dlrm.iloc[-1]
-            _yday_row_rm   = _dlrm.iloc[-2]
-            _d2ago_row_rm  = _dlrm.iloc[-3]
+            import datetime as _dt_thr, pytz as _ptz_thr
+            _vs14        = float(_dlrm["volume"].rolling(14).mean().iloc[-1])
+            _now_t       = _dt_thr.datetime.now(_ptz_thr.timezone("Asia/Kolkata"))
+            _lc_date     = _dlrm.index[-1].date() if hasattr(_dlrm.index[-1], 'date') else _dlrm.index[-1].to_pydatetime().date()
+            _has_today   = (_lc_date == _now_t.date())
+            if _has_today:
+                _today_row_rm = _dlrm.iloc[-1]
+                _yday_row_rm  = _dlrm.iloc[-2]
+                _d2ago_row_rm = _dlrm.iloc[-3]
+            else:
+                _today_row_rm = None
+                _yday_row_rm  = _dlrm.iloc[-1]
+                _d2ago_row_rm = _dlrm.iloc[-2]
             _prev_close_rm = float(_yday_row_rm["close"])
             _d2ago_cl_rm   = float(_d2ago_row_rm["close"])
-            import datetime as _dt_thr, pytz as _ptz_thr
-            _now_t   = _dt_thr.datetime.now(_ptz_thr.timezone("Asia/Kolkata"))
-            _mo      = _now_t.replace(hour=9, minute=15, second=0, microsecond=0)
-            _el_min  = max(1, int((_now_t - _mo).total_seconds() / 60))
-            _el_frac = min(_el_min / 375.0, 1.0)
-            _tvol_proj = float(_today_row_rm["volume"]) / _el_frac
-            _rvol_rm   = _tvol_proj / _vs14 if _vs14 > 0 else 1.0
-            _today_move_pts_rm = (spot if spot > 0 else float(_today_row_rm["close"])) - _prev_close_rm
-            _ret_rm    = _today_move_pts_rm / _prev_close_rm * 100 if _prev_close_rm > 0 else 0.0
-            _thr_rm    = abs(_ret_rm) * _rvol_rm
+            if _has_today and _today_row_rm is not None:
+                _mo      = _now_t.replace(hour=9, minute=15, second=0, microsecond=0)
+                _el_min  = max(1, int((_now_t - _mo).total_seconds() / 60))
+                _el_frac = min(_el_min / 375.0, 1.0)
+                _tvol_proj = float(_today_row_rm["volume"]) / _el_frac
+                _rvol_rm   = _tvol_proj / _vs14 if _vs14 > 0 else 1.0
+                _today_move_pts_rm = (spot if spot > 0 else float(_today_row_rm["close"])) - _prev_close_rm
+                _ret_rm    = _today_move_pts_rm / _prev_close_rm * 100 if _prev_close_rm > 0 else 0.0
+                _thr_rm    = abs(_ret_rm) * _rvol_rm
             _yday_move_pts_rm = _prev_close_rm - _d2ago_cl_rm
             _yd_ret_rm = _yday_move_pts_rm / _d2ago_cl_rm * 100 if _d2ago_cl_rm > 0 else 0.0
             _yd_rv_rm  = float(_yday_row_rm["volume"]) / _vs14 if _vs14 > 0 else 1.0

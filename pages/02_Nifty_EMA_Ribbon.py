@@ -300,28 +300,25 @@ try:
     from data.live_fetcher import get_nifty_daily_live as _gdl
     _dlive = _gdl()
     if not _dlive.empty and len(_dlive) >= 3:
-        vol_sma14        = float(_dlive["volume"].rolling(14).mean().iloc[-1])
-        _today_row       = _dlive.iloc[-1]   # today's partial candle (live)
-        _yday_row        = _dlive.iloc[-2]   # yesterday's complete candle
-        _d2ago_row       = _dlive.iloc[-3]   # 2 days ago
+        vol_sma14     = float(_dlive["volume"].rolling(14).mean().iloc[-1])
+        _now_ist_t    = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+        _lc_date      = _dlive.index[-1].date() if hasattr(_dlive.index[-1], 'date') else _dlive.index[-1].to_pydatetime().date()
+        _has_today    = (_lc_date == _now_ist_t.date())
+        if _has_today:
+            _today_row, _yday_row, _d2ago_row = _dlive.iloc[-1], _dlive.iloc[-2], _dlive.iloc[-3]
+        else:
+            _today_row, _yday_row, _d2ago_row = None, _dlive.iloc[-1], _dlive.iloc[-2]
         _prev_close_live = float(_yday_row["close"])
         _d2ago_close     = float(_d2ago_row["close"])
-
-        # Today's volume projected to full day based on elapsed market time
-        _now_ist_t   = _dtrp.datetime.now(_pyrp.timezone("Asia/Kolkata"))
-        _mkt_open    = _now_ist_t.replace(hour=9, minute=15, second=0, microsecond=0)
-        _elapsed_min = max(1, int((_now_ist_t - _mkt_open).total_seconds() / 60))
-        _elapsed_frac = min(_elapsed_min / 375.0, 1.0)
-        _today_vol_proj = float(_today_row["volume"]) / _elapsed_frac
-        rel_vol         = _today_vol_proj / vol_sma14 if vol_sma14 > 0 else 1.0
-
-        # Today's move from yesterday's close (live, in points and %)
-        _today_move_pts = spot if spot > 0 else float(_today_row["close"])
-        _today_move_pts = _today_move_pts - _prev_close_live
-        daily_ret_pct   = _today_move_pts / _prev_close_live * 100 if _prev_close_live > 0 else 0.0
-        threat_mult     = abs(daily_ret_pct) * rel_vol
-
-        # Yesterday's reference
+        if _has_today and _today_row is not None:
+            _mkt_open     = _now_ist_t.replace(hour=9, minute=15, second=0, microsecond=0)
+            _elapsed_min  = max(1, int((_now_ist_t - _mkt_open).total_seconds() / 60))
+            _elapsed_frac = min(_elapsed_min / 375.0, 1.0)
+            rel_vol         = (float(_today_row["volume"]) / _elapsed_frac) / vol_sma14 if vol_sma14 > 0 else 1.0
+            _today_move_pts = (spot if spot > 0 else float(_today_row["close"])) - _prev_close_live
+            daily_ret_pct   = _today_move_pts / _prev_close_live * 100 if _prev_close_live > 0 else 0.0
+            threat_mult     = abs(daily_ret_pct) * rel_vol
+        # Yesterday's reference (always computable)
         _yday_move_pts = _prev_close_live - _d2ago_close
         _yday_ret_pct  = _yday_move_pts / _d2ago_close * 100 if _d2ago_close > 0 else 0.0
         _yday_rel_vol  = float(_yday_row["volume"]) / vol_sma14 if vol_sma14 > 0 else 1.0
