@@ -738,6 +738,92 @@ with c6: ui.metric_card("DAYS TO BREACH", _dtb_val,
                          sub=_dtb_sub,
                          color="default")
 
+# ── Threat & DTB daily history table ─────────────────────────────────────────
+with st.expander("Threat & DTB — Daily History", expanded=False):
+    if tue_anchor_available and ce_def_trig_spot > 0 and pe_def_trig_spot > 0 and not _dlive.empty and len(_dlive) >= 3:
+        # Vectorised computation on daily data
+        _th = _dlive.copy()
+        _th["move_pts"] = _th["close"].diff()
+        _th["ret_pct"]  = _th["close"].pct_change() * 100
+        _th["vol_sma"]  = _th["volume"].rolling(14).mean()
+        _th["rel_vol"]  = _th["volume"] / _th["vol_sma"]
+        _th["ce_thr"]   = _th["ret_pct"].clip(lower=0) * _th["rel_vol"]
+        _th["pe_thr"]   = (-_th["ret_pct"]).clip(lower=0) * _th["rel_vol"]
+        # DTB: gap from that day's close to trigger ÷ that day's move
+        _th["ce_gap"]   = (ce_def_trig_spot - _th["close"]).clip(lower=0)
+        _th["pe_gap"]   = (_th["close"] - pe_def_trig_spot).clip(lower=0)
+        _th["ce_dtb"]   = (_th["ce_gap"] / _th["move_pts"]).where(_th["move_pts"] > 0)
+        _th["pe_dtb"]   = (_th["pe_gap"] / (-_th["move_pts"])).where(_th["move_pts"] < 0)
+        # Use last 7 historical rows (exclude today's partial candle if present)
+        _hist_end = -1 if _has_today else len(_th)
+        _th_hist  = _th.iloc[max(-8, -len(_th)):_hist_end].copy()
+        _th_hist  = _th_hist.dropna(subset=["move_pts"]).tail(7)
+
+        def _fmt_dtb(v):
+            if pd.isna(v) or v <= 0: return "—"
+            return f"{v:.1f}d"
+        def _fmt_thr(v):
+            return f"{v:.2f}" if not pd.isna(v) else "0.00"
+
+        _display_rows = []
+        for _idx, _r in _th_hist.iterrows():
+            _display_rows.append({
+                "Date":      _idx.strftime("%d %b"),
+                "Ret %":     f"{_r['ret_pct']:+.2f}%",
+                "Rel Vol":   f"{_r['rel_vol']:.2f}×",
+                "CE Threat": float(_r["ce_thr"]),
+                "PE Threat": float(_r["pe_thr"]),
+                "CE DTB":    _fmt_dtb(_r["ce_dtb"]),
+                "PE DTB":    _fmt_dtb(_r["pe_dtb"]),
+            })
+        # Prepend today's live row
+        if _has_today:
+            _display_rows.append({
+                "Date":      "Today ▶",
+                "Ret %":     f"{daily_ret_pct:+.2f}%",
+                "Rel Vol":   f"{rel_vol:.2f}×",
+                "CE Threat": round(ce_threat_mult, 2),
+                "PE Threat": round(pe_threat_mult, 2),
+                "CE DTB":    _ce_days_s,
+                "PE DTB":    _pe_days_s,
+            })
+        _display_rows = list(reversed(_display_rows))   # today at top
+        _tbl = pd.DataFrame(_display_rows)
+
+        def _style_row(row):
+            styles = [""] * len(row)
+            cols = list(row.index)
+            ce_thr_i = cols.index("CE Threat")
+            pe_thr_i = cols.index("PE Threat")
+            ce_dtb_i = cols.index("CE DTB")
+            pe_dtb_i = cols.index("PE DTB")
+            if isinstance(row["CE Threat"], float) and row["CE Threat"] > 1.15:
+                styles[ce_thr_i] = "background-color:#fee2e2;color:#b91c1c;font-weight:700"
+            if isinstance(row["PE Threat"], float) and row["PE Threat"] > 1.15:
+                styles[pe_thr_i] = "background-color:#fee2e2;color:#b91c1c;font-weight:700"
+            for _di, _dk in [(ce_dtb_i, "CE DTB"), (pe_dtb_i, "PE DTB")]:
+                _v = row[_dk]
+                if isinstance(_v, str) and _v.endswith("d"):
+                    try:
+                        _n = float(_v[:-1])
+                        if _n < 2:
+                            styles[_di] = "background-color:#fee2e2;color:#b91c1c;font-weight:700"
+                        elif _n < 5:
+                            styles[_di] = "background-color:#fef3c7;color:#92400e;font-weight:700"
+                    except ValueError:
+                        pass
+            return styles
+
+        # Format threat columns for display
+        _tbl["CE Threat"] = _tbl["CE Threat"].apply(_fmt_thr)
+        _tbl["PE Threat"] = _tbl["PE Threat"].apply(_fmt_thr)
+        st.dataframe(_tbl.style.apply(_style_row, axis=1),
+                     hide_index=True, use_container_width=True)
+        st.caption(f"Trigger: CE {ce_def_trig_spot:,} · PE {pe_def_trig_spot:,} · "
+                   f"Anchor {tue_close:,.0f} · DTB = gap pts ÷ day's move pts")
+    else:
+        st.info("Anchor or live data unavailable — table cannot be computed.")
+
 if not tue_anchor_available:
     import datetime as _dtnow, pytz as _pynow
     _ist_now2 = _dtnow.datetime.now(_pynow.timezone("Asia/Kolkata"))
