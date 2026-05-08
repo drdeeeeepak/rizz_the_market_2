@@ -529,17 +529,14 @@ try:
         except Exception:
             pass
 
-        # Days-to-breach: pace = max(directional ret% × rel_vol, ATR%) — clean units
-        _atr_pct_rm  = (atr14 / spot * 100) if (spot > 0 and atr14 > 0) else 0
-        _ce_dp_rm    = max(max(_ret_rm,  0.0) * _rvol_rm, _atr_pct_rm)
-        _pe_dp_rm    = max(max(-_ret_rm, 0.0) * _rvol_rm, _atr_pct_rm)
+        # DTB = gap% ÷ (today's directional change% × rel_vol); "—" when no directional move
         _ce_dtb_s = _pe_dtb_s = "—"
-        if _atr_pct_rm > 0 and _ce_def_trig > 0:
+        if _ce_def_trig > 0 and _ce_thr_rm > 0:
             _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
-            _ce_dtb_s  = f"{_ce_gap_rm / _ce_dp_rm:.1f}d"
-        if _atr_pct_rm > 0 and _pe_def_trig > 0:
+            _ce_dtb_s  = f"{_ce_gap_rm / _ce_thr_rm:.1f}d"
+        if _pe_def_trig > 0 and _pe_thr_rm > 0:
             _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
-            _pe_dtb_s  = f"{_pe_gap_rm / _pe_dp_rm:.1f}d"
+            _pe_dtb_s  = f"{_pe_gap_rm / _pe_thr_rm:.1f}d"
 
         _thr_col  = "#ef4444" if (_ce_thr_rm > 1.15 or _pe_thr_rm > 1.15) else "#22c55e"
         _vix_col  = "#ef4444" if _vix_rm > 20 else "#f59e0b" if _vix_rm > 16 else "#22c55e"
