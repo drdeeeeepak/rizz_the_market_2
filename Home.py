@@ -529,14 +529,15 @@ try:
         except Exception:
             pass
 
-        # Days-to-breach: directional pace per side; floor at 1.0× ATR baseline
-        _ce_dp_rm = (atr14 / spot * 100) * max(_ce_thr_rm, 1.0) if (spot > 0 and atr14 > 0) else 0
-        _pe_dp_rm = (atr14 / spot * 100) * max(_pe_thr_rm, 1.0) if (spot > 0 and atr14 > 0) else 0
+        # Days-to-breach: pace = max(directional ret% × rel_vol, ATR%) — clean units
+        _atr_pct_rm  = (atr14 / spot * 100) if (spot > 0 and atr14 > 0) else 0
+        _ce_dp_rm    = max(max(_ret_rm,  0.0) * _rvol_rm, _atr_pct_rm)
+        _pe_dp_rm    = max(max(-_ret_rm, 0.0) * _rvol_rm, _atr_pct_rm)
         _ce_dtb_s = _pe_dtb_s = "—"
-        if _ce_dp_rm > 0 and _ce_def_trig > 0:
+        if _atr_pct_rm > 0 and _ce_def_trig > 0:
             _ce_gap_rm = max(0, (_ce_def_trig - spot) / spot * 100)
             _ce_dtb_s  = f"{_ce_gap_rm / _ce_dp_rm:.1f}d"
-        if _pe_dp_rm > 0 and _pe_def_trig > 0:
+        if _atr_pct_rm > 0 and _pe_def_trig > 0:
             _pe_gap_rm = max(0, (spot - _pe_def_trig) / spot * 100)
             _pe_dtb_s  = f"{_pe_gap_rm / _pe_dp_rm:.1f}d"
 

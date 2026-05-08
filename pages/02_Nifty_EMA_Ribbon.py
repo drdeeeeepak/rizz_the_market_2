@@ -652,17 +652,18 @@ with st.expander("Roll Matrix — Reference", expanded=False):
         "bounce setup or slow bleed. **Watch for reversal before acting on PE.** |"
     )
 
-# Metrics bar — directional threat pace per side
-# Floor at 1.0 so DTB always shows a finite baseline even when opposite-direction day
-_ce_pace_pct = (atr14 / spot_now * 100) * max(ce_threat_mult, 1.0) if spot_now > 0 else 0
-_pe_pace_pct = (atr14 / spot_now * 100) * max(pe_threat_mult, 1.0) if spot_now > 0 else 0
-if tue_anchor_available and _ce_pace_pct > 0 and _pe_pace_pct > 0:
+# Metrics bar — directional pace per side
+# pace = max(today's directional ret% × rel_vol, ATR%) — actual move or baseline, whichever larger
+_atr_pct     = (atr14 / spot_now * 100) if spot_now > 0 else 0
+_ce_pace_pct = max(max(daily_ret_pct,  0.0) * rel_vol, _atr_pct)   # up-move pace for CE
+_pe_pace_pct = max(max(-daily_ret_pct, 0.0) * rel_vol, _atr_pct)   # down-move pace for PE
+if tue_anchor_available and _atr_pct > 0:
     _ce_gap  = max(0, (ce_def_trig_spot - spot_now) / spot_now * 100) if ce_def_trig_spot > 0 else 0
     _pe_gap  = max(0, (spot_now - pe_def_trig_spot) / spot_now * 100) if pe_def_trig_spot > 0 else 0
     _ce_days = _ce_gap / _ce_pace_pct
     _pe_days = _pe_gap / _pe_pace_pct
     _dtb_val = f"CE {_ce_days:.1f}d · PE {_pe_days:.1f}d"
-    _dtb_sub = "gap ÷ directional ATR pace"
+    _dtb_sub = "gap ÷ directional pace"
     _thr_sub = f"Ret {daily_ret_pct:+.1f}% · RelVol {rel_vol:.2f}"
 else:
     _dtb_val = "—"
