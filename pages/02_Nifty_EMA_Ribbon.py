@@ -420,7 +420,7 @@ def _driver(s1, s2, s3):
         return "Source 1 (EMA Gap)"
     return "Source 2" if s2 >= s3 else "Source 3"
 pe_driver = _driver(src1_pe, src2_pe, src3_pe)
-ce_driver = _driver(src1_ce, src2_ce, src3_c    
+ce_driver = _driver(src1_ce, src2_ce, src3_c
     return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
 
 if _is_live():
