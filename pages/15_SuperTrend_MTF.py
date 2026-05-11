@@ -1,13 +1,5 @@
-# pages/03_SuperTrend_MTF.py — v3.1 (Live Engine & Strict Rules)
+# pages/03_SuperTrend_MTF.py — v3.2 (Dynamic Fallback & Live Engine)
 # SuperTrend Multi-Timeframe Monitor — Biweekly 3.5% / 4.0% Engine
-#
-# LOCKED CHANGES:
-#   - Live signal bootstrapping and auto-refresh integration
-#   - Single MTF Canary based on 4H/1H Directional Rules
-#   - Strike-Path Corridors with integrated P&L nodes
-#   - Section 1 Cards: Tiers 1/2/3, State (SLEEPING/DRIVING), Flip Timestamps
-#   - Section 2 Tables: Moat Stacks (PE and CE)
-#   - Explicit Reference and Rulebook at bottom
 
 import streamlit as st
 import pandas as pd
@@ -15,12 +7,12 @@ import numpy as np
 from datetime import datetime, timedelta
 import pytz
 from streamlit_autorefresh import st_autorefresh
+from page_utils import bootstrap_signals, show_page_header
 
 # ── 0. CONFIG & LIVE BOOTSTRAP ────────────────────────────────────────────────
 st.set_page_config(page_title="P15 · SuperTrend MTF", layout="wide")
 st_autorefresh(interval=180_000, key="p15")
 
-from page_utils import bootstrap_signals, show_page_header
 sig, spot_live, signals_ts = bootstrap_signals()
 
 if not sig:
@@ -29,10 +21,10 @@ if not sig:
 
 show_page_header(spot_live, signals_ts)
 
-# ── 1. DATA EXTRACTION & FALLBACKS ────────────────────────────────────────────
+# ── 1. DATA EXTRACTION & DYNAMIC FALLBACKS ────────────────────────────────────
 spot_now = float(spot_live) if spot_live > 0 else 22150.0
 
-# Fetch Tuesday Anchor Close
+# Fetch Tuesday Anchor Close (Dynamic Fallback to current spot to prevent UI break)
 tue_close = float(sig.get("tue_close", 0))
 if tue_close == 0:
     try:
@@ -42,19 +34,27 @@ if tue_close == 0:
     except Exception:
         pass
 if tue_close == 0: 
-    tue_close = 22000.0  # Absolute fallback if no anchor exists
+    tue_close = round(spot_now / 50) * 50  # Fallback dynamically to current spot
 
-# Fallback Mock Data (Used ONLY if live ST data is missing)
-_mock_st = {
-    "DAILY": {"val": 21450.0, "dir": "BULL", "flip_price": 21300.0, "flip_time": "May 02, 14:15", "weight": 30},
-    "4H":    {"val": 21850.0, "dir": "BULL", "flip_price": 21950.0, "flip_time": "May 08, 09:15", "weight": 20},
-    "2H":    {"val": 22400.0, "dir": "BEAR", "flip_price": 22350.0, "flip_time": "May 09, 13:15", "weight": 15},
-    "1H":    {"val": 22320.0, "dir": "BEAR", "flip_price": 22200.0, "flip_time": "May 10, 10:15", "weight": 12},
-    "30M":   {"val": 22210.0, "dir": "BEAR", "flip_price": 22100.0, "flip_time": "May 11, 09:45", "weight": 8},
-    "15M":   {"val": 22100.0, "dir": "BULL", "flip_price": 22120.0, "flip_time": "May 11, 14:30", "weight": 5},
-}
+# Dynamic Mock Generator (Ensures UI geometry doesn't break if backend is missing ST data)
+def _generate_dynamic_mock(spot):
+    n_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
+    t_str = n_ist.strftime("%b %d, %H:%M")
+    y_str = (n_ist - timedelta(days=1)).strftime("%b %d, 14:15")
+    
+    return {
+        "DAILY": {"val": spot - 600, "dir": "BULL", "flip_price": spot - 800, "flip_time": "May 02, 14:15", "weight": 30},
+        "4H":    {"val": spot - 350, "dir": "BULL", "flip_price": spot - 450, "flip_time": y_str, "weight": 20},
+        "2H":    {"val": spot + 200, "dir": "BEAR", "flip_price": spot + 150, "flip_time": t_str, "weight": 15},
+        "1H":    {"val": spot + 100, "dir": "BEAR", "flip_price": spot + 50,  "flip_time": t_str, "weight": 12},
+        "30M":   {"val": spot - 40,  "dir": "BULL", "flip_price": spot - 60,  "flip_time": t_str, "weight": 8},
+        "15M":   {"val": spot + 30,  "dir": "BEAR", "flip_price": spot + 10,  "flip_time": t_str, "weight": 5},
+    }
 
-st_data = sig.get("supertrend_mtf", _mock_st)
+st_data = sig.get("supertrend_mtf")
+if not st_data:
+    st.warning("⚠️ Live 'supertrend_mtf' dictionary missing from backend. Generating structural fallbacks based on live spot.")
+    st_data = _generate_dynamic_mock(spot_now)
 
 # ── 2. ENGINE CALCULATIONS: States, Depth, and Corridors ──────────────────────
 _DEF_THR, _PREP_LOSS = 2.5, 2.25
@@ -62,7 +62,6 @@ _OFF_THR, _PREP_PROF = 1.8, 1.35
 ce_sold = int(round(tue_close * 1.035 / 50) * 50)
 pe_sold = int(round(tue_close * 0.960 / 50) * 50)
 
-# Process ST Data dynamically
 for tf, data in st_data.items():
     dist_pts = abs(spot_now - data["val"])
     dist_pct = (dist_pts / spot_now) * 100
@@ -82,11 +81,10 @@ for tf, data in st_data.items():
     data["score"] = data["weight"] * data["mult"]
     data["protects"] = "PUT leg" if data["dir"] == "BULL" else "CALL leg"
     
-    # State Logic: Expansion (DRIVING) vs Compression (SLEEPING)
     if data["dir"] == "BULL":
         data["state"] = "🚀 DRIVING" if spot_now > data.get("flip_price", 0) else "📦 SLEEPING"
     else:
-        data["state"] = "🚀 DRIVING" if spot_now < data.get("flip_price", 99999) else "📦 SLEEPING"
+        data["state"] = "🚀 DRIVING" if spot_now < data.get("flip_price", 999999) else "📦 SLEEPING"
 
 # ── 3. SINGLE MTF CANARY (4H / 1H Directional Rules) ──────────────────────────
 st_4h = st_data.get("4H", {})
@@ -100,21 +98,24 @@ canary_sub   = "Theta Farm — Market trapped inside operational boxes. Premium 
 _1h_threat_dir = "CE" if st_1h.get("dir") == "BULL" else "PE"
 _4h_threat_dir = "CE" if st_4h.get("dir") == "BULL" else "PE"
 
-# Helper to identify if a timeframe flipped "recently" (today/yesterday)
 def _is_recent(time_str):
+    if not time_str or time_str == "-": return False
     try:
         n_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
-        dt_str = str(time_str).split(",")[0] # e.g. "May 11"
-        return n_ist.strftime("%b %d") in dt_str or (n_ist - timedelta(days=1)).strftime("%b %d") in dt_str
+        dt_str = str(time_str)
+        t_1 = n_ist.strftime("%b %d")
+        t_2 = n_ist.strftime("%Y-%m-%d")
+        y_1 = (n_ist - timedelta(days=1)).strftime("%b %d")
+        y_2 = (n_ist - timedelta(days=1)).strftime("%Y-%m-%d")
+        return any(s in dt_str for s in [t_1, t_2, y_1, y_2])
     except:
         return False
 
-# Cascading Rule Engine
 if _is_recent(st_4h.get("flip_time", "")):
     canary_state = f"🚨 EXIT {_4h_threat_dir}"
     canary_col   = "#7f1d1d"
     canary_sub   = f"Structure Collapse — 4H wall has flipped. {_4h_threat_dir} macro thesis dead."
-elif _is_recent(st_1h.get("flip_time", "")) or (st_1h.get("state") == "🚀 DRIVING" and st_4h.get("state") == "🚀 DRIVING"):
+elif _is_recent(st_1h.get("flip_time", "")) or (st_1h.get("state") == "🚀 DRIVING" and st_4h.get("state") == "🚀 DRIVING" and st_1h.get("dir") == st_4h.get("dir")):
     canary_state = f"🔴 ACT / ROLL {_1h_threat_dir}"
     canary_col   = "#dc2626"
     canary_sub   = f"Roll Trigger — 1H has flipped or dragged 4H into driving. {_1h_threat_dir} challenged."
@@ -138,7 +139,6 @@ st.markdown(
 # ── 4. STRIKE-PATH CORRIDORS (Visual Map with P&L Nodes) ──────────────────────
 ui_col1, ui_col2 = st.columns(2)
 
-# Calculate P&L Nodes
 ce_bk_loss = tue_close * (1 + _DEF_THR/100)
 ce_pr_loss = tue_close * (1 + _PREP_LOSS/100)
 ce_bk_prof = tue_close * (1 - _OFF_THR/100)
@@ -166,14 +166,12 @@ pe_items = [
     ("SPOT PRICE", spot_now, "#3b82f6", "white"),
 ]
 
-# Inject Dynamic ST Moats
 for tf, data in st_data.items():
-    if data["dir"] == "BEAR": # Ceiling (CE Corridor)
+    if data["dir"] == "BEAR":
         ce_items.append((f"🧱 {tf} MOAT", data["val"], "#dc2626", "white"))
-    else: # Floor (PE Corridor)
+    else:
         pe_items.append((f"🧱 {tf} MOAT", data["val"], "#16a34a", "white"))
 
-# Sort Corridors (Descending Price)
 ce_items.sort(key=lambda x: x[1], reverse=True)
 pe_items.sort(key=lambda x: x[1], reverse=True)
 
@@ -184,10 +182,9 @@ def _render_corridor(title, items, is_ce):
     for lbl, val, bg, txt in items:
         border = "border: 2px solid #60a5fa;" if "SPOT" in lbl else "border: 1px solid rgba(255,255,255,0.1);"
         margin = "margin: 12px 0;" if "SPOT" in lbl else "margin: 4px 0;"
-        pct_from_spot = ((val - spot_now) / spot_now) * 100
-        pct_str = f"{pct_from_spot:+.2f}%" if not "SPOT" in lbl else "—"
+        pct_str = f"{((val - spot_now) / spot_now) * 100:+.2f}%" if not "SPOT" in lbl else "—"
         
-        # Filter logic: Don't show irrelevant P&L nodes if spot has already passed them
+        # Spatial filtering
         if is_ce and val < spot_now and "PROFIT" not in lbl and "SOLD" not in lbl: continue
         if not is_ce and val > spot_now and "PROFIT" not in lbl and "SOLD" not in lbl: continue
 
@@ -227,17 +224,14 @@ for i, (tf, data) in enumerate(st_data.items()):
             f"<span style='font-weight:800;font-size:16px;color:#1e293b;'>{tf} SuperTrend <span style='font-size:12px;color:#64748b;font-weight:600;'>({_tier_map.get(tf, 'TF')})</span></span>"
             f"<span style='background:{dir_col};color:white;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;'>{data['dir']}</span>"
             f"</div>"
-            
             f"<div style='font-size:22px;font-weight:900;color:#0f172a;'>{data.get('val', 0):,.0f}</div>"
             f"<div style='font-size:13px;color:#475569;margin-bottom:12px;'>"
             f"{data.get('dist_pts', 0):,.0f} pts from spot · <span style='font-weight:700;'>{data.get('dist_pct', 0):.2f}% CMP</span>"
             f"</div>"
-            
             f"<div style='display:flex;gap:6px;margin-bottom:12px;'>"
             f"<span style='font-size:11px;font-weight:700;color:{depth_col};border:1px solid {depth_col};padding:2px 6px;border-radius:4px;'>{data.get('depth', 'N/A')}</span>"
             f"<span style='font-size:11px;font-weight:700;color:white;background:{state_col};padding:2px 6px;border-radius:4px;'>{data.get('state', 'UNKNOWN')}</span>"
             f"</div>"
-            
             f"<div style='background:#f8fafc;padding:8px;border-radius:6px;font-size:12px;color:#475569;'>"
             f"<div style='margin-bottom:4px;'><span style='font-weight:600;'>Protects:</span> {data.get('protects', '-')}</div>"
             f"<div style='margin-bottom:4px;'><span style='font-weight:600;'>Flip Time:</span> {data.get('flip_time', '-')}</div>"
@@ -267,32 +261,22 @@ for tf, data in st_data.items():
         "Score": data.get('score', 0)
     }
     if data.get("dir") == "BULL":
-        pe_rows.append(row)
-        pe_score += data.get('score', 0)
+        pe_rows.append(row); pe_score += data.get('score', 0)
     else:
-        ce_rows.append(row)
-        ce_score += data.get('score', 0)
-
-df_pe = pd.DataFrame(pe_rows)
-df_ce = pd.DataFrame(ce_rows)
+        ce_rows.append(row); ce_score += data.get('score', 0)
 
 col_tbl1, col_tbl2 = st.columns(2)
-
 with col_tbl1:
     st.markdown(f"#### 🟢 PUT Side Moat Stack")
     st.markdown(f"<div style='background:#dcfce7;color:#166534;padding:8px 12px;border-radius:6px;font-weight:700;margin-bottom:10px;'>Score: {pe_score}/100</div>", unsafe_allow_html=True)
-    if not df_pe.empty:
-        st.dataframe(df_pe, hide_index=True, use_container_width=True)
-    else:
-        st.warning("No Bullish Moats detected.")
+    if pe_rows: st.dataframe(pd.DataFrame(pe_rows), hide_index=True, use_container_width=True)
+    else: st.warning("No Bullish Moats detected.")
 
 with col_tbl2:
     st.markdown(f"#### 🔴 CALL Side Moat Stack")
     st.markdown(f"<div style='background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:6px;font-weight:700;margin-bottom:10px;'>Score: {ce_score}/100</div>", unsafe_allow_html=True)
-    if not df_ce.empty:
-        st.dataframe(df_ce, hide_index=True, use_container_width=True)
-    else:
-        st.warning("No Bearish Moats detected.")
+    if ce_rows: st.dataframe(pd.DataFrame(ce_rows), hide_index=True, use_container_width=True)
+    else: st.warning("No Bearish Moats detected.")
 
 st.divider()
 
