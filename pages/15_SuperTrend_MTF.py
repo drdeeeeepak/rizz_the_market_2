@@ -21,10 +21,10 @@ if not sig:
 
 show_page_header(spot_live, signals_ts)
 
-# ── 1. DATA EXTRACTION & DYNAMIC FALLBACKS ────────────────────────────────────
+# ── 1. DATA EXTRACTION & LIVE ENGINE ───────────────────────────────────────────
 spot_now = float(spot_live) if spot_live > 0 else 22150.0
 
-# Fetch Tuesday Anchor Close (Dynamic Fallback to current spot to prevent UI break)
+# Fetch Tuesday Anchor Close
 tue_close = float(sig.get("tue_close", 0))
 if tue_close == 0:
     try:
@@ -33,30 +33,75 @@ if tue_close == 0:
         tue_close = float(_anch.get("close", 0))
     except Exception:
         pass
-if tue_close == 0: 
-    tue_close = round(spot_now / 50) * 50  # Fallback dynamically to current spot
+if tue_close == 0:
+    tue_close = round(spot_now / 50) * 50
 
-# Dynamic Mock Generator (Ensures UI geometry doesn't break if backend is missing ST data)
+# Live engine call during market hours
+def _is_mkt_live():
+    n = datetime.now(pytz.timezone("Asia/Kolkata"))
+    t = n.hour * 60 + n.minute
+    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+
+if _is_mkt_live():
+    try:
+        from data.live_fetcher import (
+            get_nifty_daily_live, get_nifty_1h_phase,
+            get_nifty_30m, get_nifty_15m, get_nifty_5m, get_nifty_spot as _gs15,
+        )
+        from analytics.supertrend import SuperTrendEngine
+        _df15  = get_nifty_daily_live()
+        _1h15  = get_nifty_1h_phase()
+        _30m15 = get_nifty_30m()
+        _15m15 = get_nifty_15m()
+        _5m15  = get_nifty_5m()
+        _sp15  = _gs15() or spot_now
+        if not _df15.empty and not _1h15.empty and _sp15 > 0:
+            _st15 = SuperTrendEngine().signals(
+                df_daily=_df15, df_1h=_1h15, df_30m=_30m15,
+                df_15m=_15m15, df_5m=_5m15, spot=_sp15
+            )
+            sig = {**sig, **{f"st_{k}": v for k, v in _st15.items()}}
+            spot_now = _sp15
+    except Exception as _e15:
+        st.caption(f"Live engine: {_e15}")
+
+# Build st_data from engine output (st_tf_signals) or fallback to mock
+_TF_MAP = [("daily","DAILY"),("4h","4H"),("2h","2H"),("1h","1H"),("30m","30M"),("15m","15M")]
+_TF_WTS = {"daily":30,"4h":20,"2h":15,"1h":12,"30m":8,"15m":5}
+
 def _generate_dynamic_mock(spot):
-    n_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
-    t_str = n_ist.strftime("%b %d, %H:%M")
-    y_str = (n_ist - timedelta(days=1)).strftime("%b %d, 14:15")
-    
     return {
-        "DAILY": {"val": spot - 600, "dir": "BULL", "flip_price": spot - 800, "flip_time": "May 02, 14:15", "weight": 30},
-        "4H":    {"val": spot - 350, "dir": "BULL", "flip_price": spot - 450, "flip_time": y_str, "weight": 20},
-        "2H":    {"val": spot + 200, "dir": "BEAR", "flip_price": spot + 150, "flip_time": t_str, "weight": 15},
-        "1H":    {"val": spot + 100, "dir": "BEAR", "flip_price": spot + 50,  "flip_time": t_str, "weight": 12},
-        "30M":   {"val": spot - 40,  "dir": "BULL", "flip_price": spot - 60,  "flip_time": t_str, "weight": 8},
-        "15M":   {"val": spot + 30,  "dir": "BEAR", "flip_price": spot + 10,  "flip_time": t_str, "weight": 5},
+        "DAILY": {"val":spot-600,"dir":"BULL","flip_price":spot-800,"flip_time":"(mock)","weight":30,"flip":False},
+        "4H":    {"val":spot-350,"dir":"BULL","flip_price":spot-450,"flip_time":"(mock)","weight":20,"flip":False},
+        "2H":    {"val":spot+200,"dir":"BEAR","flip_price":spot+150,"flip_time":"(mock)","weight":15,"flip":False},
+        "1H":    {"val":spot+100,"dir":"BEAR","flip_price":spot+50, "flip_time":"(mock)","weight":12,"flip":False},
+        "30M":   {"val":spot-40, "dir":"BULL","flip_price":spot-60, "flip_time":"(mock)","weight":8, "flip":False},
+        "15M":   {"val":spot+30, "dir":"BEAR","flip_price":spot+10, "flip_time":"(mock)","weight":5, "flip":False},
     }
 
-st_data = sig.get("supertrend_mtf")
-if not st_data:
-    st.warning("⚠️ Live 'supertrend_mtf' dictionary missing from backend. Generating structural fallbacks based on live spot.")
+_tf_sigs = sig.get("st_tf_signals", {})
+if _tf_sigs:
+    st_data = {}
+    for _lc, _uc in _TF_MAP:
+        _tfs = _tf_sigs.get(_lc, {})
+        if _tfs.get("direction", "UNKNOWN") != "UNKNOWN":
+            st_data[_uc] = {
+                "val":       _tfs["st_price"],
+                "dir":       _tfs["direction"],
+                "flip_price":_tfs.get("flip_price", 0),
+                "flip_time": _tfs.get("flip_time", "—"),
+                "weight":    _TF_WTS.get(_lc, 0),
+                "flip":      _tfs.get("flip", False),
+                "state_raw": _tfs.get("state", "UNKNOWN"),
+            }
+    if not st_data:
+        st.warning("⚠️ Engine returned no TF signals — using structural fallbacks.")
+        st_data = _generate_dynamic_mock(spot_now)
+else:
+    st.warning("⚠️ SuperTrend engine not yet run — using structural fallbacks based on live spot.")
     st_data = _generate_dynamic_mock(spot_now)
 
-# ── 2. ENGINE CALCULATIONS: States, Depth, and Corridors ──────────────────────
+# ── 2. ENGINE CALCULATIONS: States, Depth, and Corridors ─────────────────────
 _DEF_THR, _PREP_LOSS = 2.5, 2.25
 _OFF_THR, _PREP_PROF = 1.8, 1.35
 ce_sold = int(round(tue_close * 1.035 / 50) * 50)
@@ -67,26 +112,27 @@ for tf, data in st_data.items():
     dist_pct = (dist_pts / spot_now) * 100
     data["dist_pts"] = dist_pts
     data["dist_pct"] = dist_pct
-    
+
     if dist_pct >= 1.8:
-        data["depth"] = "DEEP"
-        data["mult"]  = 1.5
+        data["depth"] = "DEEP";     data["mult"] = 1.5
     elif dist_pct >= 1.0:
-        data["depth"] = "ADEQUATE"
-        data["mult"]  = 1.0
+        data["depth"] = "ADEQUATE"; data["mult"] = 1.0
     else:
-        data["depth"] = "THIN"
-        data["mult"]  = 0.5
-        
-    data["score"] = data["weight"] * data["mult"]
+        data["depth"] = "THIN";     data["mult"] = 0.5
+
+    data["score"]    = data["weight"] * data["mult"]
     data["protects"] = "PUT leg" if data["dir"] == "BULL" else "CALL leg"
-    
-    if data["dir"] == "BULL":
+
+    # Use engine state if available, else compute from flip_price
+    _raw = data.get("state_raw", "")
+    if _raw in ("DRIVING", "SLEEPING"):
+        data["state"] = "🚀 DRIVING" if _raw == "DRIVING" else "📦 SLEEPING"
+    elif data["dir"] == "BULL":
         data["state"] = "🚀 DRIVING" if spot_now > data.get("flip_price", 0) else "📦 SLEEPING"
     else:
         data["state"] = "🚀 DRIVING" if spot_now < data.get("flip_price", 999999) else "📦 SLEEPING"
 
-# ── 3. SINGLE MTF CANARY (4H / 1H Directional Rules) ──────────────────────────
+# ── 3. SINGLE MTF CANARY (4H / 1H Directional Rules) ──────────────────────
 st_4h = st_data.get("4H", {})
 st_1h = st_data.get("1H", {})
 st_15 = st_data.get("15M", {})
@@ -98,24 +144,15 @@ canary_sub   = "Theta Farm — Market trapped inside operational boxes. Premium 
 _1h_threat_dir = "CE" if st_1h.get("dir") == "BULL" else "PE"
 _4h_threat_dir = "CE" if st_4h.get("dir") == "BULL" else "PE"
 
-def _is_recent(time_str):
-    if not time_str or time_str == "-": return False
-    try:
-        n_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
-        dt_str = str(time_str)
-        t_1 = n_ist.strftime("%b %d")
-        t_2 = n_ist.strftime("%Y-%m-%d")
-        y_1 = (n_ist - timedelta(days=1)).strftime("%b %d")
-        y_2 = (n_ist - timedelta(days=1)).strftime("%Y-%m-%d")
-        return any(s in dt_str for s in [t_1, t_2, y_1, y_2])
-    except:
-        return False
+# Use engine flip bool (precise: flipped in last 1-2 candles)
+_4h_flipped = st_4h.get("flip", False)
+_1h_flipped = st_1h.get("flip", False)
 
-if _is_recent(st_4h.get("flip_time", "")):
+if _4h_flipped:
     canary_state = f"🚨 EXIT {_4h_threat_dir}"
     canary_col   = "#7f1d1d"
     canary_sub   = f"Structure Collapse — 4H wall has flipped. {_4h_threat_dir} macro thesis dead."
-elif _is_recent(st_1h.get("flip_time", "")) or (st_1h.get("state") == "🚀 DRIVING" and st_4h.get("state") == "🚀 DRIVING" and st_1h.get("dir") == st_4h.get("dir")):
+elif _1h_flipped or (st_1h.get("state") == "🚀 DRIVING" and st_4h.get("state") == "🚀 DRIVING" and st_1h.get("dir") == st_4h.get("dir")):
     canary_state = f"🔴 ACT / ROLL {_1h_threat_dir}"
     canary_col   = "#dc2626"
     canary_sub   = f"Roll Trigger — 1H has flipped or dragged 4H into driving. {_1h_threat_dir} challenged."
@@ -136,7 +173,7 @@ st.markdown(
     f"</div>", unsafe_allow_html=True
 )
 
-# ── 4. STRIKE-PATH CORRIDORS (Visual Map with P&L Nodes) ──────────────────────
+# ── 4. STRIKE-PATH CORRIDORS (Visual Map with P&L Nodes) ────────────────────
 ui_col1, ui_col2 = st.columns(2)
 
 ce_bk_loss = tue_close * (1 + _DEF_THR/100)
