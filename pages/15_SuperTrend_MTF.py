@@ -168,9 +168,11 @@ pe_items = [
 
 for tf, data in st_data.items():
     if data["dir"] == "BEAR":
-        ce_items.append((f"🧱 {tf} MOAT", data["val"], "#dc2626", "white"))
+        # Light pastel red background, dark red text
+        ce_items.append((f"🧱 {tf} MOAT", data["val"], "#fca5a5", "#7f1d1d"))
     else:
-        pe_items.append((f"🧱 {tf} MOAT", data["val"], "#16a34a", "white"))
+        # Light pastel green background, dark green text
+        pe_items.append((f"🧱 {tf} MOAT", data["val"], "#bbf7d0", "#14532d"))
 
 ce_items.sort(key=lambda x: x[1], reverse=True)
 pe_items.sort(key=lambda x: x[1], reverse=True)
