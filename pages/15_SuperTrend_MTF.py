@@ -101,6 +101,15 @@ else:
     st.warning("⚠️ SuperTrend engine not yet run — using structural fallbacks based on live spot.")
     st_data = _generate_dynamic_mock(spot_now)
 
+# Ensure all 6 TF cards always appear — fill missing TFs with a no-data placeholder
+for _lc, _uc in _TF_MAP:
+    if _uc not in st_data:
+        st_data[_uc] = {
+            "val": 0, "dir": "N/A", "flip_price": 0, "flip_time": "No data",
+            "weight": _TF_WTS.get(_lc, 0), "flip": False, "state_raw": "UNKNOWN",
+            "no_data": True,
+        }
+
 # ── 2. ENGINE CALCULATIONS: States, Depth, and Corridors ─────────────────────
 _DEF_THR, _PREP_LOSS = 2.5, 2.25
 _OFF_THR, _PREP_PROF = 1.8, 1.35
@@ -108,6 +117,8 @@ ce_sold = int(round(tue_close * 1.035 / 50) * 50)
 pe_sold = int(round(tue_close * 0.960 / 50) * 50)
 
 for tf, data in st_data.items():
+    if data.get("no_data"):
+        continue
     dist_pts = abs(spot_now - data["val"])
     dist_pct = (dist_pts / spot_now) * 100
     data["dist_pts"] = dist_pts
@@ -205,6 +216,8 @@ pe_items = [
 ]
 
 for tf, data in st_data.items():
+    if data.get("no_data"):
+        continue
     if data["dir"] == "BEAR":
         # Light pink background, deep pink text
         ce_items.append((f"🧱 {tf} MOAT", data["val"], "#fbcfe8", "#831843"))
@@ -254,10 +267,22 @@ _tier_map = {"DAILY": "Tier 1", "4H": "Tier 1", "2H": "Tier 2", "1H": "Tier 2", 
 cols = st.columns(3)
 for i, (tf, data) in enumerate(st_data.items()):
     with cols[i % 3]:
+        if data.get("no_data"):
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:16px;margin-bottom:16px;opacity:0.6;'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
+                f"<span style='font-weight:800;font-size:16px;color:#94a3b8;'>{tf} SuperTrend <span style='font-size:12px;font-weight:600;'>({_tier_map.get(tf, 'TF')})</span></span>"
+                f"<span style='background:#94a3b8;color:white;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;'>N/A</span>"
+                f"</div>"
+                f"<div style='font-size:14px;color:#94a3b8;font-style:italic;padding:12px 0;'>Data unavailable — fetch failed or market closed</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+            continue
+
         dir_col = "#16a34a" if data["dir"] == "BULL" else "#dc2626"
         state_col = "#0f766e" if "SLEEPING" in data.get("state", "") else "#b91c1c"
         depth_col = "#ea580c" if data.get("depth") == "THIN" else "#16a34a"
-        
+
         st.markdown(
             f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>"
             f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
@@ -290,6 +315,8 @@ pe_rows, ce_rows = [], []
 pe_score, ce_score = 0.0, 0.0
 
 for tf, data in st_data.items():
+    if data.get("no_data"):
+        continue
     row = {
         "TF": tf,
         "ST Line": f"{data.get('val', 0):,.0f}",
