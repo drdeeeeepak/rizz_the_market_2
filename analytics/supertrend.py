@@ -199,6 +199,23 @@ def extract_tf_signal(st_df: pd.DataFrame, spot: float, tf_name: str) -> dict:
     # FLIP: direction changed in last 2 candles
     flip = bool(last["st_flip"]) or bool(prev["st_flip"])
 
+    # Last flip candle → flip_price and flip_time for SLEEPING/DRIVING detection
+    _flip_rows = st_df[st_df["st_flip"] == True]
+    if not _flip_rows.empty:
+        _lf        = _flip_rows.iloc[-1]
+        flip_price = float(_lf["close"])
+        flip_time  = str(_lf.name)[:16]   # "YYYY-MM-DD HH:MM"
+    else:
+        flip_price = st_price
+        flip_time  = "—"
+
+    # SLEEPING: spot trapped between ST line and flip price (chop zone)
+    # DRIVING:  spot has cleared the flip price (institutional expansion)
+    if direction == 1:   # BULL — ST line below spot
+        state = "DRIVING" if spot > flip_price else "SLEEPING"
+    else:                # BEAR — ST line above spot
+        state = "DRIVING" if spot < flip_price else "SLEEPING"
+
     # Distance from spot
     dist_pts = abs(spot - st_price)
     dist_pct = (dist_pts / spot * 100) if spot > 0 else 0.0
@@ -224,18 +241,21 @@ def extract_tf_signal(st_df: pd.DataFrame, spot: float, tf_name: str) -> dict:
     raw_score = weight * mult
 
     return {
-        "tf":         tf_name,
-        "direction":  "BULL" if direction == 1 else "BEAR",
-        "side":       side,          # which IC leg this protects
-        "st_price":   st_price,
-        "dist_pts":   round(dist_pts),
-        "dist_pct":   round(dist_pct, 2),
-        "depth":      depth,
-        "mult":       mult,
-        "weight":     weight,
-        "raw_score":  round(raw_score, 1),
-        "flip":       flip,
-        "above":      above,         # True = line above spot
+        "tf":          tf_name,
+        "direction":   "BULL" if direction == 1 else "BEAR",
+        "side":        side,          # which IC leg this protects
+        "st_price":    st_price,
+        "dist_pts":    round(dist_pts),
+        "dist_pct":    round(dist_pct, 2),
+        "depth":       depth,
+        "mult":        mult,
+        "weight":      weight,
+        "raw_score":   round(raw_score, 1),
+        "flip":        flip,
+        "above":       above,         # True = line above spot
+        "flip_price":  round(flip_price, 0),
+        "flip_time":   flip_time,
+        "state":       state,         # "DRIVING" | "SLEEPING"
     }
 
 
@@ -245,6 +265,7 @@ def _empty_tf_signal(tf_name: str) -> dict:
         "st_price": 0.0, "dist_pts": 0, "dist_pct": 0.0,
         "depth": "UNKNOWN", "mult": 0.0, "weight": TF_WEIGHTS.get(tf_name, 0),
         "raw_score": 0.0, "flip": False, "above": False,
+        "flip_price": 0.0, "flip_time": "—", "state": "UNKNOWN",
     }
 
 
@@ -469,8 +490,6 @@ class SuperTrendEngine:
       prev_call_norm_eod  : yesterday's CALL normalised score
       open_put_norm       : PUT normalised score at 9:15 AM today (for intraday trajectory)
       open_call_norm      : CALL normalised score at 9:15 AM today
-      star_pe_strike      : current ⭐ MAX PE strike (for validation)
-      star_ce_strike      : current ⭐ MAX CE strike (for validation)
     """
 
     def signals(
@@ -539,7 +558,6 @@ class SuperTrendEngine:
         # ── Structural trajectory (Tier 1: daily/4h/2h) ───────────────────
         tier1_tfs   = ["daily", "4h", "2h"]
         tier1_flips = [tf for tf in flip_tfs if tf in tier1_tfs]
-        # Compute Tier1-only scores
         tier1_put_walls  = [tf_signals[tf] for tf in tier1_tfs if tf_signals[tf]["side"] == "PUT"]
         tier1_call_walls = [tf_signals[tf] for tf in tier1_tfs if tf_signals[tf]["side"] == "CALL"]
         tier1_put_raw    = sum(w["raw_score"] for w in tier1_put_walls)
