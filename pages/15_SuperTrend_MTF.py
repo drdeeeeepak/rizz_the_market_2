@@ -135,6 +135,7 @@ for tf, data in st_data.items():
 # ── 3. SINGLE MTF CANARY (4H / 1H Directional Rules) ──────────────────────
 st_4h = st_data.get("4H", {})
 st_1h = st_data.get("1H", {})
+st_30 = st_data.get("30M", {})
 st_15 = st_data.get("15M", {})
 
 canary_state = "✅ HOLD"
@@ -160,10 +161,10 @@ elif st_1h.get("state") == "🚀 DRIVING":
     canary_state = f"👁️ WATCH {_1h_threat_dir}"
     canary_col   = "#ea580c"
     canary_sub   = f"Boundary Test — 1H driving toward {_1h_threat_dir}, but 4H wall is absorbing."
-elif st_15.get("state") == "🚀 DRIVING":
+elif st_30.get("state") == "🚀 DRIVING" or st_15.get("state") == "🚀 DRIVING":
     canary_state = f"👁️ PREPARE (Intraday)"
     canary_col   = "#d97706"
-    canary_sub   = f"15m Canaries pushing, but 1H operational structure remains asleep."
+    canary_sub   = f"Tier 3 Canaries pushing (30m/15m), but 1H operational structure remains asleep."
 
 st.markdown(
     f"<div style='background:{canary_col};border-radius:10px;padding:20px;text-align:center;margin-bottom:20px;'>"
@@ -328,7 +329,7 @@ with st.expander("SuperTrend MTF — Strategy Reference & Rules", expanded=False
     * **Tier 3 (30m, 15m): Intraday Canaries.** Highly reactive. Used strictly as Early Warnings to enter a "Watch" state. No capital is moved based on Tier 3 flips.
 
     **2. The Directional 4H / 1H Rules (The Canary Engine)**
-    * **✅ HOLD (Theta Farm):** 4H is SLEEPING 📦. 1H is SLEEPING 📦. Market is trapped inside macro and operational boxes. Farm theta.
+    * **✅ HOLD (Theta Farm):** 4H is SLEEPING 📦. 1H is SLEEPING 📦. Market is trapped inside operational boxes. Farm theta.
     * **👁️ WATCH (Boundary Test):** 4H is SLEEPING 📦. 1H enters DRIVING 🚀. Operational momentum has spiked and is testing the macro wall.
     * **🔴 ACT / ROLL (Roll Trigger):** 1H FLIPS polarity, OR 1H drives hard enough to drag 4H into DRIVING 🚀. The operational buffer is breached. Execute defensive roll on the challenged leg.
     * **🚨 EXIT (Structure Collapse):** 4H FLIPS polarity. The macro wall has fallen. Exit the challenged leg immediately.
