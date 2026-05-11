@@ -168,8 +168,8 @@ pe_items = [
 
 for tf, data in st_data.items():
     if data["dir"] == "BEAR":
-        # Light pastel red background, dark red text
-        ce_items.append((f"🧱 {tf} MOAT", data["val"], "#fca5a5", "#7f1d1d"))
+        # Light pink background, deep pink text
+        ce_items.append((f"🧱 {tf} MOAT", data["val"], "#fbcfe8", "#831843"))
     else:
         # Light pastel green background, dark green text
         pe_items.append((f"🧱 {tf} MOAT", data["val"], "#bbf7d0", "#14532d"))
