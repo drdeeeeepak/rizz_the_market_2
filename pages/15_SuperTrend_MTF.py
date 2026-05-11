@@ -1,513 +1,294 @@
-# pages/14_SuperTrend_MTF.py — premiumdecay Page 14
-# SuperTrend MTF (21,2) · Six scored TFs + 5m display-only
-# Moat stack · Safe distance · Strike validation · Trajectory
-# 27 Apr 2026
+# pages/03_SuperTrend_MTF.py — v3.0 (Strict Rule Engine)
+# SuperTrend Multi-Timeframe Monitor — Biweekly 3.5% / 4.0% Engine
+#
+# LOCKED CHANGES:
+#   - Single MTF Canary based on 4H/1H Directional Rules
+#   - Strike-Path Corridors with integrated P&L nodes
+#   - Section 1 Cards: Tiers 1/2/3, State (SLEEPING/DRIVING), Flip Timestamps
+#   - Section 2 Tables: Moat Stacks (PE and CE)
+#   - Explicit Reference and Rulebook at bottom
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import pandas as pd
-import plotly.graph_objects as go
-import ui.components as ui
+import numpy as np
+from datetime import datetime, timedelta
+import pytz
 
 st.set_page_config(page_title="P15 · SuperTrend MTF", layout="wide")
-st_autorefresh(interval=60_000, key="p15")   # refresh every 60 seconds
 
-st.title("Page 15 — SuperTrend MTF")
-st.caption("SuperTrend (21,2) · Daily / 4H / 2H / 1H / 30m / 15m · 5m display-only · % CMP measuring unit")
+# ── 1. BOOTSTRAP & MOCK DATA (Fallback for UI visualization) ──────────────────
+# In production, this pulls from your SuperTrend signal dictionary.
+spot_now = 22150.0
+tue_close = 22000.0  # Anchor
 
-from page_utils import bootstrap_signals, show_page_header
-sig, spot, signals_ts = bootstrap_signals()
-show_page_header(spot, signals_ts)
-if not sig:
-    st.warning("⚠️ No signal data available. EOD job may not have run yet.")
-    st.stop()
+_mock_st = {
+    "DAILY": {"val": 21450.0, "dir": "BULL", "flip_price": 21300.0, "flip_time": "May 02, 14:15", "weight": 30},
+    "4H":    {"val": 21850.0, "dir": "BULL", "flip_price": 21950.0, "flip_time": "May 08, 09:15", "weight": 20},
+    "2H":    {"val": 22400.0, "dir": "BEAR", "flip_price": 22350.0, "flip_time": "May 09, 13:15", "weight": 15},
+    "1H":    {"val": 22320.0, "dir": "BEAR", "flip_price": 22200.0, "flip_time": "May 10, 10:15", "weight": 12},
+    "30M":   {"val": 22210.0, "dir": "BEAR", "flip_price": 22100.0, "flip_time": "May 11, 09:45", "weight": 8},
+    "15M":   {"val": 22100.0, "dir": "BULL", "flip_price": 22120.0, "flip_time": "May 11, 14:30", "weight": 5},
+}
 
-import datetime, pytz
-def _is_live():
-    n = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
-    t = n.hour * 60 + n.minute
-    return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
+st_data = _mock_st # Replace with your sig.get("supertrend_mtf", _mock_st)
 
-if _is_live():
-    try:
-        from data.live_fetcher import (
-            get_nifty_daily_live, get_nifty_1h_phase,
-            get_nifty_30m, get_nifty_15m, get_nifty_5m, get_nifty_spot as _gs,
-        )
-        from analytics.compute_signals import load_saved_signals
-        from analytics.supertrend import SuperTrendEngine
-        _df    = get_nifty_daily_live()
-        _1h    = get_nifty_1h_phase()
-        _30m   = get_nifty_30m()
-        _15m   = get_nifty_15m()
-        _5m    = get_nifty_5m()
-        _spot  = _gs() or spot
-        _saved = load_saved_signals()
-        if not _df.empty and not _1h.empty and _spot > 0:
-            _st = SuperTrendEngine().signals(
-                df_daily=_df, df_1h=_1h, df_30m=_30m, df_15m=_15m, df_5m=_5m,
-                spot=_spot,
-                prev_put_norm_eod=_saved.get("st_put_norm_eod"),
-                prev_call_norm_eod=_saved.get("st_call_norm_eod"),
-                open_put_norm=st.session_state.get("st_open_put_norm"),
-                open_call_norm=st.session_state.get("st_open_call_norm"),
-            )
-            sig = {**sig, **{f"st_{k}": v for k, v in _st.items()}}
-            sig["st_ic_shape"] = _st.get("ic_shape", "SYMMETRIC")
-            spot = _spot
-            signals_ts = "LIVE"
-    except Exception as _e:
-        st.caption(f"Live SuperTrend unavailable: {_e}")
+# ── 2. ENGINE CALCULATIONS: States, Depth, and Corridors ──────────────────────
+_DEF_THR, _PREP_LOSS = 2.5, 2.25
+_OFF_THR, _PREP_PROF = 1.8, 1.35
+ce_sold = int(round(tue_close * 1.035 / 50) * 50)
+pe_sold = int(round(tue_close * 0.960 / 50) * 50)
 
-# ── Pull ST data from sig ────────────────────────────────────────────────────
-put_stack      = sig.get("st_put_stack",  {})
-call_stack     = sig.get("st_call_stack", {})
-put_dist       = sig.get("st_put_dist",   {})
-call_dist      = sig.get("st_call_dist",  {})
-tf_signals     = sig.get("st_tf_signals", {})
-flip_tfs       = sig.get("st_flip_tfs",   [])
-ic_shape       = sig.get("st_ic_shape",   "SYMMETRIC")
-home_score     = sig.get("st_home_score", 0)
-st_traj        = sig.get("st_structural_trajectory", {})
-it_traj        = sig.get("st_intraday_trajectory",   {})
-tf5m           = sig.get("st_tf_5m_display",   {})
-spot           = sig.get("final_put_short", 0) + sig.get("final_put_dist", 0)
-if spot == 0:
-    spot = sig.get("st_lens_pe_strike", 0) + sig.get("st_lens_pe_dist", 0)
+# Process ST Data
+for tf, data in st_data.items():
+    dist_pts = abs(spot_now - data["val"])
+    dist_pct = (dist_pts / spot_now) * 100
+    data["dist_pts"] = dist_pts
+    data["dist_pct"] = dist_pct
+    
+    if dist_pct >= 1.8:
+        data["depth"] = "DEEP"
+        data["mult"]  = 1.5
+    elif dist_pct >= 1.0:
+        data["depth"] = "ADEQUATE"
+        data["mult"]  = 1.0
+    else:
+        data["depth"] = "THIN"
+        data["mult"]  = 0.5
+        
+    data["score"] = data["weight"] * data["mult"]
+    data["protects"] = "PUT leg" if data["dir"] == "BULL" else "CALL leg"
+    
+    # State Logic: Expansion vs Compression
+    if data["dir"] == "BULL":
+        data["state"] = "🚀 DRIVING" if spot_now > data["flip_price"] else "📦 SLEEPING"
+    else:
+        data["state"] = "🚀 DRIVING" if spot_now < data["flip_price"] else "📦 SLEEPING"
 
-st.divider()
+# ── 3. SINGLE MTF CANARY (4H / 1H Directional Rules) ──────────────────────────
+# Tier 1 = 4H, Tier 2 = 1H, Tier 3 = 15m
+st_4h = st_data.get("4H", {})
+st_1h = st_data.get("1H", {})
+st_15 = st_data.get("15M", {})
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — TIER 1 STRUCTURAL BACKDROP (Dynamic)
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 1 — Tier 1 Structural Backdrop",
-                  "Daily · 4H · 2H · Dynamic — updates with every candle close")
+canary_state = "✅ HOLD"
+canary_col   = "#16a34a"
+canary_sub   = "Theta Farm — Market trapped inside operational boxes."
 
-tier1_tfs = ["daily", "4h", "2h"]
+# Logic Engine based on strict rules
+_1h_threat_dir = "CE" if st_1h.get("dir") == "BULL" else "PE"
+_4h_threat_dir = "CE" if st_4h.get("dir") == "BULL" else "PE"
 
-def _direction_badge(tf_sig: dict) -> str:
-    d   = tf_sig.get("direction", "UNKNOWN")
-    fl  = tf_sig.get("flip", False)
-    col = "#16a34a" if d == "BULL" else "#dc2626" if d == "BEAR" else "#94a3b8"
-    badge = f"<span style='background:{col};color:white;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;'>{d}</span>"
-    if fl:
-        badge += " <span style='background:#f59e0b;color:white;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;'>⚡ FLIP</span>"
-    return badge
+# Calculate simple freshness based on mock strings (in production, use datetime delta)
+def _is_recent(time_str):
+    return "May 11" in time_str or "May 10" in time_str # Mock logic for "recent flip"
 
-# Determine overall Tier 1 alignment
-t1_directions = [tf_signals.get(tf, {}).get("direction", "UNKNOWN") for tf in tier1_tfs]
-t1_bull_count = t1_directions.count("BULL")
-t1_bear_count = t1_directions.count("BEAR")
-
-if t1_bull_count == 3:
-    t1_regime = "STRONG BULL"; t1_col = "#16a34a"
-elif t1_bull_count == 2:
-    t1_regime = "MILD BULL";   t1_col = "#22c55e"
-elif t1_bear_count == 3:
-    t1_regime = "STRONG BEAR"; t1_col = "#dc2626"
-elif t1_bear_count == 2:
-    t1_regime = "MILD BEAR";   t1_col = "#f87171"
-elif any(tf_signals.get(tf, {}).get("flip") for tf in tier1_tfs):
-    t1_regime = "TRANSITION";  t1_col = "#f59e0b"
-else:
-    t1_regime = "MIXED";       t1_col = "#94a3b8"
+if _is_recent(st_4h.get("flip_time", "")):
+    canary_state = f"🚨 EXIT {_4h_threat_dir}"
+    canary_col   = "#7f1d1d"
+    canary_sub   = f"Structure Collapse — 4H wall has flipped. {_4h_threat_dir} macro thesis dead."
+elif _is_recent(st_1h.get("flip_time", "")) or (st_1h.get("state") == "🚀 DRIVING" and st_4h.get("state") == "🚀 DRIVING"):
+    canary_state = f"🔴 ACT / ROLL {_1h_threat_dir}"
+    canary_col   = "#dc2626"
+    canary_sub   = f"Roll Trigger — 1H has flipped or dragged 4H into driving. {_1h_threat_dir} challenged."
+elif st_1h.get("state") == "🚀 DRIVING":
+    canary_state = f"👁️ WATCH {_1h_threat_dir}"
+    canary_col   = "#ea580c"
+    canary_sub   = f"Boundary Test — 1H driving toward {_1h_threat_dir}, but 4H wall is absorbing."
+elif st_15.get("state") == "🚀 DRIVING":
+    canary_state = f"👁️ PREPARE (Intraday)"
+    canary_col   = "#d97706"
+    canary_sub   = f"15m Canaries pushing, but 1H operational structure remains asleep."
 
 st.markdown(
-    f"<div style='background:{t1_col}18;border-left:4px solid {t1_col};"
-    f"padding:10px 16px;border-radius:6px;margin-bottom:12px;'>"
-    f"<span style='font-size:16px;font-weight:700;color:{t1_col};'>{t1_regime}</span>"
-    f"<span style='font-size:12px;color:#64748b;margin-left:12px;'>"
-    f"IC Shape Signal: <b>{ic_shape}</b></span></div>",
-    unsafe_allow_html=True
+    f"<div style='background:{canary_col};border-radius:10px;padding:20px;text-align:center;margin-bottom:20px;'>"
+    f"<div style='color:rgba(255,255,255,0.8);font-size:14px;font-weight:700;letter-spacing:1.5px;margin-bottom:4px;'>MTF VERDICT</div>"
+    f"<div style='color:white;font-size:32px;font-weight:900;'>{canary_state}</div>"
+    f"<div style='color:white;font-size:16px;margin-top:6px;opacity:0.9;'>{canary_sub}</div>"
+    f"</div>", unsafe_allow_html=True
 )
 
+# ── 4. STRIKE-PATH CORRIDORS (Visual Map with P&L Nodes) ──────────────────────
+ui_col1, ui_col2 = st.columns(2)
+
+# P&L Node Calculations
+ce_bk_loss = tue_close * (1 + _DEF_THR/100)
+ce_pr_loss = tue_close * (1 + _PREP_LOSS/100)
+ce_bk_prof = tue_close * (1 - _OFF_THR/100)
+ce_pr_prof = tue_close * (1 - _PREP_PROF/100)
+
+pe_bk_loss = tue_close * (1 - _DEF_THR/100)
+pe_pr_loss = tue_close * (1 - _PREP_LOSS/100)
+pe_bk_prof = tue_close * (1 + _OFF_THR/100)
+pe_pr_prof = tue_close * (1 + _PREP_PROF/100)
+
+# Build unified item lists for sorting
+ce_items = [
+    ("CE SOLD (+3.5%)", ce_sold, "#1e293b", "white"),
+    ("🔴 BOOK LOSS", ce_bk_loss, "#7f1d1d", "white"),
+    ("🟠 PREP LOSS", ce_pr_loss, "#ea580c", "white"),
+    ("🔵 PREP PROFIT", ce_pr_prof, "#0369a1", "white"),
+    ("🟢 BOOK PROFIT", ce_bk_prof, "#0f766e", "white"),
+    ("SPOT PRICE", spot_now, "#3b82f6", "white"),
+]
+pe_items = [
+    ("PE SOLD (-4.0%)", pe_sold, "#1e293b", "white"),
+    ("🔴 BOOK LOSS", pe_bk_loss, "#7f1d1d", "white"),
+    ("🟠 PREP LOSS", pe_pr_loss, "#ea580c", "white"),
+    ("🔵 PREP PROFIT", pe_pr_prof, "#0369a1", "white"),
+    ("🟢 BOOK PROFIT", pe_bk_prof, "#0f766e", "white"),
+    ("SPOT PRICE", spot_now, "#3b82f6", "white"),
+]
+
+# Inject ST Moats
+for tf, data in st_data.items():
+    if data["dir"] == "BEAR": # Ceiling (CE Corridor)
+        ce_items.append((f"🧱 {tf} MOAT", data["val"], "#dc2626", "white"))
+    else: # Floor (PE Corridor)
+        pe_items.append((f"🧱 {tf} MOAT", data["val"], "#16a34a", "white"))
+
+# Sort Corridors
+ce_items.sort(key=lambda x: x[1], reverse=True) # Highest price at top
+pe_items.sort(key=lambda x: x[1], reverse=True) # Highest price at top
+
+def _render_corridor(title, items, is_ce):
+    html = f"<div style='background:#0f172a;border-radius:10px;padding:16px;border:1px solid #1e293b;'>"
+    html += f"<div style='font-size:15px;font-weight:700;color:#94a3b8;margin-bottom:16px;letter-spacing:1px;'>{title}</div>"
+    
+    for lbl, val, bg, txt in items:
+        # Highlight spot
+        border = "border: 2px solid #60a5fa;" if "SPOT" in lbl else "border: 1px solid rgba(255,255,255,0.1);"
+        margin = "margin: 12px 0;" if "SPOT" in lbl else "margin: 4px 0;"
+        pct_from_spot = ((val - spot_now) / spot_now) * 100
+        pct_str = f"{pct_from_spot:+.2f}%" if not "SPOT" in lbl else "—"
+        
+        # Only show items that make geographical sense (e.g., ignore CE profit nodes if spot is already past them)
+        if is_ce and val < spot_now and "PROFIT" not in lbl: continue
+        if not is_ce and val > spot_now and "PROFIT" not in lbl: continue
+
+        html += f"<div style='background:{bg};color:{txt};padding:10px 14px;border-radius:6px;{border}{margin}display:flex;justify-content:space-between;align-items:center;'>"
+        html += f"<span style='font-weight:700;font-size:14px;'>{lbl}</span>"
+        html += f"<div style='text-align:right;'>"
+        html += f"<div style='font-weight:900;font-size:16px;'>{val:,.0f}</div>"
+        html += f"<div style='font-size:11px;opacity:0.8;'>{pct_str}</div>"
+        html += f"</div></div>"
+    
+    html += "</div>"
+    return html
+
+with ui_col1:
+    st.markdown(_render_corridor("CE STRIKE-PATH CORRIDOR (Overhead)", ce_items, is_ce=True), unsafe_allow_html=True)
+with ui_col2:
+    st.markdown(_render_corridor("PE STRIKE-PATH CORRIDOR (Downside)", pe_items, is_ce=False), unsafe_allow_html=True)
+
+st.divider()
+
+# ── 5. SECTION 1 — MTF STRUCTURAL BACKDROP ────────────────────────────────────
+st.markdown("<h3 style='color:#334155;'>Section 1 — MTF Structural Backdrop</h3>", unsafe_allow_html=True)
+st.caption("Daily · 4H · 2H · 1H · 30m · 15m (Sorted by structural importance)")
+
+_tier_map = {"DAILY": "Tier 1", "4H": "Tier 1", "2H": "Tier 2", "1H": "Tier 2", "30M": "Tier 3", "15M": "Tier 3"}
+
 cols = st.columns(3)
-for i, tf_name in enumerate(tier1_tfs):
-    tfs = tf_signals.get(tf_name, {})
-    label = tf_name.upper()
-    with cols[i]:
-        st_price  = tfs.get("st_price", 0)
-        dist_pts  = tfs.get("dist_pts", 0)
-        dist_pct  = tfs.get("dist_pct", 0.0)
-        depth     = tfs.get("depth", "—")
-        direction = tfs.get("direction", "UNKNOWN")
-        side      = tfs.get("side", "—")
-        above     = tfs.get("above", False)
-        flip      = tfs.get("flip", False)
-
-        depth_col = {"DEEP":"#16a34a","COMFORTABLE":"#2563eb","ADEQUATE":"#d97706",
-                     "THIN":"#ea580c","CRITICAL":"#dc2626"}.get(depth, "#94a3b8")
-
-        badge_html = _direction_badge(tfs)
-        pos_word   = "above" if above else "below"
-        protects   = "CALL leg" if direction == "BEAR" else "PUT leg" if direction == "BULL" else "—"
-
+for i, (tf, data) in enumerate(st_data.items()):
+    with cols[i % 3]:
+        dir_col = "#16a34a" if data["dir"] == "BULL" else "#dc2626"
+        state_col = "#0f766e" if "SLEEPING" in data["state"] else "#b91c1c"
+        depth_col = "#ea580c" if data["depth"] == "THIN" else "#16a34a"
+        
         st.markdown(
-            f"<div style='border:1px solid #e2e8f0;border-radius:8px;padding:12px;'>"
-            f"<div style='font-size:13px;font-weight:700;color:#0f1724;margin-bottom:6px;'>{label} SuperTrend</div>"
-            f"<div style='margin-bottom:4px;'>{badge_html}</div>"
-            f"<div style='font-size:12px;color:#334155;margin-top:6px;'>"
-            f"ST Line: <b>{st_price:,.0f}</b></div>"
-            f"<div style='font-size:12px;color:#334155;'>"
-            f"{dist_pts:,} pts {pos_word} spot &nbsp;·&nbsp; <b style='color:{depth_col};'>{dist_pct:.2f}% CMP</b></div>"
-            f"<div style='font-size:11px;color:{depth_col};font-weight:700;margin-top:4px;'>{depth}</div>"
-            f"<div style='font-size:11px;color:#64748b;'>Protects: {protects}</div>"
-            f"</div>",
-            unsafe_allow_html=True
+            f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
+            f"<span style='font-weight:800;font-size:16px;color:#1e293b;'>{tf} SuperTrend <span style='font-size:12px;color:#64748b;font-weight:600;'>({_tier_map[tf]})</span></span>"
+            f"<span style='background:{dir_col};color:white;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;'>{data['dir']}</span>"
+            f"</div>"
+            
+            f"<div style='font-size:22px;font-weight:900;color:#0f172a;'>{data['val']:,.0f}</div>"
+            f"<div style='font-size:13px;color:#475569;margin-bottom:12px;'>"
+            f"{data['dist_pts']:,.0f} pts from spot · <span style='font-weight:700;'>{data['dist_pct']:.2f}% CMP</span>"
+            f"</div>"
+            
+            f"<div style='display:flex;gap:6px;margin-bottom:12px;'>"
+            f"<span style='font-size:11px;font-weight:700;color:{depth_col};border:1px solid {depth_col};padding:2px 6px;border-radius:4px;'>{data['depth']}</span>"
+            f"<span style='font-size:11px;font-weight:700;color:white;background:{state_col};padding:2px 6px;border-radius:4px;'>{data['state']}</span>"
+            f"</div>"
+            
+            f"<div style='background:#f8fafc;padding:8px;border-radius:6px;font-size:12px;color:#475569;'>"
+            f"<div style='margin-bottom:4px;'><span style='font-weight:600;'>Protects:</span> {data['protects']}</div>"
+            f"<div style='margin-bottom:4px;'><span style='font-weight:600;'>Flip Time:</span> {data['flip_time']}</div>"
+            f"<div><span style='font-weight:600;'>Flip Price:</span> {data['flip_price']:,.0f}</div>"
+            f"</div>"
+            f"</div>", unsafe_allow_html=True
         )
 
 st.divider()
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — MOAT STACK — BOTH SIDES
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 2 — Moat Stack",
-                  "PUT side and CALL side · Weighted by TF importance and depth · % CMP measuring unit")
+# ── 6. SECTION 2 — MOAT STACK TABLES ──────────────────────────────────────────
+st.markdown("<h3 style='color:#334155;'>Section 2 — Moat Stack</h3>", unsafe_allow_html=True)
+st.caption("PUT side and CALL side · Weighted by TF importance and depth")
 
-DEPTH_COLOURS = {
-    "DEEP":        "#16a34a",
-    "COMFORTABLE": "#2563eb",
-    "ADEQUATE":    "#d97706",
-    "THIN":        "#ea580c",
-    "CRITICAL":    "#dc2626",
-    "UNKNOWN":     "#94a3b8",
-}
-BAND_COLOURS = {
-    "FORTRESS": "#16a34a", "STRONG": "#2563eb",
-    "ADEQUATE": "#d97706", "THIN": "#ea580c",
-    "EXPOSED":  "#dc2626", "BREACHED": "#7f1d1d",
-}
+pe_rows, ce_rows = [], []
+pe_score, ce_score = 0.0, 0.0
 
-def _render_moat_table(stack: dict, side_label: str, side_color: str):
-    walls    = stack.get("walls", [])
-    clusters = stack.get("clusters", [])
-    raw      = stack.get("raw_score", 0)
-    norm     = stack.get("normalised", 0)
-    band     = stack.get("band", "BREACHED")
-    band_col = BAND_COLOURS.get(band, "#94a3b8")
+for tf, data in st_data.items():
+    row = {
+        "TF": tf,
+        "ST Line": f"{data['val']:,.0f}",
+        "Distance": f"{data['dist_pts']:,.0f} pts",
+        "% CMP": f"{data['dist_pct']:.2f}%",
+        "Depth": data['depth'],
+        "Mult": f"{data['mult']}x",
+        "Weight": data['weight'],
+        "Score": data['score']
+    }
+    if data["dir"] == "BULL":
+        pe_rows.append(row)
+        pe_score += data['score']
+    else:
+        ce_rows.append(row)
+        ce_score += data['score']
 
-    # Cluster pairs for bracket display
-    cluster_pairs = set()
-    for c in clusters:
-        cluster_pairs.add(c[0]); cluster_pairs.add(c[1])
+df_pe = pd.DataFrame(pe_rows)
+df_ce = pd.DataFrame(ce_rows)
 
-    st.markdown(
-        f"<div style='background:{side_color}18;border-left:4px solid {side_color};"
-        f"padding:8px 14px;border-radius:6px;margin-bottom:8px;'>"
-        f"<span style='font-size:14px;font-weight:700;color:{side_color};'>{side_label}</span>"
-        f"&nbsp;&nbsp;<span style='background:{band_col};color:white;padding:2px 8px;"
-        f"border-radius:8px;font-size:11px;font-weight:700;'>{band}</span>"
-        f"&nbsp;&nbsp;<span style='font-size:12px;color:#334155;'>"
-        f"Score: <b>{norm:.1f}/100</b> (raw {raw:.1f}/180)</span>"
-        f"</div>",
-        unsafe_allow_html=True
-    )
+col_tbl1, col_tbl2 = st.columns(2)
 
-    if not walls:
-        st.markdown(
-            "<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;"
-            "padding:10px;color:#dc2626;font-size:12px;font-weight:600;'>No structural walls on this side. "
-            "This leg has no ST protection.</div>",
-            unsafe_allow_html=True
-        )
-        return
+with col_tbl1:
+    st.markdown(f"#### 🟢 PUT Side Moat Stack")
+    st.markdown(f"<div style='background:#dcfce7;color:#166534;padding:8px 12px;border-radius:6px;font-weight:700;margin-bottom:10px;'>Score: {pe_score}/100</div>", unsafe_allow_html=True)
+    if not df_pe.empty:
+        st.dataframe(df_pe, hide_index=True, use_container_width=True)
+    else:
+        st.warning("No Bullish Moats detected.")
 
-    # Build table rows
-    rows_html = ""
-    cluster_pairs_found = set()
-    for w in walls:
-        tf      = w["tf"]
-        dc      = DEPTH_COLOURS.get(w["depth"], "#94a3b8")
-        flip    = "⚡ FLIP" if w.get("flip") else ""
-        cluster = "┐" if tf in cluster_pairs and tf not in cluster_pairs_found else ""
-        if tf in cluster_pairs:
-            cluster_pairs_found.add(tf)
-
-        rows_html += (
-            f"<tr>"
-            f"<td style='padding:5px 8px;font-weight:700;color:#0f1724;'>{tf.upper()}</td>"
-            f"<td style='padding:5px 8px;font-family:monospace;'>{w['st_price']:,.0f}</td>"
-            f"<td style='padding:5px 8px;'>{w['dist_pts']:,} pts</td>"
-            f"<td style='padding:5px 8px;font-weight:700;color:{dc};'>{w['dist_pct']:.2f}%</td>"
-            f"<td style='padding:5px 8px;color:{dc};font-weight:600;'>{w['depth']}</td>"
-            f"<td style='padding:5px 8px;color:#64748b;'>{w['mult']:.1f}×</td>"
-            f"<td style='padding:5px 8px;'>{w['weight']}</td>"
-            f"<td style='padding:5px 8px;font-weight:700;'>{w['raw_score']:.1f}</td>"
-            f"<td style='padding:5px 8px;color:#f59e0b;font-weight:700;'>{flip}</td>"
-            f"<td style='padding:5px 8px;color:#94a3b8;font-size:11px;'>{cluster}</td>"
-            f"</tr>"
-        )
-
-    # Cluster warning if any
-    cluster_warn = ""
-    if clusters:
-        cpairs = ", ".join([f"{c[0].upper()}+{c[1].upper()}" for c in clusters])
-        cluster_warn = (
-            f"<div style='font-size:11px;color:#d97706;margin-top:4px;'>"
-            f"⚠️ Cluster detected: {cpairs} — within 0.5% CMP, treated as single wall</div>"
-        )
-
-    st.markdown(
-        f"<table style='width:100%;border-collapse:collapse;font-size:12px;'>"
-        f"<thead><tr style='background:#f1f5f9;'>"
-        f"<th style='padding:5px 8px;text-align:left;'>TF</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>ST Line</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>Distance</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>% CMP</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>Depth</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>Mult</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>Weight</th>"
-        f"<th style='padding:5px 8px;text-align:left;'>Score</th>"
-        f"<th style='padding:5px 8px;text-align:left;'></th>"
-        f"<th style='padding:5px 8px;text-align:left;'></th>"
-        f"</tr></thead>"
-        f"<tbody>{rows_html}</tbody>"
-        f"</table>"
-        f"{cluster_warn}",
-        unsafe_allow_html=True
-    )
-
-
-col_put, col_call = st.columns(2)
-
-with col_put:
-    st.markdown("#### 🟢 PUT Side Moat Stack")
-    st.caption("BULL TFs — lines below spot — protecting PE leg")
-    _render_moat_table(put_stack, "PUT SIDE", "#16a34a")
-
-with col_call:
-    st.markdown("#### 🔴 CALL Side Moat Stack")
-    st.caption("BEAR TFs — lines above spot — protecting CE leg")
-    _render_moat_table(call_stack, "CALL SIDE", "#dc2626")
+with col_tbl2:
+    st.markdown(f"#### 🔴 CALL Side Moat Stack")
+    st.markdown(f"<div style='background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:6px;font-weight:700;margin-bottom:10px;'>Score: {ce_score}/100</div>", unsafe_allow_html=True)
+    if not df_ce.empty:
+        st.dataframe(df_ce, hide_index=True, use_container_width=True)
+    else:
+        st.warning("No Bearish Moats detected.")
 
 st.divider()
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — ST SAFE DISTANCE
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 3 — ST Safe Distance",
-                  "Tier 1 walls only (Daily / 4H / 2H) · 1% buffer · 2.0%–2.5% output range")
+# ── 7. STRATEGY REFERENCE & RULES ─────────────────────────────────────────────
+with st.expander("SuperTrend MTF — Strategy Reference & Rules", expanded=False):
+    st.markdown("""
+    **1. The 3-Tier Architecture**
+    * **Tier 1 (Daily, 4H): The Macro Walls.** These dictate the macro trend and provide the foundational support/resistance walls. Used strictly as Strike Anchors. 
+    * **Tier 2 (2H, 1H): Operational Triggers.** The bridge. Filters out intraday noise but reacts fast enough to capture a real regime shift. A flip on Tier 2 is the definitive Action/Roll Trigger.
+    * **Tier 3 (30m, 15m): Intraday Canaries.** Highly reactive. Used strictly as Early Warnings to enter a "Watch" state. No capital is moved based on Tier 3 flips.
 
-pe_dist   = sig.get("st_lens_pe_dist",   0)
-pe_pct    = sig.get("st_lens_pe_pct",    0.0)
-pe_strike = sig.get("st_lens_pe_strike", 0)
-ce_dist   = sig.get("st_lens_ce_dist",   0)
-ce_pct    = sig.get("st_lens_ce_pct",    0.0)
-ce_strike = sig.get("st_lens_ce_strike", 0)
-pe_label  = sig.get("st_pe_label", "—")
-ce_label  = sig.get("st_ce_label", "—")
-pe_case   = sig.get("st_pe_case", "NO_WALL")
-ce_case   = sig.get("st_ce_case", "NO_WALL")
+    **2. The Directional 4H / 1H Rules (The Canary Engine)**
+    * **✅ HOLD (Theta Farm):** 4H is SLEEPING 📦. 1H is SLEEPING 📦. Market is trapped inside macro and operational boxes. Farm theta.
+    * **👁️ WATCH (Boundary Test):** 4H is SLEEPING 📦. 1H enters DRIVING 🚀. Operational momentum has spiked and is testing the macro wall.
+    * **🔴 ACT / ROLL (Roll Trigger):** 1H FLIPS polarity, OR 1H drives hard enough to drag 4H into DRIVING 🚀. The operational buffer is breached. Execute defensive roll on the challenged leg.
+    * **🚨 EXIT (Structure Collapse):** 4H FLIPS polarity. The macro wall has fallen. Exit the challenged leg immediately.
 
-CASE_COL = {
-    "WALL_USED":       "#16a34a",
-    "WALL_TOO_CLOSE":  "#d97706",
-    "WALL_DEEP":       "#2563eb",
-    "NO_WALL":         "#94a3b8",
-}
-
-c1, c2, c3, col_div, c4, c5, c6 = st.columns([2, 1, 1, 0.1, 2, 1, 1])
-with c1:
-    pc = CASE_COL.get(pe_case, "#94a3b8")
-    st.markdown(
-        f"<div style='border-left:4px solid {pc};padding:8px 12px;border-radius:4px;"
-        f"background:{pc}12;'>"
-        f"<div style='font-size:11px;color:#64748b;font-weight:600;'>PUT SIDE — BASIS</div>"
-        f"<div style='font-size:13px;color:{pc};font-weight:700;margin-top:2px;'>{pe_label}</div>"
-        f"</div>", unsafe_allow_html=True
-    )
-with c2:
-    ui.metric_card("PE Dist", f"{pe_dist:,} pts", sub=f"{pe_pct:.2f}% CMP", color="green")
-with c3:
-    ui.metric_card("PE Strike", f"~{pe_strike:,}", color="green")
-
-with c4:
-    cc = CASE_COL.get(ce_case, "#94a3b8")
-    st.markdown(
-        f"<div style='border-left:4px solid {cc};padding:8px 12px;border-radius:4px;"
-        f"background:{cc}12;'>"
-        f"<div style='font-size:11px;color:#64748b;font-weight:600;'>CALL SIDE — BASIS</div>"
-        f"<div style='font-size:13px;color:{cc};font-weight:700;margin-top:2px;'>{ce_label}</div>"
-        f"</div>", unsafe_allow_html=True
-    )
-with c5:
-    ui.metric_card("CE Dist", f"{ce_dist:,} pts", sub=f"{ce_pct:.2f}% CMP", color="red")
-with c6:
-    ui.metric_card("CE Strike", f"~{ce_strike:,}", color="red")
-
-st.divider()
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — ST STRIKES
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 4 — ST Strikes",
-                  "ST-derived strikes only · Participates in Home lens table MAX")
-
-s4c1, s4c2 = st.columns(2)
-with s4c1:
-    st.markdown(
-        f"<div style='border:2px solid #16a34a;border-radius:10px;padding:16px;text-align:center;'>"
-        f"<div style='font-size:12px;font-weight:600;color:#64748b;'>ST PE SHORT STRIKE</div>"
-        f"<div style='font-size:28px;font-weight:800;color:#16a34a;margin:6px 0;'>~{pe_strike:,}</div>"
-        f"<div style='font-size:12px;color:#334155;'>{pe_dist:,} pts below spot · {pe_pct:.2f}% OTM</div>"
-        f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>{pe_label}</div>"
-        f"</div>", unsafe_allow_html=True
-    )
-with s4c2:
-    st.markdown(
-        f"<div style='border:2px solid #dc2626;border-radius:10px;padding:16px;text-align:center;'>"
-        f"<div style='font-size:12px;font-weight:600;color:#64748b;'>ST CE SHORT STRIKE</div>"
-        f"<div style='font-size:28px;font-weight:800;color:#dc2626;margin:6px 0;'>~{ce_strike:,}</div>"
-        f"<div style='font-size:12px;color:#334155;'>{ce_dist:,} pts above spot · {ce_pct:.2f}% OTM</div>"
-        f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>{ce_label}</div>"
-        f"</div>", unsafe_allow_html=True
-    )
-
-st.divider()
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — TRAJECTORY
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 5 — Trajectory",
-                  "Structural (Tier 1 EOD vs EOD) · Intraday (Tier 3 vs 9:15 AM)")
-
-TRAJ_COL = {
-    "STRENGTHENING":           "#16a34a",
-    "IMPROVING":               "#22c55e",
-    "STABLE":                  "#64748b",
-    "WEAKENING":               "#ea580c",
-    "DETERIORATING":           "#dc2626",
-    "INTRADAY STRENGTHENING":  "#16a34a",
-    "INTRADAY IMPROVING":      "#22c55e",
-    "INTRADAY STABLE":         "#64748b",
-    "INTRADAY WEAKENING":      "#ea580c",
-    "INTRADAY DETERIORATING":  "#dc2626",
-    "UNKNOWN":                 "#94a3b8",
-}
-
-def _traj_card(traj: dict, title: str):
-    put_lbl  = traj.get("put_label",  "UNKNOWN")
-    call_lbl = traj.get("call_label", "UNKNOWN")
-    put_d    = traj.get("put_delta")
-    call_d   = traj.get("call_delta")
-    flip_ev  = traj.get("flip_event", False)
-    flip_tfs = traj.get("flip_tfs",   [])
-    pc       = TRAJ_COL.get(put_lbl,  "#94a3b8")
-    cc       = TRAJ_COL.get(call_lbl, "#94a3b8")
-
-    put_delta_str  = f"({put_d:+.1f} pts)"  if put_d  is not None else ""
-    call_delta_str = f"({call_d:+.1f} pts)" if call_d is not None else ""
-    flip_str = (f"<div style='font-size:11px;color:#f59e0b;margin-top:4px;'>"
-                f"⚡ FLIP EVENT: {', '.join([t.upper() for t in flip_tfs])}</div>") if flip_ev else ""
-
-    st.markdown(
-        f"<div style='border:1px solid #e2e8f0;border-radius:8px;padding:12px;'>"
-        f"<div style='font-size:13px;font-weight:700;color:#0f1724;margin-bottom:8px;'>{title}</div>"
-        f"<div style='margin-bottom:4px;font-size:12px;'>"
-        f"PUT: <span style='color:{pc};font-weight:700;'>{put_lbl}</span> {put_delta_str}</div>"
-        f"<div style='font-size:12px;'>"
-        f"CALL: <span style='color:{cc};font-weight:700;'>{call_lbl}</span> {call_delta_str}</div>"
-        f"{flip_str}"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-
-tc1, tc2 = st.columns(2)
-with tc1:
-    _traj_card(st_traj, "Structural Trajectory — Daily / 4H / 2H (EOD vs EOD)")
-with tc2:
-    _traj_card(it_traj, "Intraday Trajectory — 1H / 30m / 15m (vs 9:15 AM)")
-
-st.divider()
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — INTRADAY ACTION PANEL (Tier 3)
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 6 — Intraday Action Panel",
-                  "Tier 3: 1H / 30m / 15m · Plus 5m display-only")
-
-tier3_tfs = ["1h", "30m", "15m"]
-tier3_cols = st.columns(3)
-
-for i, tf_name in enumerate(tier3_tfs):
-    tfs = tf_signals.get(tf_name, {})
-    with tier3_cols[i]:
-        direction = tfs.get("direction", "UNKNOWN")
-        st_price  = tfs.get("st_price", 0)
-        dist_pct  = tfs.get("dist_pct", 0.0)
-        depth     = tfs.get("depth", "—")
-        side      = tfs.get("side", "—")
-        flip      = tfs.get("flip", False)
-        dc        = DEPTH_COLOURS.get(depth, "#94a3b8")
-        dir_col   = "#16a34a" if direction == "BULL" else "#dc2626" if direction == "BEAR" else "#94a3b8"
-
-        flip_html = ("<div style='background:#f59e0b;color:white;border-radius:6px;"
-                     "padding:4px 8px;font-size:11px;font-weight:700;margin-top:6px;"
-                     "display:inline-block;'>⚡ FLIP — Direction changed</div>") if flip else ""
-
-        st.markdown(
-            f"<div style='border:2px solid {dir_col};border-radius:8px;padding:12px;'>"
-            f"<div style='font-size:14px;font-weight:800;color:#0f1724;'>{tf_name.upper()}</div>"
-            f"<div style='font-size:18px;font-weight:700;color:{dir_col};margin:4px 0;'>{direction}</div>"
-            f"<div style='font-size:12px;color:#334155;'>ST Line: {st_price:,.0f}</div>"
-            f"<div style='font-size:12px;color:{dc};font-weight:700;'>{dist_pct:.2f}% CMP — {depth}</div>"
-            f"<div style='font-size:11px;color:#64748b;'>Protects: {side} leg</div>"
-            f"{flip_html}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
-# 5m display panel
-st.markdown("---")
-st.markdown("**5m SuperTrend — Display Only · Zero decision weight**")
-if tf5m and tf5m.get("direction", "UNKNOWN") != "UNKNOWN":
-    dir5 = tf5m.get("direction", "—")
-    dc5  = "#16a34a" if dir5 == "BULL" else "#dc2626"
-    fl5  = "⚡ FLIP" if tf5m.get("flip") else ""
-    st.markdown(
-        f"<span style='background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;"
-        f"padding:4px 10px;font-size:12px;color:#334155;'>"
-        f"5m ST: <b style='color:{dc5};'>{dir5}</b> · "
-        f"Line: {tf5m.get('st_price',0):,.0f} · "
-        f"{tf5m.get('dist_pct',0):.2f}% CMP · "
-        f"{tf5m.get('depth','—')} "
-        f"<span style='color:#f59e0b;'>{fl5}</span></span>",
-        unsafe_allow_html=True
-    )
-else:
-    st.caption("5m data not available.")
-
-st.divider()
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — HOME SCORE CONTRIBUTION
-# ═════════════════════════════════════════════════════════════════════════════
-ui.section_header("Section 7 — Home Score Contribution",
-                  "ST MTF contributes up to 9 pts to Home master score (rescaled, total max = 100)")
-
-score_col = "#16a34a" if home_score >= 7 else "#d97706" if home_score >= 4 else "#dc2626"
-ic_shape_colours = {
-    "CE_SKEW":  "#2563eb", "PE_SKEW":  "#dc2626",
-    "SYMMETRIC":"#16a34a", "SINGLE_CE":"#f59e0b", "SINGLE_PE":"#f59e0b",
-}
-ic_col = ic_shape_colours.get(ic_shape, "#64748b")
-
-c1, c2, c3 = st.columns(3)
-with c1:
-    ui.metric_card("ST Home Score", f"{home_score} / 9",
-                   sub="Rescaled from 10 (Option B)",
-                   color=("green" if home_score>=7 else "amber" if home_score>=4 else "red"))
-with c2:
-    ui.metric_card("IC Shape Signal", ic_shape,
-                   sub="Feeds _suggest_strategy on Home",
-                   color=("green" if ic_shape=="SYMMETRIC" else
-                          "blue" if "SKEW" in ic_shape else "amber"))
-with c3:
-    flip_count = len(flip_tfs)
-    ui.metric_card("Flipped TFs", f"{flip_count} TF{'s' if flip_count!=1 else ''}",
-                   sub="⚡ = direction changed this session",
-                   color="amber" if flip_count > 0 else "green")
-
-if flip_tfs:
-    st.info(f"⚡ Flipped TFs this session: {', '.join([t.upper() for t in flip_tfs])}")
+    **3. Strike-Path Corridors & Polarity Flipping**
+    * Short strikes must be placed *outside* the Tier 1 structural walls. 
+    * If Spot drops below a Green PE moat, the line instantly flips Red and mathematically moves into the CE corridor to act as overhead resistance.
+    
+    **4. Expansion (DRIVING) vs Compression (SLEEPING)**
+    * **DRIVING 🚀**: Spot price has broken past the historical price point that originally caused the SuperTrend to flip. Institutional momentum is actively pushing.
+    * **SLEEPING 📦**: Spot price has pulled back and is trapped between the SuperTrend line and the historical flip point. The market is chopping sideways.
+    """)
