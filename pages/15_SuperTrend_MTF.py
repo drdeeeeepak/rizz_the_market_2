@@ -12,6 +12,8 @@ from page_utils import bootstrap_signals, show_page_header
 # ── 0. CONFIG & LIVE BOOTSTRAP ────────────────────────────────────────────────
 st.set_page_config(page_title="P15 · SuperTrend MTF", layout="wide")
 st_autorefresh(interval=180_000, key="p15")
+st.title("Page 15 — SuperTrend MTF")
+st.caption("MTF Verdict · Strike-Path Corridors · Structural Backdrop · Moat Stack · SLEEPING/DRIVING")
 
 sig, spot_live, signals_ts = bootstrap_signals()
 
