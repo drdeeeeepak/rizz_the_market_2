@@ -221,10 +221,8 @@ for tf, data in st_data.items():
     if data.get("no_data"):
         continue
     if data["dir"] == "BEAR":
-        # Light pink background, deep pink text
         ce_items.append((f"🧱 {tf} MOAT", data["val"], "#fbcfe8", "#831843"))
     else:
-        # Light pastel green background, dark green text
         pe_items.append((f"🧱 {tf} MOAT", data["val"], "#bbf7d0", "#14532d"))
 
 ce_items.sort(key=lambda x: x[1], reverse=True)
@@ -239,7 +237,6 @@ def _render_corridor(title, items, is_ce):
         margin = "margin: 12px 0;" if "SPOT" in lbl else "margin: 4px 0;"
         pct_str = f"{((val - spot_now) / spot_now) * 100:+.2f}%" if not "SPOT" in lbl else "—"
         
-        # Spatial filtering
         if is_ce and val < spot_now and "PROFIT" not in lbl and "SOLD" not in lbl: continue
         if not is_ce and val > spot_now and "PROFIT" not in lbl and "SOLD" not in lbl: continue
 
