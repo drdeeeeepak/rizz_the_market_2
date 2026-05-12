@@ -22,6 +22,8 @@ import json
 
 st.set_page_config(page_title="P02 · EMA Hold Monitor", layout="wide")
 st_autorefresh(interval=180_000, key="p02")
+st.title("Page 02 — EMA Hold Monitor")
+st.caption("Canary Dashboard · EMA Moat Stack · Strike-Path Corridors · Momentum · Hold/Act Table")
 
 from page_utils import bootstrap_signals, show_page_header
 sig, spot, signals_ts = bootstrap_signals()
@@ -1012,30 +1014,12 @@ else:
         if ce_sold > 0:
             for p, v in _all_emas:
                 if spot_now < v < ce_sold:
-                    _ce_items.append((f"EMA{p}", v, "above"))
+                    _ce_items.append((f"🧱 EMA{p}", v, "above"))
             _ce_moat_count = sum(1 for _, v, k in _ce_items if k == "above")
             _ce_note = f"{_ce_moat_count} moat{'s' if _ce_moat_count!=1 else ''}" if _ce_moat_count else "PATH CLEAR ⚠️"
-            _ce_items.append((f"CE {ce_sold:,}", float(ce_sold), "sold_ce"))
+            _ce_items.append((f"CE SOLD {ce_sold:,}", float(ce_sold), "sold_ce"))
         else:
             _ce_moat_count, _ce_note = 0, ""
-        _ce_items.sort(key=lambda x: x[1])
-
-        st.markdown("<div style='font-size:13px;color:#475569;margin-bottom:3px;'>📈 CE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
-        _ce_cols = st.columns(max(len(_ce_items), 1))
-        for i, (lbl, val, kind) in enumerate(_ce_items):
-            _extra = _ce_note if kind == "sold_ce" else ""
-            _stxt  = _sub(kind, val, _extra)
-            with _ce_cols[i]:
-                if kind == "book_loss":
-                    st.error(f"🔴 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
-                elif kind == "prep_loss":
-                    st.warning(f"🟠 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
-                elif kind == "book_profit":
-                    st.success(f"🟢 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
-                elif kind == "prep_profit":
-                    st.success(f"🔵 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt}")
-                else:
-                    ui.metric_card(lbl, f"{val:,.0f}", sub=_stxt, color=_col(kind))
 
         _pe_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
         if pe_def_trig_spot > 0:
@@ -1047,30 +1031,55 @@ else:
         if pe_sold > 0:
             for p, v in _all_emas:
                 if pe_sold < v < spot_now:
-                    _pe_items.append((f"EMA{p}", v, "below"))
+                    _pe_items.append((f"🧱 EMA{p}", v, "below"))
             _pe_moat_count = sum(1 for _, v, k in _pe_items if k == "below")
             _pe_note = f"{_pe_moat_count} moat{'s' if _pe_moat_count!=1 else ''}" if _pe_moat_count else "PATH CLEAR ⚠️"
-            _pe_items.append((f"PE {pe_sold:,}", float(pe_sold), "sold_pe"))
+            _pe_items.append((f"PE SOLD {pe_sold:,}", float(pe_sold), "sold_pe"))
         else:
             _pe_moat_count, _pe_note = 0, ""
-        _pe_items.sort(key=lambda x: x[1])
 
-        st.markdown("<div style='font-size:13px;color:#475569;margin:8px 0 3px;'>📉 PE Corridor — all levels sorted by price · % from anchor on each</div>", unsafe_allow_html=True)
-        _pe_cols = st.columns(max(len(_pe_items), 1))
-        for i, (lbl, val, kind) in enumerate(_pe_items):
-            _extra_pe = _pe_note if kind == "sold_pe" else ""
-            _stxt_pe  = _sub(kind, val, _extra_pe)
-            with _pe_cols[i]:
-                if kind == "book_loss":
-                    st.error(f"🔴 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
-                elif kind == "prep_loss":
-                    st.warning(f"🟠 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
-                elif kind == "book_profit":
-                    st.success(f"🟢 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
-                elif kind == "prep_profit":
-                    st.success(f"🔵 **{lbl}**\n\n**{val:,.0f}**\n\n{_stxt_pe}")
-                else:
-                    ui.metric_card(lbl, f"{val:,.0f}", sub=_stxt_pe, color=_col(kind))
+        _KIND_BG = {
+            "neutral":     ("#334155", "white"),
+            "cmp":         ("#3b82f6", "white"),
+            "above":       ("#fbcfe8", "#831843"),
+            "below":       ("#bbf7d0", "#14532d"),
+            "sold_ce":     ("#1e293b", "white"),
+            "sold_pe":     ("#1e293b", "white"),
+            "book_loss":   ("#7f1d1d", "white"),
+            "prep_loss":   ("#ea580c", "white"),
+            "book_profit": ("#0f766e", "white"),
+            "prep_profit": ("#0369a1", "white"),
+        }
+
+        def _render_vc(title, items):
+            items_desc = sorted(items, key=lambda x: x[1], reverse=True)
+            html = (f"<div style='background:#0f172a;border-radius:10px;padding:16px;"
+                    f"border:1px solid #1e293b;'>")
+            html += (f"<div style='font-size:15px;font-weight:700;color:#94a3b8;"
+                     f"margin-bottom:16px;letter-spacing:1px;'>{title}</div>")
+            for lbl, val, kind in items_desc:
+                bg, txt = _KIND_BG.get(kind, ("#334155", "white"))
+                is_spot = kind == "cmp"
+                border = "border:2px solid #60a5fa;" if is_spot else "border:1px solid rgba(255,255,255,0.1);"
+                margin = "margin:12px 0;" if is_spot else "margin:4px 0;"
+                pct = _pct_anc(val)
+                pct_str = f"{pct:+.2f}% anchor" if kind != "cmp" else "—"
+                html += (f"<div style='background:{bg};color:{txt};padding:10px 14px;"
+                         f"border-radius:6px;{border}{margin}display:flex;"
+                         f"justify-content:space-between;align-items:center;'>")
+                html += f"<span style='font-weight:700;font-size:14px;'>{lbl}</span>"
+                html += f"<div style='text-align:right;'>"
+                html += f"<div style='font-weight:900;font-size:16px;'>{val:,.0f}</div>"
+                html += f"<div style='font-size:11px;opacity:0.8;'>{pct_str}</div>"
+                html += "</div></div>"
+            html += "</div>"
+            return html
+
+        _corr_col1, _corr_col2 = st.columns(2)
+        with _corr_col1:
+            st.markdown(_render_vc("📈 CE STRIKE-PATH CORRIDOR (Overhead)", _ce_items), unsafe_allow_html=True)
+        with _corr_col2:
+            st.markdown(_render_vc("📉 PE STRIKE-PATH CORRIDOR (Downside)", _pe_items), unsafe_allow_html=True)
 
     _off_rule = f"{'Wed/Thu' if dte >= 5 else 'Fri/Mon/Tue'} · CE +{ce_off_pct}% / PE −{pe_off_pct}% from spot"
     st.caption(
