@@ -221,6 +221,28 @@ st.markdown(
     f"</div>", unsafe_allow_html=True
 )
 
+with st.expander("📖 MTF Verdict — Rules Reference"):
+    st.markdown("""
+**Decision tree — evaluated top to bottom, first match wins:**
+
+| Verdict | Trigger | Meaning |
+|---|---|---|
+| 🚨 **EXIT CE / PE** | **4H SuperTrend flipped** direction in last 1–2 candles | Macro wall collapsed. Thesis for that leg is dead — exit immediately. |
+| 🔴 **ACT / ROLL CE / PE** | **1H flipped** direction **OR** 1H DRIVING + 4H DRIVING in same direction | Roll trigger. 1H is dragging 4H into drive — challenged leg needs action. |
+| 👁️ **WATCH CE / PE** | **1H is DRIVING** but 4H still SLEEPING | Boundary test. 1H is probing the 4H wall but structure not broken yet. |
+| 👁️ **PREPARE (Intraday)** | **30M or 15M is DRIVING**, but 1H still SLEEPING | Intraday momentum building. Operational structure intact — no action, stay alert. |
+| ✅ **HOLD** | None of the above | All TFs sleeping. Theta farm running safely, premium decaying. |
+
+---
+
+**Key concepts:**
+
+- **DRIVING** — Spot has crossed the *flip price* (close of the candle where ST last changed direction). The TF is actively pulling price in its direction.
+- **SLEEPING** — ST line is present but spot is trapped between the ST line and the flip price. Structure exists but is not engaged.
+- **Flip price** — The close price of the last candle where SuperTrend reversed. This is the level spot must clear for a TF to go DRIVING.
+- **Threat direction** — determined by the TF's current ST direction: BULL ST threatens the **CE** leg (price moving up), BEAR ST threatens the **PE** leg.
+""")
+
 st.divider()
 
 # ── 3b. MTF PRICE LADDER ──────────────────────────────────────────────────────
