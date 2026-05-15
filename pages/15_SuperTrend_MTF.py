@@ -187,6 +187,105 @@ st.markdown(
     f"</div>", unsafe_allow_html=True
 )
 
+st.divider()
+
+# ── 3b. MTF PRICE LADDER ──────────────────────────────────────────────────────
+st.markdown("<h3 style='color:#334155;margin-bottom:4px;'>MTF Price Ladder</h3>", unsafe_allow_html=True)
+st.caption("All ST walls + flip levels sorted high → low · SLEEPING shows flip level · DRIVING shows ST line only · CMP as dashed separator")
+
+_ladder_items = []
+for _tf, _d in st_data.items():
+    if _d.get("no_data"):
+        continue
+    _dir  = _d["dir"]
+    _val  = float(_d["val"])
+    _sraw = _d.get("state_raw", "UNKNOWN")
+    _fp   = float(_d.get("flip_price", 0))
+    _drv  = _sraw == "DRIVING"
+
+    _ladder_items.append({
+        "tf": _tf, "value": _val,
+        "kind": "bear_st" if _dir == "BEAR" else "bull_st",
+        "driving": _drv,
+        "label": f"{_tf}  {'BEAR' if _dir == 'BEAR' else 'BULL'}  {'🚀 DRIVING' if _drv else '📦 SLEEPING'}",
+    })
+
+    # Flip level only for SLEEPING TFs, and only if meaningfully different from ST line
+    if _sraw == "SLEEPING" and _fp > 0 and abs(_fp - _val) > 5:
+        _flip_tag = "FLIP SUPPORT" if _dir == "BEAR" else "FLIP RESISTANCE"
+        _ladder_items.append({
+            "tf": _tf, "value": _fp,
+            "kind": "flip_bear" if _dir == "BEAR" else "flip_bull",
+            "driving": False,
+            "label": f"{_tf}  {_flip_tag}  📦 SLEEPING",
+        })
+
+_ladder_items.append({"tf": "CMP", "value": spot_now, "kind": "cmp", "driving": False, "label": "CMP"})
+_ladder_items.sort(key=lambda x: x["value"], reverse=True)
+
+_LDR_STYLE = {
+    "bear_st":   ("#fca5a5", "#7f1d1d", "1px solid rgba(127,29,29,0.4)"),
+    "bull_st":   ("#bbf7d0", "#14532d", "1px solid rgba(20,83,45,0.4)"),
+    "flip_bear": ("#fef3c7", "#78350f", "1px dashed #d97706"),
+    "flip_bull": ("#dbeafe", "#1e3a8a", "1px dashed #3b82f6"),
+    "cmp":       ("#1d4ed8", "white",   "2px dashed rgba(255,255,255,0.6)"),
+}
+
+_ldr_html  = "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;'>"
+_ldr_html += "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px;'>PRICE · HIGH → LOW</div>"
+
+for _it in _ladder_items:
+    _bg, _tc, _br = _LDR_STYLE.get(_it["kind"], ("#334155", "white", "1px solid #475569"))
+    _pct  = (_it["value"] - spot_now) / spot_now * 100 if _it["kind"] != "cmp" else None
+    _pcts = f"{_pct:+.2f}%" if _pct is not None else "—"
+    _mg   = "margin:10px 0;" if _it["kind"] == "cmp" else "margin:3px 0;"
+    _ldr_html += (
+        f"<div style='background:{_bg};color:{_tc};padding:9px 14px;border-radius:6px;"
+        f"border:{_br};{_mg}display:flex;justify-content:space-between;align-items:center;'>"
+        f"<span style='font-size:13px;font-weight:700;'>{_it['label']}</span>"
+        f"<div style='text-align:right;'>"
+        f"<div style='font-size:16px;font-weight:900;'>{_it['value']:,.0f}</div>"
+        f"<div style='font-size:11px;opacity:0.75;'>{_pcts}</div>"
+        f"</div></div>"
+    )
+_ldr_html += "</div>"
+
+_legend_html = (
+    "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;height:100%;'>"
+    "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:16px;'>LEGEND</div>"
+    "<div style='margin-bottom:10px;'><span style='background:#fca5a5;color:#7f1d1d;padding:3px 10px;"
+    "border-radius:4px;font-size:12px;font-weight:700;'>BEAR ST LINE</span>"
+    "&nbsp;&nbsp;Overhead resistance wall</div>"
+    "<div style='margin-bottom:10px;'><span style='background:#bbf7d0;color:#14532d;padding:3px 10px;"
+    "border-radius:4px;font-size:12px;font-weight:700;'>BULL ST LINE</span>"
+    "&nbsp;&nbsp;Support floor below</div>"
+    "<div style='margin-bottom:10px;'><span style='background:#fef3c7;color:#78350f;padding:3px 10px;"
+    "border-radius:4px;border:1px dashed #d97706;font-size:12px;font-weight:700;'>FLIP SUPPORT</span>"
+    "&nbsp;&nbsp;Last BULL level before BEAR flip</div>"
+    "<div style='margin-bottom:10px;'><span style='background:#dbeafe;color:#1e3a8a;padding:3px 10px;"
+    "border-radius:4px;border:1px dashed #3b82f6;font-size:12px;font-weight:700;'>FLIP RESISTANCE</span>"
+    "&nbsp;&nbsp;Last BEAR level before BULL flip</div>"
+    "<div style='margin-bottom:10px;'><span style='background:#1d4ed8;color:white;padding:3px 10px;"
+    "border-radius:4px;font-size:12px;font-weight:700;'>— — CMP — —</span>"
+    "&nbsp;&nbsp;Current Market Price</div>"
+    "<div style='margin-top:20px;padding:12px;background:#1e293b;border-radius:8px;"
+    "font-size:12px;color:#94a3b8;line-height:1.8;'>"
+    "🚀 <b style='color:#e2e8f0;'>DRIVING</b> — spot cleared the flip level<br>"
+    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Institutional expansion in progress<br>"
+    "📦 <b style='color:#e2e8f0;'>SLEEPING</b> — spot trapped between ST line<br>"
+    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;and flip level · chop zone"
+    "</div>"
+    "</div>"
+)
+
+_ldr_col1, _ldr_col2 = st.columns([3, 2])
+with _ldr_col1:
+    st.markdown(_ldr_html, unsafe_allow_html=True)
+with _ldr_col2:
+    st.markdown(_legend_html, unsafe_allow_html=True)
+
+st.divider()
+
 # ── 4. STRIKE-PATH CORRIDORS (Visual Map with P&L Nodes) ────────────────────
 ui_col1, ui_col2 = st.columns(2)
 
