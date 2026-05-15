@@ -191,7 +191,22 @@ st.divider()
 
 # ── 3b. MTF PRICE LADDER ──────────────────────────────────────────────────────
 st.markdown("<h3 style='color:#334155;margin-bottom:4px;'>MTF Price Ladder</h3>", unsafe_allow_html=True)
-st.caption("All ST walls + flip levels sorted high → low · SLEEPING shows flip level · DRIVING shows ST line only · CMP as dashed separator")
+st.caption("All 6 TFs sorted high → low · DRIVING = direction colour · SLEEPING = TF-specific yellow shade (ST + flip same shade) · CMP dashed")
+
+# Per-TF yellow shades for SLEEPING rows — both ST line and flip level share the same shade
+_SLEEP_PALETTE = {
+    "DAILY": ("#fefce8", "#78350f", "1px solid #fde68a"),   # palest cream-yellow
+    "4H":    ("#fef9c3", "#713f12", "1px solid #fef08a"),   # light yellow
+    "2H":    ("#fef08a", "#78350f", "1px solid #fde047"),   # medium yellow
+    "1H":    ("#fde047", "#78350f", "1px solid #facc15"),   # bright yellow
+    "30M":   ("#fbbf24", "#451a03", "1px solid #f59e0b"),   # golden amber
+    "15M":   ("#f59e0b", "#451a03", "1px solid #d97706"),   # deep amber
+}
+
+# DRIVING rows use direction colour — strong, solid
+_DRV_BULL = ("#16a34a", "white", "1px solid #15803d")
+_DRV_BEAR = ("#dc2626", "white", "1px solid #b91c1c")
+_CMP_STYLE = ("#1d4ed8", "white", "2px dashed rgba(255,255,255,0.6)")
 
 _ladder_items = []
 for _tf, _d in st_data.items():
@@ -204,41 +219,36 @@ for _tf, _d in st_data.items():
     _drv  = _sraw == "DRIVING"
 
     _ladder_items.append({
-        "tf": _tf, "value": _val,
-        "kind": "bear_st" if _dir == "BEAR" else "bull_st",
-        "driving": _drv,
+        "tf": _tf, "value": _val, "dir": _dir, "driving": _drv,
         "label": f"{_tf}  {'BEAR' if _dir == 'BEAR' else 'BULL'}  {'🚀 DRIVING' if _drv else '📦 SLEEPING'}",
     })
 
-    # Flip level only for SLEEPING TFs, and only if meaningfully different from ST line
+    # Flip level only for SLEEPING, only if meaningfully different from ST line
     if _sraw == "SLEEPING" and _fp > 0 and abs(_fp - _val) > 5:
         _flip_tag = "FLIP SUPPORT" if _dir == "BEAR" else "FLIP RESISTANCE"
         _ladder_items.append({
-            "tf": _tf, "value": _fp,
-            "kind": "flip_bear" if _dir == "BEAR" else "flip_bull",
-            "driving": False,
+            "tf": _tf, "value": _fp, "dir": _dir, "driving": False,
             "label": f"{_tf}  {_flip_tag}  📦 SLEEPING",
         })
 
-_ladder_items.append({"tf": "CMP", "value": spot_now, "kind": "cmp", "driving": False, "label": "CMP"})
+_ladder_items.append({"tf": "CMP", "value": spot_now, "dir": "", "driving": False, "label": "CMP"})
 _ladder_items.sort(key=lambda x: x["value"], reverse=True)
 
-_LDR_STYLE = {
-    "bear_st":   ("#fca5a5", "#7f1d1d", "1px solid rgba(127,29,29,0.4)"),
-    "bull_st":   ("#bbf7d0", "#14532d", "1px solid rgba(20,83,45,0.4)"),
-    "flip_bear": ("#fef3c7", "#78350f", "1px dashed #d97706"),
-    "flip_bull": ("#dbeafe", "#1e3a8a", "1px dashed #3b82f6"),
-    "cmp":       ("#1d4ed8", "white",   "2px dashed rgba(255,255,255,0.6)"),
-}
+def _ldr_style(item):
+    if item["tf"] == "CMP":
+        return _CMP_STYLE
+    if item["driving"]:
+        return _DRV_BULL if item["dir"] == "BULL" else _DRV_BEAR
+    return _SLEEP_PALETTE.get(item["tf"], ("#fef3c7", "#78350f", "1px dashed #d97706"))
 
 _ldr_html  = "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;'>"
 _ldr_html += "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px;'>PRICE · HIGH → LOW</div>"
 
 for _it in _ladder_items:
-    _bg, _tc, _br = _LDR_STYLE.get(_it["kind"], ("#334155", "white", "1px solid #475569"))
-    _pct  = (_it["value"] - spot_now) / spot_now * 100 if _it["kind"] != "cmp" else None
+    _bg, _tc, _br = _ldr_style(_it)
+    _pct  = (_it["value"] - spot_now) / spot_now * 100 if _it["tf"] != "CMP" else None
     _pcts = f"{_pct:+.2f}%" if _pct is not None else "—"
-    _mg   = "margin:10px 0;" if _it["kind"] == "cmp" else "margin:3px 0;"
+    _mg   = "margin:10px 0;" if _it["tf"] == "CMP" else "margin:3px 0;"
     _ldr_html += (
         f"<div style='background:{_bg};color:{_tc};padding:9px 14px;border-radius:6px;"
         f"border:{_br};{_mg}display:flex;justify-content:space-between;align-items:center;'>"
@@ -250,31 +260,27 @@ for _it in _ladder_items:
     )
 _ldr_html += "</div>"
 
-_legend_html = (
-    "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;height:100%;'>"
-    "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:16px;'>LEGEND</div>"
-    "<div style='margin-bottom:10px;'><span style='background:#fca5a5;color:#7f1d1d;padding:3px 10px;"
-    "border-radius:4px;font-size:12px;font-weight:700;'>BEAR ST LINE</span>"
-    "&nbsp;&nbsp;Overhead resistance wall</div>"
-    "<div style='margin-bottom:10px;'><span style='background:#bbf7d0;color:#14532d;padding:3px 10px;"
-    "border-radius:4px;font-size:12px;font-weight:700;'>BULL ST LINE</span>"
-    "&nbsp;&nbsp;Support floor below</div>"
-    "<div style='margin-bottom:10px;'><span style='background:#fef3c7;color:#78350f;padding:3px 10px;"
-    "border-radius:4px;border:1px dashed #d97706;font-size:12px;font-weight:700;'>FLIP SUPPORT</span>"
-    "&nbsp;&nbsp;Last BULL level before BEAR flip</div>"
-    "<div style='margin-bottom:10px;'><span style='background:#dbeafe;color:#1e3a8a;padding:3px 10px;"
-    "border-radius:4px;border:1px dashed #3b82f6;font-size:12px;font-weight:700;'>FLIP RESISTANCE</span>"
-    "&nbsp;&nbsp;Last BEAR level before BULL flip</div>"
-    "<div style='margin-bottom:10px;'><span style='background:#1d4ed8;color:white;padding:3px 10px;"
-    "border-radius:4px;font-size:12px;font-weight:700;'>— — CMP — —</span>"
-    "&nbsp;&nbsp;Current Market Price</div>"
-    "<div style='margin-top:20px;padding:12px;background:#1e293b;border-radius:8px;"
-    "font-size:12px;color:#94a3b8;line-height:1.8;'>"
-    "🚀 <b style='color:#e2e8f0;'>DRIVING</b> — spot cleared the flip level<br>"
-    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Institutional expansion in progress<br>"
-    "📦 <b style='color:#e2e8f0;'>SLEEPING</b> — spot trapped between ST line<br>"
-    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;and flip level · chop zone"
-    "</div>"
+# Legend — one row per TF showing its sleeping shade + driving colours
+_legend_html = "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;'>"
+_legend_html += "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px;'>LEGEND</div>"
+for _ltf, (_lbg, _ltc, _lbr) in _SLEEP_PALETTE.items():
+    _legend_html += (
+        f"<div style='margin-bottom:7px;display:flex;align-items:center;gap:8px;'>"
+        f"<span style='background:{_lbg};color:{_ltc};padding:2px 10px;border-radius:4px;"
+        f"font-size:12px;font-weight:700;border:{_lbr};min-width:38px;text-align:center;'>{_ltf}</span>"
+        f"<span style='font-size:12px;color:#94a3b8;'>📦 SLEEPING — ST + flip share this shade</span>"
+        f"</div>"
+    )
+_legend_html += (
+    "<div style='margin-top:12px;margin-bottom:7px;display:flex;align-items:center;gap:8px;'>"
+    "<span style='background:#16a34a;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>BULL</span>"
+    "<span style='font-size:12px;color:#94a3b8;'>🚀 DRIVING — expanding upward</span></div>"
+    "<div style='margin-bottom:12px;display:flex;align-items:center;gap:8px;'>"
+    "<span style='background:#dc2626;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>BEAR</span>"
+    "<span style='font-size:12px;color:#94a3b8;'>🚀 DRIVING — expanding downward</span></div>"
+    "<div style='display:flex;align-items:center;gap:8px;'>"
+    "<span style='background:#1d4ed8;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>CMP</span>"
+    "<span style='font-size:12px;color:#94a3b8;'>Current Market Price</span></div>"
     "</div>"
 )
 
