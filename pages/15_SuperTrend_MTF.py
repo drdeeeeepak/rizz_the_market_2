@@ -76,6 +76,20 @@ def _run_st_engine(use_live: bool) -> bool:
         )
         sig      = {**sig, **{f"st_{k}": v for k, v in _out.items()}}
         spot_now = _sp
+        # Persist ST signals so 30M/15M survive after market close + cache expiry
+        if use_live:
+            try:
+                from analytics.compute_signals import load_saved_signals, SIGNALS_PATH
+                import json as _json
+                _saved = load_saved_signals()
+                _saved.update({k: v for k, v in sig.items() if k.startswith("st_")})
+                SIGNALS_PATH.write_text(_json.dumps(
+                    {k: v for k, v in _saved.items()
+                     if not hasattr(v, "to_dict") and not hasattr(v, "iloc")},
+                    default=str, indent=2,
+                ))
+            except Exception:
+                pass
         return True
     except Exception as _e:
         st.caption(f"ST engine ({'live' if use_live else 'eod'}): {_e}")
