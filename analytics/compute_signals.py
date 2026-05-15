@@ -354,9 +354,12 @@ def compute_all_signals(
         prev_put_norm_eod  = saved.get("st_put_norm_eod")
         prev_call_norm_eod = saved.get("st_call_norm_eod")
 
-        # Trajectory: intraday snapshot — captured once at session open
-        open_put_norm  = st.session_state.get("st_open_put_norm")
-        open_call_norm = st.session_state.get("st_open_call_norm")
+        # Trajectory: intraday snapshot — Streamlit session only; safe to None in script context
+        try:
+            open_put_norm  = st.session_state.get("st_open_put_norm")
+            open_call_norm = st.session_state.get("st_open_call_norm")
+        except Exception:
+            open_put_norm = open_call_norm = None
 
         if st_have_data:
             st_raw = SuperTrendEngine().signals(
@@ -383,35 +386,30 @@ def compute_all_signals(
         sig["st_put_norm_eod"]  = st_raw.get("put_stack",  {}).get("normalised", 0)
         sig["st_call_norm_eod"] = st_raw.get("call_stack", {}).get("normalised", 0)
 
-        # Capture 9:15 AM intraday snapshot (once per session)
-        if open_put_norm is None:
-            tier3   = ["1h", "30m", "15m"]
-            tf_sigs = st_raw.get("tf_signals", {})
-            from analytics.supertrend import MAX_RAW as ST_MAX_RAW
-            t3_put_raw  = sum(tf_sigs.get(tf, {}).get("raw_score", 0)
-                              for tf in tier3 if tf_sigs.get(tf, {}).get("side") == "PUT")
-            t3_call_raw = sum(tf_sigs.get(tf, {}).get("raw_score", 0)
-                              for tf in tier3 if tf_sigs.get(tf, {}).get("side") == "CALL")
-            st.session_state["st_open_put_norm"]  = round((t3_put_raw  / ST_MAX_RAW) * 100, 1)
-            st.session_state["st_open_call_norm"] = round((t3_call_raw / ST_MAX_RAW) * 100, 1)
-
     except Exception as e:
         log.error("SuperTrend MTF: %s", e)
-        sig.update({
-            "st_home_score":     0,
-            "st_ic_shape":       "SYMMETRIC",
-            "st_lens_pe_dist":   0,
-            "st_lens_pe_pct":    0.0,
-            "st_lens_pe_strike": 0,
-            "st_lens_ce_dist":   0,
-            "st_lens_ce_pct":    0.0,
-            "st_lens_ce_strike": 0,
-            "st_put_stack":      {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
-            "st_call_stack":     {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []},
-            "st_flip_tfs":       [],
-            "st_put_norm_eod":   0,
-            "st_call_norm_eod":  0,
-        })
+        sig.setdefault("st_home_score",     0)
+        sig.setdefault("st_ic_shape",       "SYMMETRIC")
+        sig.setdefault("st_put_stack",      {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []})
+        sig.setdefault("st_call_stack",     {"normalised": 0, "band": "BREACHED", "walls": [], "clusters": []})
+        sig.setdefault("st_flip_tfs",       [])
+        sig.setdefault("st_put_norm_eod",   0)
+        sig.setdefault("st_call_norm_eod",  0)
+
+    # Intraday 9:15 AM snapshot — write to session_state only in Streamlit context
+    try:
+        tf_sigs_snap = sig.get("st_tf_signals", {})
+        if tf_sigs_snap and st.session_state.get("st_open_put_norm") is None:
+            tier3 = ["1h", "30m", "15m"]
+            from analytics.supertrend import MAX_RAW as ST_MAX_RAW
+            t3_put_raw  = sum(tf_sigs_snap.get(tf, {}).get("raw_score", 0)
+                              for tf in tier3 if tf_sigs_snap.get(tf, {}).get("side") == "PUT")
+            t3_call_raw = sum(tf_sigs_snap.get(tf, {}).get("raw_score", 0)
+                              for tf in tier3 if tf_sigs_snap.get(tf, {}).get("side") == "CALL")
+            st.session_state["st_open_put_norm"]  = round((t3_put_raw  / ST_MAX_RAW) * 100, 1)
+            st.session_state["st_open_call_norm"] = round((t3_call_raw / ST_MAX_RAW) * 100, 1)
+    except Exception:
+        pass  # not a Streamlit session — snapshot skipped, harmless
 
     _build_lens_table(sig, spot)
     _compute_master_score(sig)
