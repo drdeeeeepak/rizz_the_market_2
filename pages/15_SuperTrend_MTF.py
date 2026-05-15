@@ -44,28 +44,48 @@ def _is_mkt_live():
     t = n.hour * 60 + n.minute
     return n.weekday() < 5 and 9*60+15 <= t <= 15*60+30
 
-if _is_mkt_live():
+def _run_st_engine(use_live: bool) -> bool:
+    """Run SuperTrend engine — live candle during market hours, EOD data otherwise.
+    Returns True on success, updates sig and spot_now in place via nonlocal."""
+    global sig, spot_now
     try:
-        from data.live_fetcher import (
-            get_nifty_daily_live, get_nifty_1h_phase,
-            get_nifty_30m, get_nifty_15m, get_nifty_5m, get_nifty_spot as _gs15,
-        )
         from analytics.supertrend import SuperTrendEngine
-        _df15  = get_nifty_daily_live()
-        _1h15  = get_nifty_1h_phase()
-        _30m15 = get_nifty_30m()
-        _15m15 = get_nifty_15m()
-        _5m15  = get_nifty_5m()
-        _sp15  = _gs15() or spot_now
-        if not _df15.empty and not _1h15.empty and _sp15 > 0:
-            _st15 = SuperTrendEngine().signals(
-                df_daily=_df15, df_1h=_1h15, df_30m=_30m15,
-                df_15m=_15m15, df_5m=_5m15, spot=_sp15
+        if use_live:
+            from data.live_fetcher import (
+                get_nifty_daily_live, get_nifty_1h_phase,
+                get_nifty_30m, get_nifty_15m, get_nifty_5m, get_nifty_spot as _gs,
             )
-            sig = {**sig, **{f"st_{k}": v for k, v in _st15.items()}}
-            spot_now = _sp15
-    except Exception as _e15:
-        st.caption(f"Live engine: {_e15}")
+            _daily = get_nifty_daily_live()
+            _sp    = _gs() or spot_now
+        else:
+            from data.live_fetcher import (
+                get_nifty_daily, get_nifty_1h_phase,
+                get_nifty_30m, get_nifty_15m, get_nifty_5m,
+            )
+            _daily = get_nifty_daily()
+            _sp    = spot_now
+        _1h  = get_nifty_1h_phase()
+        _30m = get_nifty_30m()
+        _15m = get_nifty_15m()
+        _5m  = get_nifty_5m()
+        if _daily.empty or _1h.empty or _sp <= 0:
+            return False
+        _out = SuperTrendEngine().signals(
+            df_daily=_daily, df_1h=_1h, df_30m=_30m,
+            df_15m=_15m, df_5m=_5m, spot=_sp,
+        )
+        sig      = {**sig, **{f"st_{k}": v for k, v in _out.items()}}
+        spot_now = _sp
+        return True
+    except Exception as _e:
+        st.caption(f"ST engine ({'live' if use_live else 'eod'}): {_e}")
+        return False
+
+if _is_mkt_live():
+    _run_st_engine(use_live=True)
+elif not sig.get("st_tf_signals"):
+    # signals.json missing ST data — run engine from EOD data so page always shows real lines
+    _run_st_engine(use_live=False)
 
 # Build st_data from engine output (st_tf_signals) or fallback to mock
 _TF_MAP = [("daily","DAILY"),("4h","4H"),("2h","2H"),("1h","1H"),("30m","30M"),("15m","15M")]
