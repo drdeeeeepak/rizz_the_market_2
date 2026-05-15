@@ -150,140 +150,136 @@ def get_nifty_daily(days: int = 400) -> pd.DataFrame:
 # ─── Nifty 1H OHLCV — Dow Theory Phase Window ────────────────────────────────
 
 @st.cache_data(ttl=TTL_1H, show_spinner=False)
+def _get_nifty_1h_phase_cached(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
+    """Inner fetch — raises on failure so Streamlit never caches an empty result."""
+    kite      = _get_kite_safe()
+    to_date   = date.today()
+    from_date = to_date - timedelta(days=days + 12)
+    log.info("Fetching 1H phase: %s → %s (%d trading days)", from_date, to_date, days)
+    data = kite.historical_data(
+        NIFTY_INDEX_TOKEN,
+        from_date.strftime("%Y-%m-%d"),
+        to_date.strftime("%Y-%m-%d"),
+        "60minute",
+    )
+    if not data:
+        raise RuntimeError("1H phase fetch returned empty — will retry on next call")
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    df = df[["open", "high", "low", "close", "volume"]]
+    target = days * 6
+    if len(df) > target:
+        df = df.tail(target)
+    if len(df) < int(days * 6 * 0.6):
+        log.warning("1H phase: only %d candles (expected ~%d)", len(df), target)
+    log.info("1H phase ready: %d candles", len(df))
+    return df
+
+
 def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
     """
     Fetch 1H candles for Dow Theory phase engine.
     Also used by SuperTrend engine for 1H TF and proxy resampling to 2H/4H.
-
-    Window  : last N trading days (default 20 = 120 candles at 6/day)
-    Interval: 60minute (Kite)
-    Cache   : TTL_1H = 1 hour
-    Frozen  : NO — fetched fresh every day
-
-    This is the ONLY 1H fetch in the system.
-    SuperTrend resamples 2H and 4H from this same DataFrame.
+    Public wrapper — returns empty DataFrame on failure, never raises.
     """
-    from data.kite_client import get_kite, get_kite_action
-    kite = get_kite_action() if not _HAS_ST else get_kite()
     try:
-        to_date   = date.today()
-        from_date = to_date - timedelta(days=days + 12)
-
-        log.info("Fetching 1H phase: %s → %s (%d trading days)", from_date, to_date, days)
-        data = kite.historical_data(
-            NIFTY_INDEX_TOKEN,
-            from_date.strftime("%Y-%m-%d"),
-            to_date.strftime("%Y-%m-%d"),
-            "60minute"
-        )
-        if not data:
-            log.error("1H phase fetch empty"); return pd.DataFrame()
-
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        df = df[["open", "high", "low", "close", "volume"]]
-
-        target = days * 6
-        if len(df) > target:
-            df = df.tail(target)
-
-        if len(df) < int(days * 6 * 0.6):
-            log.warning("1H phase: only %d candles (expected ~%d)", len(df), target)
-
-        log.info("1H phase ready: %d candles", len(df))
-        return df
+        return _get_nifty_1h_phase_cached(days)
     except Exception as e:
-        log.error("1H phase fetch failed: %s", e); return pd.DataFrame()
+        log.error("1H phase fetch failed: %s", e)
+        return pd.DataFrame()
+
+
+# ─── Auth helper — session first, token file fallback ────────────────────────
+
+def _get_kite_safe():
+    """Return authenticated Kite client.
+    Tries browser-session auth first (works during live page loads),
+    then falls back to access_token.txt (works any time on the same day).
+    Never calls st.stop() — safe to use inside @st.cache_data functions.
+    """
+    from data.kite_client import get_kite_action
+    if _HAS_ST:
+        try:
+            from data.kite_client import get_kite
+            return get_kite()
+        except Exception:
+            pass
+    return get_kite_action()
 
 
 # ─── Nifty 30m OHLCV — SuperTrend Tier 3 ────────────────────────────────────
 
 @st.cache_data(ttl=TTL_30M, show_spinner=False)
+def _get_nifty_30m_cached(days: int = ST_30M_DAYS) -> pd.DataFrame:
+    """Inner fetch — raises on failure so Streamlit never caches an empty result."""
+    kite      = _get_kite_safe()
+    to_date   = date.today()
+    from_date = to_date - timedelta(days=days + 5)
+    log.info("Fetching 30m ST: %s → %s", from_date, to_date)
+    data = kite.historical_data(
+        NIFTY_INDEX_TOKEN,
+        from_date.strftime("%Y-%m-%d"),
+        to_date.strftime("%Y-%m-%d"),
+        "30minute",
+    )
+    if not data:
+        raise RuntimeError("30m fetch returned empty — will retry on next call")
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    df = df[["open", "high", "low", "close", "volume"]]
+    target = days * 12   # 12 × 30m candles per NSE session
+    if len(df) > target:
+        df = df.tail(target)
+    log.info("30m ST ready: %d candles", len(df))
+    return df
+
+
 def get_nifty_30m(days: int = ST_30M_DAYS) -> pd.DataFrame:
-    """
-    Fetch 30m candles for SuperTrend Tier 3.
-    Window : last ST_30M_DAYS trading days
-    Cache  : TTL_30M = 30 minutes
-    Used by: SuperTrend MTF engine (analytics/supertrend.py)
-    Returns DataFrame with DatetimeIndex, columns: open/high/low/close/volume
-    NSE session: 6 × 1H = 12 × 30m candles per day
-    """
-    from data.kite_client import get_kite, get_kite_action
-    kite = get_kite_action() if not _HAS_ST else get_kite()
+    """Public wrapper — returns empty DataFrame on failure, never raises."""
     try:
-        to_date   = date.today()
-        from_date = to_date - timedelta(days=days + 5)
-
-        log.info("Fetching 30m ST: %s → %s", from_date, to_date)
-        data = kite.historical_data(
-            NIFTY_INDEX_TOKEN,
-            from_date.strftime("%Y-%m-%d"),
-            to_date.strftime("%Y-%m-%d"),
-            "30minute"
-        )
-        if not data:
-            log.error("30m fetch empty"); return pd.DataFrame()
-
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        df = df[["open", "high", "low", "close", "volume"]]
-
-        # Need enough candles for ST(21): at least 21 + buffer
-        # 12 candles/day × days
-        target = days * 12
-        if len(df) > target:
-            df = df.tail(target)
-
-        log.info("30m ST ready: %d candles", len(df))
-        return df
+        return _get_nifty_30m_cached(days)
     except Exception as e:
-        log.error("30m fetch failed: %s", e); return pd.DataFrame()
+        log.error("30m fetch failed: %s", e)
+        return pd.DataFrame()
 
 
 # ─── Nifty 15m OHLCV — SuperTrend Tier 3 ────────────────────────────────────
 
 @st.cache_data(ttl=TTL_15M, show_spinner=False)
+def _get_nifty_15m_cached(days: int = ST_15M_DAYS) -> pd.DataFrame:
+    """Inner fetch — raises on failure so Streamlit never caches an empty result."""
+    kite      = _get_kite_safe()
+    to_date   = date.today()
+    from_date = to_date - timedelta(days=days + 3)
+    log.info("Fetching 15m ST: %s → %s", from_date, to_date)
+    data = kite.historical_data(
+        NIFTY_INDEX_TOKEN,
+        from_date.strftime("%Y-%m-%d"),
+        to_date.strftime("%Y-%m-%d"),
+        "15minute",
+    )
+    if not data:
+        raise RuntimeError("15m fetch returned empty — will retry on next call")
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    df = df[["open", "high", "low", "close", "volume"]]
+    target = days * 24   # 24 × 15m candles per NSE session
+    if len(df) > target:
+        df = df.tail(target)
+    log.info("15m ST ready: %d candles", len(df))
+    return df
+
+
 def get_nifty_15m(days: int = ST_15M_DAYS) -> pd.DataFrame:
-    """
-    Fetch 15m candles for SuperTrend Tier 3.
-    Window : last ST_15M_DAYS trading days
-    Cache  : TTL_15M = 15 minutes
-    Used by: SuperTrend MTF engine (analytics/supertrend.py)
-    Returns DataFrame with DatetimeIndex, columns: open/high/low/close/volume
-    NSE session: 24 × 15m candles per day
-    """
-    from data.kite_client import get_kite, get_kite_action
-    kite = get_kite_action() if not _HAS_ST else get_kite()
+    """Public wrapper — returns empty DataFrame on failure, never raises."""
     try:
-        to_date   = date.today()
-        from_date = to_date - timedelta(days=days + 3)
-
-        log.info("Fetching 15m ST: %s → %s", from_date, to_date)
-        data = kite.historical_data(
-            NIFTY_INDEX_TOKEN,
-            from_date.strftime("%Y-%m-%d"),
-            to_date.strftime("%Y-%m-%d"),
-            "15minute"
-        )
-        if not data:
-            log.error("15m fetch empty"); return pd.DataFrame()
-
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        df = df[["open", "high", "low", "close", "volume"]]
-
-        # 24 candles/day × days
-        target = days * 24
-        if len(df) > target:
-            df = df.tail(target)
-
-        log.info("15m ST ready: %d candles", len(df))
-        return df
+        return _get_nifty_15m_cached(days)
     except Exception as e:
-        log.error("15m fetch failed: %s", e); return pd.DataFrame()
+        log.error("15m fetch failed: %s", e)
+        return pd.DataFrame()
 
 
 # ─── Nifty 5m OHLCV — SuperTrend display only ────────────────────────────────
