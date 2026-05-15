@@ -16,6 +16,7 @@ def main():
     from data.live_fetcher import (
         get_nifty_spot, get_nifty_daily, get_top10_daily,
         get_india_vix, get_vix_history, get_dual_expiry_chains,
+        get_nifty_1h_phase, get_nifty_30m, get_nifty_15m, get_nifty_5m,
     )
     from analytics.compute_signals import compute_all_signals, save_signals
     from analytics.dow_theory import DowTheoryEngine
@@ -28,14 +29,23 @@ def main():
     stock_dfs = get_top10_daily()
     vix_live  = get_india_vix()
     vix_hist  = get_vix_history()
+    nifty_1h  = get_nifty_1h_phase()
+    nifty_30m = get_nifty_30m()
+    nifty_15m = get_nifty_15m()
+    nifty_5m  = get_nifty_5m()
 
     if spot == 0 and not nifty_df.empty:
         spot = float(nifty_df["close"].iloc[-1])
 
     chains = get_dual_expiry_chains(spot)
-    log.info("Spot: %.0f  VIX: %.2f  Far DTE: %d", spot, vix_live, chains.get("far_dte",7))
+    log.info("Spot: %.0f  VIX: %.2f  Far DTE: %d  1H rows: %d  30m rows: %d",
+             spot, vix_live, chains.get("far_dte", 7), len(nifty_1h), len(nifty_30m))
 
-    sig = compute_all_signals(nifty_df, stock_dfs, vix_live, vix_hist, chains, spot)
+    sig = compute_all_signals(
+        nifty_df, stock_dfs, vix_live, vix_hist, chains, spot,
+        nifty_1h=nifty_1h, nifty_30m=nifty_30m,
+        nifty_15m=nifty_15m, nifty_5m=nifty_5m,
+    )
     save_signals(sig)
 
     # Write breach levels
