@@ -211,28 +211,27 @@ st.divider()
 
 # ── 3b. MTF PRICE LADDER ──────────────────────────────────────────────────────
 st.markdown("<h3 style='color:#334155;margin-bottom:4px;'>MTF Price Ladder</h3>", unsafe_allow_html=True)
-st.caption("All 6 TFs sorted high → low · DRIVING = direction colour · SLEEPING = dark card, TF-specific text colour · CMP dashed")
+st.caption("All 6 TFs sorted high → low · DRIVING = direction colour · SLEEPING = TF yellow shade + TF text colour · CMP dashed")
 
-# SLEEPING rows — dark background, TF-specific text colour (same for ST line + flip level)
-_SLEEP_TXT = {
-    "DAILY": "#22d3ee",   # cyan
-    "4H":    "#a78bfa",   # violet
-    "2H":    "#fb923c",   # orange
-    "1H":    "#fbbf24",   # amber
-    "30M":   "#86efac",   # light green
-    "15M":   "#f472b6",   # pink
+# SLEEPING: yellow BG shade per TF + distinct dark text per TF (same for ST line and flip level)
+_SLEEP_PAL = {
+    "DAILY": ("#fefce8", "#1e3a5f", "1px solid #fde68a"),  # palest cream,  dark navy
+    "4H":    ("#fef9c3", "#4c1d95", "1px solid #fef08a"),  # light yellow,  dark purple
+    "2H":    ("#fef08a", "#14532d", "1px solid #fde047"),  # medium yellow, dark green
+    "1H":    ("#fde047", "#7f1d1d", "1px solid #facc15"),  # bright yellow, dark red
+    "30M":   ("#fbbf24", "#0c4a6e", "1px solid #f59e0b"),  # golden amber,  dark teal
+    "15M":   ("#f59e0b", "#431407", "1px solid #d97706"),  # deep amber,    dark brown
 }
-_SLEEP_BG  = "#1e293b"
-_SLEEP_BDR = "1px solid #334155"
-
-# DRIVING rows — solid direction colour
-_DRV_BULL = ("#16a34a", "white", "1px solid #15803d")
-_DRV_BEAR = ("#dc2626", "white", "1px solid #b91c1c")
+_DRV_BULL  = ("#16a34a", "white", "1px solid #15803d")
+_DRV_BEAR  = ("#dc2626", "white", "1px solid #b91c1c")
 _CMP_STYLE = ("#1d4ed8", "white", "2px dashed rgba(255,255,255,0.6)")
 
 _ladder_items = []
+_no_data_tfs  = []
+
 for _tf, _d in st_data.items():
     if _d.get("no_data"):
+        _no_data_tfs.append(_tf)
         continue
     _dir  = _d["dir"]
     _val  = float(_d["val"])
@@ -264,23 +263,36 @@ for _it in _ladder_items:
     elif _it["driving"]:
         _bg, _tc, _br = _DRV_BULL if _it["dir"] == "BULL" else _DRV_BEAR
     else:
-        _tc = _SLEEP_TXT.get(_it["tf"], "#94a3b8")
-        _bg, _br = _SLEEP_BG, _SLEEP_BDR
+        _bg, _tc, _br = _SLEEP_PAL.get(_it["tf"], ("#fef3c7", "#78350f", "1px dashed #d97706"))
 
     _pct  = (_it["value"] - spot_now) / spot_now * 100 if _it["tf"] != "CMP" else None
     _pcts = f"{_pct:+.2f}%" if _pct is not None else "—"
     _mg   = "margin:10px 0;" if _it["tf"] == "CMP" else "margin:3px 0;"
     _ldr_html += (
-        f"<div style='background:{_bg};padding:9px 14px;border-radius:6px;"
+        f"<div style='background:{_bg};color:{_tc};padding:9px 14px;border-radius:6px;"
         f"border:{_br};{_mg}display:flex;justify-content:space-between;align-items:center;'>"
-        f"<span style='color:{_tc};font-size:13px;font-weight:700;'>{_it['label']}</span>"
+        f"<span style='font-size:13px;font-weight:700;'>{_it['label']}</span>"
         f"<div style='text-align:right;'>"
-        f"<div style='color:{_tc};font-size:16px;font-weight:900;'>{_it['value']:,.0f}</div>"
-        f"<div style='color:{_tc};font-size:11px;opacity:0.75;'>{_pcts}</div>"
+        f"<div style='font-size:16px;font-weight:900;'>{_it['value']:,.0f}</div>"
+        f"<div style='font-size:11px;opacity:0.75;'>{_pcts}</div>"
         f"</div></div>"
     )
-_ldr_html += "</div>"
 
+# No-data TFs — always shown, greyed out at bottom
+for _tf in _no_data_tfs:
+    _bg, _tc, _br = _SLEEP_PAL.get(_tf, ("#1e293b", "#64748b", "1px dashed #334155"))
+    _ldr_html += (
+        f"<div style='background:{_bg};color:{_tc};padding:9px 14px;border-radius:6px;"
+        f"border:{_br};margin:3px 0;display:flex;justify-content:space-between;"
+        f"align-items:center;opacity:0.45;'>"
+        f"<span style='font-size:13px;font-weight:700;'>{_tf}  📦 No data</span>"
+        f"<div style='text-align:right;'>"
+        f"<div style='font-size:16px;font-weight:900;'>—</div>"
+        f"<div style='font-size:11px;'>awaiting fetch</div>"
+        f"</div></div>"
+    )
+
+_ldr_html += "</div>"
 st.markdown(_ldr_html, unsafe_allow_html=True)
 
 st.divider()
