@@ -211,19 +211,21 @@ st.divider()
 
 # ── 3b. MTF PRICE LADDER ──────────────────────────────────────────────────────
 st.markdown("<h3 style='color:#334155;margin-bottom:4px;'>MTF Price Ladder</h3>", unsafe_allow_html=True)
-st.caption("All 6 TFs sorted high → low · DRIVING = direction colour · SLEEPING = TF-specific yellow shade (ST + flip same shade) · CMP dashed")
+st.caption("All 6 TFs sorted high → low · DRIVING = direction colour · SLEEPING = dark card, TF-specific text colour · CMP dashed")
 
-# Per-TF yellow shades for SLEEPING rows — both ST line and flip level share the same shade
-_SLEEP_PALETTE = {
-    "DAILY": ("#fefce8", "#78350f", "1px solid #fde68a"),   # palest cream-yellow
-    "4H":    ("#fef9c3", "#713f12", "1px solid #fef08a"),   # light yellow
-    "2H":    ("#fef08a", "#78350f", "1px solid #fde047"),   # medium yellow
-    "1H":    ("#fde047", "#78350f", "1px solid #facc15"),   # bright yellow
-    "30M":   ("#fbbf24", "#451a03", "1px solid #f59e0b"),   # golden amber
-    "15M":   ("#f59e0b", "#451a03", "1px solid #d97706"),   # deep amber
+# SLEEPING rows — dark background, TF-specific text colour (same for ST line + flip level)
+_SLEEP_TXT = {
+    "DAILY": "#22d3ee",   # cyan
+    "4H":    "#a78bfa",   # violet
+    "2H":    "#fb923c",   # orange
+    "1H":    "#fbbf24",   # amber
+    "30M":   "#86efac",   # light green
+    "15M":   "#f472b6",   # pink
 }
+_SLEEP_BG  = "#1e293b"
+_SLEEP_BDR = "1px solid #334155"
 
-# DRIVING rows use direction colour — strong, solid
+# DRIVING rows — solid direction colour
 _DRV_BULL = ("#16a34a", "white", "1px solid #15803d")
 _DRV_BEAR = ("#dc2626", "white", "1px solid #b91c1c")
 _CMP_STYLE = ("#1d4ed8", "white", "2px dashed rgba(255,255,255,0.6)")
@@ -243,7 +245,6 @@ for _tf, _d in st_data.items():
         "label": f"{_tf}  {'BEAR' if _dir == 'BEAR' else 'BULL'}  {'🚀 DRIVING' if _drv else '📦 SLEEPING'}",
     })
 
-    # Flip level only for SLEEPING, only if meaningfully different from ST line
     if _sraw == "SLEEPING" and _fp > 0 and abs(_fp - _val) > 5:
         _flip_tag = "FLIP SUPPORT" if _dir == "BEAR" else "FLIP RESISTANCE"
         _ladder_items.append({
@@ -254,61 +255,33 @@ for _tf, _d in st_data.items():
 _ladder_items.append({"tf": "CMP", "value": spot_now, "dir": "", "driving": False, "label": "CMP"})
 _ladder_items.sort(key=lambda x: x["value"], reverse=True)
 
-def _ldr_style(item):
-    if item["tf"] == "CMP":
-        return _CMP_STYLE
-    if item["driving"]:
-        return _DRV_BULL if item["dir"] == "BULL" else _DRV_BEAR
-    return _SLEEP_PALETTE.get(item["tf"], ("#fef3c7", "#78350f", "1px dashed #d97706"))
-
 _ldr_html  = "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;'>"
 _ldr_html += "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px;'>PRICE · HIGH → LOW</div>"
 
 for _it in _ladder_items:
-    _bg, _tc, _br = _ldr_style(_it)
+    if _it["tf"] == "CMP":
+        _bg, _tc, _br = _CMP_STYLE
+    elif _it["driving"]:
+        _bg, _tc, _br = _DRV_BULL if _it["dir"] == "BULL" else _DRV_BEAR
+    else:
+        _tc = _SLEEP_TXT.get(_it["tf"], "#94a3b8")
+        _bg, _br = _SLEEP_BG, _SLEEP_BDR
+
     _pct  = (_it["value"] - spot_now) / spot_now * 100 if _it["tf"] != "CMP" else None
     _pcts = f"{_pct:+.2f}%" if _pct is not None else "—"
     _mg   = "margin:10px 0;" if _it["tf"] == "CMP" else "margin:3px 0;"
     _ldr_html += (
-        f"<div style='background:{_bg};color:{_tc};padding:9px 14px;border-radius:6px;"
+        f"<div style='background:{_bg};padding:9px 14px;border-radius:6px;"
         f"border:{_br};{_mg}display:flex;justify-content:space-between;align-items:center;'>"
-        f"<span style='font-size:13px;font-weight:700;'>{_it['label']}</span>"
+        f"<span style='color:{_tc};font-size:13px;font-weight:700;'>{_it['label']}</span>"
         f"<div style='text-align:right;'>"
-        f"<div style='font-size:16px;font-weight:900;'>{_it['value']:,.0f}</div>"
-        f"<div style='font-size:11px;opacity:0.75;'>{_pcts}</div>"
+        f"<div style='color:{_tc};font-size:16px;font-weight:900;'>{_it['value']:,.0f}</div>"
+        f"<div style='color:{_tc};font-size:11px;opacity:0.75;'>{_pcts}</div>"
         f"</div></div>"
     )
 _ldr_html += "</div>"
 
-# Legend — one row per TF showing its sleeping shade + driving colours
-_legend_html = "<div style='background:#0f172a;border-radius:12px;padding:20px;border:1px solid #1e293b;'>"
-_legend_html += "<div style='font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px;'>LEGEND</div>"
-for _ltf, (_lbg, _ltc, _lbr) in _SLEEP_PALETTE.items():
-    _legend_html += (
-        f"<div style='margin-bottom:7px;display:flex;align-items:center;gap:8px;'>"
-        f"<span style='background:{_lbg};color:{_ltc};padding:2px 10px;border-radius:4px;"
-        f"font-size:12px;font-weight:700;border:{_lbr};min-width:38px;text-align:center;'>{_ltf}</span>"
-        f"<span style='font-size:12px;color:#94a3b8;'>📦 SLEEPING — ST + flip share this shade</span>"
-        f"</div>"
-    )
-_legend_html += (
-    "<div style='margin-top:12px;margin-bottom:7px;display:flex;align-items:center;gap:8px;'>"
-    "<span style='background:#16a34a;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>BULL</span>"
-    "<span style='font-size:12px;color:#94a3b8;'>🚀 DRIVING — expanding upward</span></div>"
-    "<div style='margin-bottom:12px;display:flex;align-items:center;gap:8px;'>"
-    "<span style='background:#dc2626;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>BEAR</span>"
-    "<span style='font-size:12px;color:#94a3b8;'>🚀 DRIVING — expanding downward</span></div>"
-    "<div style='display:flex;align-items:center;gap:8px;'>"
-    "<span style='background:#1d4ed8;color:white;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;'>CMP</span>"
-    "<span style='font-size:12px;color:#94a3b8;'>Current Market Price</span></div>"
-    "</div>"
-)
-
-_ldr_col1, _ldr_col2 = st.columns([3, 2])
-with _ldr_col1:
-    st.markdown(_ldr_html, unsafe_allow_html=True)
-with _ldr_col2:
-    st.markdown(_legend_html, unsafe_allow_html=True)
+st.markdown(_ldr_html, unsafe_allow_html=True)
 
 st.divider()
 
