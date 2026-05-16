@@ -1,228 +1,333 @@
-# analytics/bollinger.py — v3 (April 2026)
-# Page 09: Bollinger Bands Framework
+# analytics/bollinger.py — v4 (May 2026)
+# Page 09: Bollinger Bands Framework — 4-TF MTF engine
 #
-# Changes from v2:
-#   - Walk modifier now ATR-scaled and age-adjusted (replaces flat +400)
-#     Day 3: 1.5x ATR14, Day 4-5: 1.0x ATR14, Day 6+: 0.5x ATR14
-#     Cap: 2.0x ATR14, Floor: 100 pts
-#   - MEAN_REVERT regime added (BW% > 10%) with -100 pts tightening bonus
-#   - BB-VIX divergence: 0.5x ATR14 both sides (was fixed 200 pts)
-#   - Band breach: 0.5x ATR14 both sides (was fixed 200 pts), Days 1-2 only
-#   - All modifiers are INDEPENDENT — do not stack with other lenses
+# TF_HIERARCHY:
+#   2H = PRIMARY   → BW% regime, %B zone, MA position, walk, asymmetry ratio
+#   4H = SECONDARY → confidence modifier, secondary walk, squeeze alignment
+#   1D = REGIME_BG → display only + skip score condition 1
+#   1W = MACRO     → display only + skip score conditions 2 and 5
+#
+# RULE: Only 2H+4H feed asymmetry formula. 1D/1W never drive strike or ratio.
+# All signals are INDEPENDENT — do not stack with other lenses.
 
 import pandas as pd
 import numpy as np
 from analytics.base_strategy import BaseStrategy
-from config import (
-    BB_PERIOD, BB_STD, BB_SQUEEZE, BB_NORMAL_L, BB_NORMAL_H, BB_EXPAND,
-    BB_VIX_DIV_VIX, BB_VIX_DIV_BW,
-    OI_STRIKE_STEP,
-)
+from config import BB_PERIOD, BB_STD, BB_MA_BAND
 
-# BW% thresholds
-BW_SQUEEZE        = 3.5   # below = squeeze
-BW_SQUEEZE_WARN   = 4.0   # 3.5-4.0 = resolving
-BW_NORMAL_LOW     = 4.0
-BW_NORMAL_HIGH    = 7.0
-BW_ELEVATED       = 10.0  # above = mean revert regime
+# ── BW% regime threshold tables ────────────────────────────────────────────────
+# Format: (upper_bound_exclusive, regime_name). None = open-ended (catch-all).
 
-# Walk age → ATR multiplier
-WALK_MULTIPLIERS = {3: 1.5, 4: 1.0, 5: 1.0}   # day 6+ = 0.5
-WALK_MULT_EXTENDED = 0.5
-WALK_CAP_MULT  = 2.0    # max = 2x ATR14
-WALK_FLOOR_PTS = 100    # minimum modifier
+_BW_2H = [          # 2H and 4H — intraday, tighter thresholds
+    (2.0,  "EXTREME_SQUEEZE"),
+    (3.5,  "SQUEEZE"),
+    (4.5,  "CALM"),
+    (5.6,  "MOMENTUM"),
+    (6.5,  "HIGH_VOL"),
+    (None, "MEAN_REVERT"),
+]
+_BW_1D = [          # 1D — daily bands compress more slowly, wider thresholds
+    (3.5,  "SQUEEZE"),
+    (5.6,  "CALM"),
+    (7.0,  "MOMENTUM"),
+    (9.0,  "HIGH_VOL"),
+    (None, "MEAN_REVERT"),
+]
+_BW_1W = [          # 1W — weekly override thresholds from spec
+    (4.5,  "EXTREME_SQUEEZE"),
+    (6.5,  "CALM"),
+    (8.0,  "MOMENTUM"),
+    (10.2, "HIGH_VOL"),
+    (None, "MEAN_REVERT"),
+]
 
-# BB-VIX divergence and breach multipliers
-BB_VIX_MULT    = 0.5   # 0.5x ATR14 both sides
-BB_BREACH_MULT = 0.5   # 0.5x ATR14 both sides (Days 1-2 only)
+# Lens table: ATR base multiplier per 2H regime
+_LENS_BASE_MULT = {
+    "EXTREME_SQUEEZE": 2.5,
+    "SQUEEZE":         2.25,
+    "CALM":            2.0,    # IC sweet spot — tighter distance
+    "MOMENTUM":        2.25,
+    "HIGH_VOL":        2.5,
+    "MEAN_REVERT":     2.75,
+}
+# Extra ATR fraction added to threatened leg, scaled by confidence
+_LENS_EXTRA = {"HIGH": 0.5, "MEDIUM": 0.25, "WEAK": 0.0}
 
-# Mean revert bonus
-MEAN_REVERT_BONUS = -100  # pts both sides
+# Home score by 2H regime when no special squeeze status applies
+_HOME_REGIME = {
+    "CALM":            14,
+    "MOMENTUM":        7,
+    "SQUEEZE":         5,
+    "HIGH_VOL":        3,
+    "MEAN_REVERT":     1,
+    "EXTREME_SQUEEZE": 0,
+}
+
+
+def _classify_bw(bw: float, table: list) -> str:
+    for threshold, name in table:
+        if threshold is None or bw < threshold:
+            return name
+    return table[-1][1]
+
+
+def _pct_b_zone(pct_b: float) -> str:
+    if pct_b > 1.0:   return "ABOVE_BAND"
+    if pct_b >= 0.75: return "UPPER"
+    if pct_b >= 0.55: return "UP_NEUTRAL"
+    if pct_b >= 0.45: return "MIDLINE"
+    if pct_b >= 0.25: return "LO_NEUTRAL"
+    if pct_b >= 0.0:  return "LOWER"
+    return "BELOW_BAND"
 
 
 class BollingerOptionsEngine(BaseStrategy):
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        basis, upper, lower, bw_pct = self.bollinger(
-            df["close"], BB_PERIOD, BB_STD
-        )
-        df["bb_basis"] = basis
-        df["bb_upper"] = upper
-        df["bb_lower"] = lower
-        df["bb_bw"]    = bw_pct
-        df["bb_pct_b"] = (df["close"] - lower) / (upper - lower)
-        df["atr14"]    = self.atr(df, 14)
-
-        # Walk streaks — consecutive closes at/beyond band
-        for col in ("walk_up", "walk_down"):
-            at_band = (df["close"] >= df["bb_upper"]) if col == "walk_up" \
-                      else (df["close"] <= df["bb_lower"])
+        """Add BB columns + consecutive-close walk streaks to a single-TF df."""
+        if df.empty:
+            return df
+        basis, upper, lower, bw = self.bollinger(df["close"], BB_PERIOD, BB_STD)
+        df["bb_basis"]  = basis
+        df["bb_upper"]  = upper
+        df["bb_lower"]  = lower
+        df["bb_bw"]     = bw
+        df["bb_pct_b"]  = (df["close"] - lower) / (upper - lower)
+        for col, at_band in [
+            ("walk_up",   df["close"] >= upper),
+            ("walk_down", df["close"] <= lower),
+        ]:
             streak, c = [], 0
             for v in at_band:
                 c = c + 1 if v else 0
                 streak.append(c)
             df[f"{col}_count"] = streak
-
         return df
 
-    def signals(self, df: pd.DataFrame) -> dict:
-        df = self.compute(df.copy())
-        r  = df.iloc[-1]
+    def signals(
+        self,
+        df_2h: pd.DataFrame,
+        df_4h: pd.DataFrame,
+        df_1d: pd.DataFrame,
+        df_1w: pd.DataFrame,
+        atr14: float = 200,
+    ) -> dict:
+        # ── compute BB on each TF ────────────────────────────────────────────
+        c2h = self.compute(df_2h.copy()) if not df_2h.empty else pd.DataFrame()
+        c4h = self.compute(df_4h.copy()) if not df_4h.empty else pd.DataFrame()
+        c1d = self.compute(df_1d.copy()) if not df_1d.empty else pd.DataFrame()
+        c1w = self.compute(df_1w.copy()) if not df_1w.empty else pd.DataFrame()
 
-        spot      = float(r["close"])
-        basis     = float(r["bb_basis"])
-        upper     = float(r["bb_upper"])
-        lower     = float(r["bb_lower"])
-        bw_pct    = float(r["bb_bw"])
-        pct_b     = float(r["bb_pct_b"])
-        walk_up   = int(r["walk_up_count"])
-        walk_down = int(r["walk_down_count"])
-        atr14     = float(r.get("atr14", 200))
+        def _s(df, col, default=0.0):
+            if df.empty or col not in df.columns:
+                return default
+            v = df[col].iloc[-1]
+            return float(v) if not pd.isna(v) else default
 
-        regime = self._regime(spot, basis, upper, lower, bw_pct, walk_up, walk_down)
+        bw_2h    = _s(c2h, "bb_bw",          6.0)
+        bw_4h    = _s(c4h, "bb_bw",          6.0)
+        bw_1d    = _s(c1d, "bb_bw",          6.0)
+        bw_1w    = _s(c1w, "bb_bw",          8.0)
+        pb_2h    = _s(c2h, "bb_pct_b",       0.5)
+        pb_4h    = _s(c4h, "bb_pct_b",       0.5)
+        basis_2h = _s(c2h, "bb_basis",       0.0)
+        basis_4h = _s(c4h, "bb_basis",       0.0)
+        basis_1w = _s(c1w, "bb_basis",       0.0)
+        cl_2h    = _s(c2h, "close",          0.0)
+        cl_4h    = _s(c4h, "close",          0.0)
+        cl_1w    = _s(c1w, "close",          0.0)
+        wu_2h    = int(_s(c2h, "walk_up_count",   0))
+        wd_2h    = int(_s(c2h, "walk_down_count", 0))
+        wu_4h    = int(_s(c4h, "walk_up_count",   0))
+        wd_4h    = int(_s(c4h, "walk_down_count", 0))
 
-        # ATR-scaled walk modifier (independent — only for threatened leg)
-        put_mod, call_mod = self._walk_modifier(regime, walk_up, walk_down, atr14)
+        # ── regime, zones, MA position ───────────────────────────────────────
+        reg_2h  = _classify_bw(bw_2h, _BW_2H)
+        reg_4h  = _classify_bw(bw_4h, _BW_2H)   # same thresholds as 2H
+        reg_1d  = _classify_bw(bw_1d, _BW_1D)
+        reg_1w  = _classify_bw(bw_1w, _BW_1W)
+        zone_2h = _pct_b_zone(pb_2h)
+        zone_4h = _pct_b_zone(pb_4h)
+        ma_2h   = self._ma_pos(cl_2h, basis_2h)
+        ma_4h   = self._ma_pos(cl_4h, basis_4h)
 
-        # BB-VIX divergence — needs live VIX, defaulted here; computed in compute_signals
-        bb_vix_div = False  # set externally in compute_signals
-        bb_breach  = self._band_breach(df)
+        # ── squeeze status ────────────────────────────────────────────────────
+        sq = self._squeeze_status(reg_2h, reg_4h)
 
-        kills = self._kill_switches(df)
-        home  = self._home_score(regime, bw_pct, kills)
+        # ── asymmetry ratio: 2H %B drives base, then MA steps it toward 1:1 ─
+        ratio, ce_watch, pe_watch = self._base_ratio(zone_2h, sq, pb_2h)
+        ratio      = self._apply_ma(ratio, ma_2h, ma_4h)
+        confidence = self._confidence(zone_2h, zone_4h, ma_4h)
+
+        # ── walk labels (NONE/MILD/MODERATE/STRONG) ───────────────────────────
+        wlbl_2h = self._walk_label(max(wu_2h, wd_2h))
+        wlbl_4h = self._walk_label(max(wu_4h, wd_4h))
+
+        # ── skip score: 5 additive conditions, each adds 1 ───────────────────
+        skip = 0
+        if bw_1d > 5.6:                                skip += 1  # cond 1: 1D HIGH_VOL+
+        if basis_1w > 0 and cl_1w < basis_1w * 0.98:  skip += 1  # cond 2: 1W >2% below MA
+        if max(wu_4h, wd_4h) >= 4:                    skip += 1  # cond 3: 4H STRONG walk
+        if reg_2h == "MEAN_REVERT":                    skip += 1  # cond 4: 2H mean revert
+        if bw_1w > 10.2:                               skip += 1  # cond 5: 1W mean revert
+
+        # ── entry verdict ─────────────────────────────────────────────────────
+        if sq == "DEEP" or skip >= 3:
+            verdict = "SKIP"
+        elif skip == 2:
+            verdict = "CAUTION"
+        else:
+            verdict = "PROCEED"
+
+        primary_risk = "CE" if ratio == "1:2" else "PE" if ratio == "2:1" else "NEUTRAL"
+        drift_risk   = self._drift_risk(reg_2h)
+        home         = self._home_score(sq, reg_2h, verdict)
+        l4_pe, l4_ce = self._lens_row(reg_2h, ratio, confidence, atr14)
 
         return {
-            "basis":           round(basis, 0),
-            "upper":           round(upper, 0),
-            "lower":           round(lower, 0),
-            "bw_pct":          round(bw_pct, 2),
-            "pct_b":           round(pct_b, 3),
-            "spot":            round(spot, 0),
-            "walk_up_count":   walk_up,
-            "walk_down_count": walk_down,
-            "atr14":           round(atr14, 1),
-            "regime":          regime,
-            # ATR-scaled modifiers (independent)
-            "bb_distance_put":  put_mod,
-            "bb_distance_call": call_mod,
-            "bb_vix_divergence": bb_vix_div,
-            "bb_breach":        bb_breach,
-            "bb_breach_pts":    round(BB_BREACH_MULT * atr14 / 50) * 50 if bb_breach else 0,
-            "kill_switches":    kills,
-            "home_score":       home,
-            # Strike guidance (legacy — kept for existing page display)
-            "ce_strike": self._ce_strike(regime, upper, lower, basis),
-            "pe_strike": self._pe_strike(regime, upper, lower, basis),
+            # Per-TF regime + BW%
+            "regime_2h":      reg_2h,
+            "regime_4h":      reg_4h,
+            "regime_1d":      reg_1d,
+            "regime_1w":      reg_1w,
+            "bw_2h":          round(bw_2h, 2),
+            "bw_4h":          round(bw_4h, 2),
+            "bw_1d":          round(bw_1d, 2),
+            "bw_1w":          round(bw_1w, 2),
+            # %B and zones
+            "pct_b_2h":       round(pb_2h, 3),
+            "pct_b_4h":       round(pb_4h, 3),
+            "zone_2h":        zone_2h,
+            "zone_4h":        zone_4h,
+            # Walk
+            "walk_up_2h":     wu_2h,
+            "walk_down_2h":   wd_2h,
+            "walk_up_4h":     wu_4h,
+            "walk_down_4h":   wd_4h,
+            "walk_label_2h":  wlbl_2h,
+            "walk_label_4h":  wlbl_4h,
+            # MA position
+            "ma_position_2h": ma_2h,
+            "ma_position_4h": ma_4h,
+            # Primary signals (new)
+            "squeeze_status":    sq,
+            "asymmetry_signal":  ratio,
+            "confidence":        confidence,
+            "ce_watch":          ce_watch,
+            "pe_watch":          pe_watch,
+            "skip_score":        skip,
+            "entry_verdict":     verdict,
+            "primary_risk_side": primary_risk,
+            "drift_risk":        drift_risk,
+            # Aliases for downstream compat (compute_signals, Home.py, page reads)
+            "regime":            reg_2h,
+            "bw_pct":            round(bw_2h, 2),
+            # Lens table row (pts, computed from ratio + regime + confidence)
+            "l4_pe":             l4_pe,
+            "l4_ce":             l4_ce,
+            # Home score
+            "home_score":        home,
+            # Kill switches
+            "kill_switches": {
+                "EXTREME_SQUEEZE": reg_2h == "EXTREME_SQUEEZE",
+                "SQUEEZE":         reg_2h == "SQUEEZE",
+                "CALM":            reg_2h == "CALM",
+                "MOMENTUM":        reg_2h == "MOMENTUM",
+                "HIGH_VOL":        reg_2h == "HIGH_VOL",
+                "MEAN_REVERT":     reg_2h == "MEAN_REVERT",
+                "DEEP_SQUEEZE":    sq == "DEEP",
+                "ALIGNED_SQUEEZE": sq == "ALIGNED",
+                "WALK_STRONG_2H":  wlbl_2h == "STRONG",
+                "WALK_STRONG_4H":  wlbl_4h == "STRONG",
+            },
         }
 
-    # ── Regime ────────────────────────────────────────────────────────────────
+    # ── private helpers ────────────────────────────────────────────────────────
 
-    def _regime(self, spot, basis, upper, lower, bw_pct,
-                walk_up, walk_down) -> str:
-        if bw_pct < BW_SQUEEZE:
-            return "SQUEEZE"
-        if bw_pct > BW_ELEVATED:
-            return "MEAN_REVERT"
-        if walk_up >= 3:
-            return "WALK_UPPER"
-        if walk_down >= 3:
-            return "WALK_LOWER"
-        return "NEUTRAL_WALK"
+    def _squeeze_status(self, r2h: str, r4h: str) -> str:
+        # DEEP: any EXTREME_SQUEEZE on either TF → hard skip
+        if r2h == "EXTREME_SQUEEZE" or r4h == "EXTREME_SQUEEZE":
+            return "DEEP"
+        if r2h == "SQUEEZE" and r4h == "SQUEEZE":
+            return "ALIGNED"    # best IC setup — both TFs coiled
+        if r2h == "SQUEEZE":
+            return "PARTIAL"    # 2H squeezed, 4H not yet
+        return "NONE"
 
-    # ── ATR-scaled walk modifier ──────────────────────────────────────────────
+    def _base_ratio(self, zone: str, sq: str, pb: float) -> tuple:
+        # Squeeze overrides %B zone — direction from %B value directly
+        if sq in ("ALIGNED", "PARTIAL"):
+            if pb > 0.55:  return "1:2", False, False   # expansion likely up
+            if pb < 0.45:  return "2:1", False, False   # expansion likely down
+            return "1:1", False, False                   # direction unknown
+        if zone in ("ABOVE_BAND", "UPPER"): return "1:2", False, False
+        if zone == "UP_NEUTRAL":            return "1:1", True,  False
+        if zone == "LO_NEUTRAL":            return "1:1", False, True
+        if zone in ("LOWER", "BELOW_BAND"): return "2:1", False, False
+        return "1:1", False, False   # MIDLINE
 
-    def _walk_modifier(self, regime: str, walk_up: int, walk_down: int,
-                       atr14: float) -> tuple:
-        """
-        Returns (put_modifier_pts, call_modifier_pts).
-        WALK_UPPER → CE threatened (call_mod), PE safe (put_mod=0)
-        WALK_LOWER → PE threatened (put_mod), CE safe (call_mod=0)
-        MEAN_REVERT → mild tightening bonus both sides
-        All other regimes → 0
-        """
-        if regime == "MEAN_REVERT":
-            return MEAN_REVERT_BONUS, MEAN_REVERT_BONUS
+    def _ma_pos(self, close: float, basis: float) -> str:
+        if basis <= 0 or close <= 0:
+            return "AT_MA"
+        r = close / basis
+        if r > 1 + BB_MA_BAND:  return "ABOVE_MA"
+        if r < 1 - BB_MA_BAND:  return "BELOW_MA"
+        return "AT_MA"
 
-        if regime == "WALK_UPPER":
-            walk_age = walk_up
-            mult = WALK_MULTIPLIERS.get(walk_age, WALK_MULT_EXTENDED)
-            raw  = mult * atr14
-            capped   = min(raw, WALK_CAP_MULT * atr14)
-            final    = max(capped, WALK_FLOOR_PTS)
-            rounded  = round(final / 50) * 50
-            return 0, int(rounded)   # CE threatened only
+    def _apply_ma(self, ratio: str, ma_2h: str, ma_4h: str) -> str:
+        # 2H MA contradicts ratio → step toward 1:1
+        if ratio == "1:2" and ma_2h == "BELOW_MA": return "1:1"
+        if ratio == "2:1" and ma_2h == "ABOVE_MA": return "1:1"
+        # 4H MA contradicts ratio → also step toward 1:1 (4H override)
+        if ratio == "1:2" and ma_4h == "BELOW_MA": return "1:1"
+        if ratio == "2:1" and ma_4h == "ABOVE_MA": return "1:1"
+        return ratio
 
-        if regime == "WALK_LOWER":
-            walk_age = walk_down
-            mult = WALK_MULTIPLIERS.get(walk_age, WALK_MULT_EXTENDED)
-            raw  = mult * atr14
-            capped   = min(raw, WALK_CAP_MULT * atr14)
-            final    = max(capped, WALK_FLOOR_PTS)
-            rounded  = round(final / 50) * 50
-            return int(rounded), 0   # PE threatened only
+    def _confidence(self, zone_2h: str, zone_4h: str, ma_4h: str) -> str:
+        _bull = {"ABOVE_BAND", "UPPER", "UP_NEUTRAL"}
+        _bear = {"LOWER", "BELOW_BAND", "LO_NEUTRAL"}
+        d2 = "bull" if zone_2h in _bull else "bear" if zone_2h in _bear else "neutral"
+        d4 = "bull" if zone_4h in _bull else "bear" if zone_4h in _bear else "neutral"
+        if d2 == "neutral":   return "MEDIUM"   # 2H at midline — no strong signal
+        if d2 == d4:          return "HIGH"      # 4H agrees with 2H direction
+        if d4 == "neutral":   return "MEDIUM"    # 4H neutral while 2H directional
+        # 4H MA contradicts 2H directional signal
+        if d2 == "bull" and ma_4h == "BELOW_MA": return "MEDIUM"
+        if d2 == "bear" and ma_4h == "ABOVE_MA": return "MEDIUM"
+        return "WEAK"   # 4H in opposite directional half to 2H
 
-        return 0, 0
+    def _walk_label(self, days: int) -> str:
+        if days >= 4:  return "STRONG"    # hard skip
+        if days >= 3:  return "MODERATE"  # strong asymmetry or skip
+        if days >= 2:  return "MILD"      # lean + flag
+        return "NONE"
 
-    def _band_breach(self, df: pd.DataFrame) -> bool:
-        """
-        Single close outside band without qualifying as walk (Day 1-2).
-        Once walk is confirmed (Day 3), breach no longer applies — walk takes over.
-        """
-        if len(df) < 2:
-            return False
-        r = df.iloc[-1]
-        walk_up   = int(r.get("walk_up_count", 0))
-        walk_down = int(r.get("walk_down_count", 0))
-        # Only breach signal if NOT yet a walk
-        if walk_up >= 3 or walk_down >= 3:
-            return False
-        close = float(r["close"])
-        return close >= float(r["bb_upper"]) or close <= float(r["bb_lower"])
-
-    # ── Kill switches ─────────────────────────────────────────────────────────
-
-    def _kill_switches(self, df: pd.DataFrame) -> dict:
-        r = df.iloc[-1]
-        bw = float(r.get("bb_bw", 6.0))
-        wu = int(r.get("walk_up_count", 0))
-        wd = int(r.get("walk_down_count", 0))
-        breach = self._band_breach(df)
+    def _drift_risk(self, r2h: str) -> str:
         return {
-            "SQUEEZE":     bw < BW_SQUEEZE,
-            "WALK_UPPER":  wu >= 3,
-            "WALK_LOWER":  wd >= 3,
-            "BAND_BREACH": breach,
-            "MEAN_REVERT": bw > BW_ELEVATED,
-            # Legacy
-            "K1": breach,
-        }
+            "EXTREME_SQUEEZE": "VERY_HIGH",
+            "HIGH_VOL":        "VERY_HIGH",
+            "SQUEEZE":         "ELEVATED",
+            "MOMENTUM":        "ELEVATED",
+            "CALM":            "BASE",
+            "MEAN_REVERT":     "VETO",
+        }.get(r2h, "BASE")
 
-    # ── Home score ────────────────────────────────────────────────────────────
+    def _home_score(self, sq: str, r2h: str, verdict: str) -> int:
+        if verdict == "SKIP" or sq == "DEEP":  return 0
+        if sq == "ALIGNED":                    return 12
+        if sq == "PARTIAL":                    return 10
+        return _HOME_REGIME.get(r2h, 7)
 
-    def _home_score(self, regime: str, bw_pct: float, kills: dict) -> int:
-        if regime == "SQUEEZE": return 0
-        if regime in ("WALK_UPPER", "WALK_LOWER"): return 5
-        if regime == "NEUTRAL_WALK": return 15
-        if regime == "MEAN_REVERT":  return 12
-        return 10
+    def _lens_row(self, r2h: str, ratio: str, conf: str, atr14: float) -> tuple:
+        """Translate asymmetry ratio + regime → (l4_pe_pts, l4_ce_pts) for lens table."""
+        base  = round(_LENS_BASE_MULT.get(r2h, 2.25) * atr14 / 50) * 50
+        extra = round(_LENS_EXTRA.get(conf, 0.0)      * atr14 / 50) * 50
+        cap   = round(3.0 * atr14 / 50) * 50
 
-    # ── Legacy strike selection ───────────────────────────────────────────────
-
-    def _ce_strike(self, regime, upper, lower, basis) -> int:
-        half = upper - basis
-        if regime == "SQUEEZE":    return 0
-        if regime == "WALK_UPPER": return self.round_strike(upper + 0.5*half, "ceil")
-        if regime == "WALK_LOWER": return self.round_strike(basis, "ceil")
-        return self.round_strike(upper, "ceil")
-
-    def _pe_strike(self, regime, upper, lower, basis) -> int:
-        half = basis - lower
-        if regime == "SQUEEZE":    return 0
-        if regime == "WALK_UPPER": return self.round_strike(basis, "floor")
-        if regime == "WALK_LOWER": return self.round_strike(lower - 0.5*half, "floor")
-        return self.round_strike(lower, "floor")
-
-    def round_strike(self, price: float, direction: str = "round") -> int:
-        if direction == "ceil":  return int(np.ceil(price / 50)) * 50
-        if direction == "floor": return int(np.floor(price / 50)) * 50
-        return int(round(price / 50)) * 50
+        if conf == "WEAK" or ratio == "1:1":
+            return int(base), int(base)
+        if ratio == "1:2":   # CE threatened → widen CE
+            return int(base), int(min(base + extra, cap))
+        if ratio == "2:1":   # PE threatened → widen PE
+            return int(min(base + extra, cap)), int(base)
+        return int(base), int(base)

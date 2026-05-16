@@ -201,31 +201,61 @@ def compute_all_signals(
     sig["near_dte"]      = chains.get("near_dte", 7)
     sig["far_dte"]       = chains.get("far_dte",  14)
 
-    # ── Page 9: Bollinger ──────────────────────────────────────────────────
+    # ── Page 9: Bollinger — 4-TF MTF engine ───────────────────────────────
     try:
-        bb_sig = BollingerOptionsEngine().signals(nifty_df.copy())
+        from analytics.supertrend import resample_ohlcv as _bb_resample
+        _atr14 = sig.get("atr14", 200)
+
+        # 2H and 4H: resample from existing 1H data (no new Kite call)
+        _df_2h = _bb_resample(nifty_1h, "2h") if nifty_1h is not None and not nifty_1h.empty else pd.DataFrame()
+        _df_4h = _bb_resample(nifty_1h, "4h") if nifty_1h is not None and not nifty_1h.empty else pd.DataFrame()
+
+        # 1W: resample from daily
+        _df_1w = pd.DataFrame()
+        if nifty_df is not None and not nifty_df.empty:
+            _tmp = nifty_df.copy()
+            if not isinstance(_tmp.index, pd.DatetimeIndex):
+                _tmp.index = pd.to_datetime(_tmp.index)
+            _df_1w = _tmp.resample("W-FRI").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+            ).dropna(subset=["open", "close"])
+
+        bb_sig = BollingerOptionsEngine().signals(
+            _df_2h, _df_4h,
+            nifty_df if nifty_df is not None else pd.DataFrame(),
+            _df_1w,
+            atr14=_atr14,
+        )
+
         sig.update({f"bb_{k}": v for k, v in bb_sig.items()})
-        sig["bb_regime"]       = bb_sig["regime"]
-        sig["bw_pct"]          = bb_sig["bw_pct"]
-        atr14_val              = sig.get("atr14", 200)
-        if vix_live > BB_VIX_DIV_VIX and bb_sig["bw_pct"] < BB_VIX_DIV_BW:
-            div_pts = max(100, round(0.5 * atr14_val / 50) * 50)
-            sig["bb_vix_divergence"] = True
-            sig["bb_distance_put"]   = div_pts
-            sig["bb_distance_call"]  = div_pts
-        else:
-            sig["bb_vix_divergence"] = False
-            sig["bb_distance_put"]   = bb_sig.get("bb_distance_put", 0)
-            sig["bb_distance_call"]  = bb_sig.get("bb_distance_call", 0)
-        sig["bb_walk_up_count"]   = bb_sig.get("walk_up_count", 0)
-        sig["bb_walk_down_count"] = bb_sig.get("walk_down_count", 0)
-        sig["bb_kill_switches"]   = bb_sig.get("kill_switches", {})
-        sig["bb_home_score"]      = min(bb_sig.get("home_score", HOME_SCORE_MAX_BB), HOME_SCORE_MAX_BB)
+        sig["bb_regime"]            = bb_sig["regime_2h"]
+        sig["bw_pct"]               = bb_sig["bw_2h"]
+        sig["bb_squeeze_status"]    = bb_sig["squeeze_status"]
+        sig["bb_asymmetry_signal"]  = bb_sig["asymmetry_signal"]
+        sig["bb_confidence"]        = bb_sig["confidence"]
+        sig["bb_skip_score"]        = bb_sig["skip_score"]
+        sig["bb_entry_verdict"]     = bb_sig["entry_verdict"]
+        sig["bb_primary_risk_side"] = bb_sig["primary_risk_side"]
+        sig["bb_drift_risk"]        = bb_sig["drift_risk"]
+        sig["bb_l4_pe"]             = bb_sig["l4_pe"]
+        sig["bb_l4_ce"]             = bb_sig["l4_ce"]
+        sig["bb_walk_up_count"]     = bb_sig.get("walk_up_2h", 0)
+        sig["bb_walk_down_count"]   = bb_sig.get("walk_down_2h", 0)
+        sig["bb_kill_switches"]     = bb_sig.get("kill_switches", {})
+        sig["bb_vix_divergence"]    = vix_live > BB_VIX_DIV_VIX and bb_sig["bw_2h"] < BB_VIX_DIV_BW
+        sig["bb_home_score"]        = min(bb_sig.get("home_score", 0), HOME_SCORE_MAX_BB)
     except Exception as e:
         log.error("Bollinger: %s", e)
-        sig.update({"bb_regime": "NEUTRAL_WALK", "bw_pct": 6.0,
-                    "bb_vix_divergence": False, "bb_distance_put": 0,
-                    "bb_distance_call": 0, "bb_home_score": HOME_SCORE_MAX_BB})
+        _fb_dist = int(round(2.25 * sig.get("atr14", 200) / 50) * 50)
+        sig.update({
+            "bb_regime": "CALM", "bw_pct": 5.0,
+            "bb_squeeze_status": "NONE", "bb_asymmetry_signal": "1:1",
+            "bb_confidence": "MEDIUM", "bb_skip_score": 0,
+            "bb_entry_verdict": "PROCEED", "bb_primary_risk_side": "NEUTRAL",
+            "bb_drift_risk": "BASE", "bb_vix_divergence": False,
+            "bb_l4_pe": _fb_dist, "bb_l4_ce": _fb_dist,
+            "bb_home_score": HOME_SCORE_MAX_BB // 2,
+        })
 
     # ── Page 10: Options Chain ─────────────────────────────────────────────
     try:
@@ -445,15 +475,10 @@ def _build_lens_table(sig: dict, spot: float) -> None:
     l3_pe = int(round(l3_pe_m * atr14 / 50) * 50)
     l3_ce = int(round(2.25 * atr14 / 50) * 50)
 
-    bb_regime = sig.get("bb_regime", "NEUTRAL_WALK")
-    neutral   = int(round(2.25 * atr14 / 50) * 50)
-    if bb_regime == "MEAN_REVERT":
-        l4_pe = l4_ce = int(round(2.00 * atr14 / 50) * 50)
-    elif bb_regime == "SQUEEZE":
-        l4_pe = l4_ce = int(round(2.50 * atr14 / 50) * 50)
-    else:
-        l4_pe = neutral + sig.get("bb_distance_put", 0)
-        l4_ce = neutral + sig.get("bb_distance_call", 0)
+    # BB lens row: engine pre-computes l4_pe/l4_ce from ratio + regime + confidence
+    _fb_l4 = int(round(2.25 * atr14 / 50) * 50)
+    l4_pe = sig.get("bb_l4_pe", _fb_l4)
+    l4_ce = sig.get("bb_l4_ce", _fb_l4)
 
     vix_state = sig.get("vix_state", "STABLE_NORMAL")
     vrp       = sig.get("vrp", 0.0)
