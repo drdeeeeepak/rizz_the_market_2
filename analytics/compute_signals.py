@@ -210,15 +210,23 @@ def compute_all_signals(
         _df_2h = _bb_resample(nifty_1h, "2h") if nifty_1h is not None and not nifty_1h.empty else pd.DataFrame()
         _df_4h = _bb_resample(nifty_1h, "4h") if nifty_1h is not None and not nifty_1h.empty else pd.DataFrame()
 
-        # 1W: resample from daily
+        # 1W: resample from daily — guarded for tz, duplicates, and bad data
         _df_1w = pd.DataFrame()
         if nifty_df is not None and not nifty_df.empty:
-            _tmp = nifty_df.copy()
-            if not isinstance(_tmp.index, pd.DatetimeIndex):
-                _tmp.index = pd.to_datetime(_tmp.index)
-            _df_1w = _tmp.resample("W-FRI").agg(
-                {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-            ).dropna(subset=["open", "close"])
+            try:
+                _tmp = nifty_df.copy()
+                if not isinstance(_tmp.index, pd.DatetimeIndex):
+                    _tmp.index = pd.to_datetime(_tmp.index)
+                if getattr(_tmp.index, "tz", None) is not None:
+                    _tmp.index = _tmp.index.tz_localize(None)
+                _tmp = _tmp[~_tmp.index.duplicated(keep="last")]
+                _df_1w = _tmp.resample("W-FRI").agg(
+                    {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+                ).dropna(subset=["open", "close"])
+                log.debug("BB 1W: %d weekly bars from %d daily bars", len(_df_1w), len(_tmp))
+            except Exception as _we:
+                log.warning("BB 1W resample failed: %s", _we)
+                _df_1w = pd.DataFrame()
 
         bb_sig = BollingerOptionsEngine().signals(
             _df_2h, _df_4h,

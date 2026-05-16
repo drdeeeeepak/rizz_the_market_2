@@ -10,10 +10,15 @@
 # RULE: Only 2H+4H feed asymmetry formula. 1D/1W never drive strike or ratio.
 # All signals are INDEPENDENT — do not stack with other lenses.
 
+import logging
 import pandas as pd
 import numpy as np
 from analytics.base_strategy import BaseStrategy
 from config import BB_PERIOD, BB_STD, BB_MA_BAND
+
+log = logging.getLogger(__name__)
+
+MIN_BARS = BB_PERIOD + 5   # minimum bars for a meaningful BB signal on any TF
 
 # ── BW% regime threshold tables ────────────────────────────────────────────────
 # Format: (upper_bound_exclusive, regime_name). None = open-ended (catch-all).
@@ -85,24 +90,48 @@ class BollingerOptionsEngine(BaseStrategy):
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add BB columns + consecutive-close walk streaks to a single-TF df."""
-        if df.empty:
-            return df
+        if df is None or df.empty or "close" not in df.columns:
+            return df if df is not None else pd.DataFrame()
         basis, upper, lower, bw = self.bollinger(df["close"], BB_PERIOD, BB_STD)
         df["bb_basis"]  = basis
         df["bb_upper"]  = upper
         df["bb_lower"]  = lower
         df["bb_bw"]     = bw
-        df["bb_pct_b"]  = (df["close"] - lower) / (upper - lower)
+        # Safe %B: avoid division by zero when bands collapse (extremely flat market)
+        width = (upper - lower).replace(0, np.nan)
+        df["bb_pct_b"]  = ((df["close"] - lower) / width).fillna(0.5)
         for col, at_band in [
-            ("walk_up",   df["close"] >= upper),
-            ("walk_down", df["close"] <= lower),
+            ("walk_up",   (df["close"] >= upper).fillna(False)),
+            ("walk_down", (df["close"] <= lower).fillna(False)),
         ]:
             streak, c = [], 0
             for v in at_band:
-                c = c + 1 if v else 0
+                c = c + 1 if bool(v) else 0
                 streak.append(c)
             df[f"{col}_count"] = streak
         return df
+
+    def _safe_tf(self, df: pd.DataFrame, label: str = "") -> pd.DataFrame:
+        """compute() with full data-quality guards — never raises."""
+        if df is None or df.empty:
+            return pd.DataFrame()
+        if "close" not in df.columns:
+            log.warning("BB %s: missing 'close' column — skipping TF", label)
+            return pd.DataFrame()
+        if len(df) < MIN_BARS:
+            log.warning("BB %s: %d bars < MIN_BARS=%d — using defaults", label, len(df), MIN_BARS)
+            return pd.DataFrame()
+        try:
+            result = self.compute(df.copy())
+            # Sanity: last BW% must be finite and positive
+            if "bb_bw" in result.columns:
+                last_bw = result["bb_bw"].iloc[-1]
+                if not np.isfinite(float(last_bw)) or float(last_bw) <= 0:
+                    log.warning("BB %s: last BW%% = %.3f — marginal quality", label, float(last_bw))
+            return result
+        except Exception as e:
+            log.warning("BB %s compute failed: %s", label, e)
+            return pd.DataFrame()
 
     def signals(
         self,
@@ -112,11 +141,11 @@ class BollingerOptionsEngine(BaseStrategy):
         df_1w: pd.DataFrame,
         atr14: float = 200,
     ) -> dict:
-        # ── compute BB on each TF ────────────────────────────────────────────
-        c2h = self.compute(df_2h.copy()) if not df_2h.empty else pd.DataFrame()
-        c4h = self.compute(df_4h.copy()) if not df_4h.empty else pd.DataFrame()
-        c1d = self.compute(df_1d.copy()) if not df_1d.empty else pd.DataFrame()
-        c1w = self.compute(df_1w.copy()) if not df_1w.empty else pd.DataFrame()
+        # ── compute BB on each TF — each isolated so one bad TF can't kill all ─
+        c2h = self._safe_tf(df_2h, "2H")
+        c4h = self._safe_tf(df_4h, "4H")
+        c1d = self._safe_tf(df_1d, "1D")
+        c1w = self._safe_tf(df_1w, "1W")
 
         def _s(df, col, default=0.0):
             if df.empty or col not in df.columns:
@@ -164,12 +193,19 @@ class BollingerOptionsEngine(BaseStrategy):
         wlbl_4h = self._walk_label(max(wu_4h, wd_4h))
 
         # ── skip score: 5 additive conditions, each adds 1 ───────────────────
-        skip = 0
-        if bw_1d > 5.6:                                skip += 1  # cond 1: 1D HIGH_VOL+
-        if basis_1w > 0 and cl_1w < basis_1w * 0.98:  skip += 1  # cond 2: 1W >2% below MA
-        if max(wu_4h, wd_4h) >= 4:                    skip += 1  # cond 3: 4H STRONG walk
-        if reg_2h == "MEAN_REVERT":                    skip += 1  # cond 4: 2H mean revert
-        if bw_1w > 10.2:                               skip += 1  # cond 5: 1W mean revert
+        sc1 = bw_1d > 5.6                                   # 1D HIGH_VOL+
+        sc2 = basis_1w > 0 and cl_1w < basis_1w * 0.98     # 1W >2% below MA
+        sc3 = max(wu_4h, wd_4h) >= 4                        # 4H STRONG walk
+        sc4 = reg_2h == "MEAN_REVERT"                       # 2H mean revert
+        sc5 = bw_1w > 10.2                                  # 1W mean revert
+        skip = sum([sc1, sc2, sc3, sc4, sc5])
+        skip_conditions = {
+            "1d_high_vol":    sc1,
+            "1w_below_ma":    sc2,
+            "4h_strong_walk": sc3,
+            "2h_mean_revert": sc4,
+            "1w_mean_revert": sc5,
+        }
 
         # ── entry verdict ─────────────────────────────────────────────────────
         if sq == "DEEP" or skip >= 3:
@@ -216,6 +252,7 @@ class BollingerOptionsEngine(BaseStrategy):
             "ce_watch":          ce_watch,
             "pe_watch":          pe_watch,
             "skip_score":        skip,
+            "skip_conditions":   skip_conditions,
             "entry_verdict":     verdict,
             "primary_risk_side": primary_risk,
             "drift_risk":        drift_risk,
