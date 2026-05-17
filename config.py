@@ -88,11 +88,14 @@ RSI_KS_W_FLIP_BULL=55; RSI_KS_W_FLIP_BEAR=45
 RSI_W_BULL_TRANS_BONUS=10; RSI_W_BULL_EXH_EXTRA=200; RSI_K3_EXTRA=300
 RSI_BFSI_SOFTENING=200; RSI_SD5_CALL_EXTRA=100; RSI_SD6_EXIT_BUF=2.0
 
-# ─── Page 9: Bollinger ───────────────────────────────────────────────────────
-BB_PERIOD=20; BB_STD=2.0; BB_SQUEEZE=3.5; BB_NORMAL_L=5.0; BB_NORMAL_H=7.0; BB_EXPAND=8.0
-BB_SQUEEZE_CREDIT  = 20; BB_SQUEEZE_EXTRA = 300; BB_WALK_EXTRA = 400
-BB_MR_REDUCE       = 100; BB_BREACH_EXTRA = 200
-BB_VIX_DIV_VIX     = 16; BB_VIX_DIV_BW = 4.5; BB_VIX_DIV_EXTRA = 200
+# ─── Page 9: Bollinger Bands — v4 MTF (May 2026) ────────────────────────────
+# TF hierarchy: 2H=PRIMARY | 4H=SECONDARY | 1D=REGIME_BG | 1W=MACRO_ANCHOR
+# Regime threshold tables and all logic constants live in analytics/bollinger.py
+BB_PERIOD      = 20          # BB SMA window
+BB_STD         = 2.0         # BB std-dev multiplier
+BB_MA_BAND     = 0.003       # ±0.3% tolerance band around basis for MA position
+BB_VIX_DIV_VIX = 16          # VIX threshold for divergence alert
+BB_VIX_DIV_BW  = 4.5         # 2H BW% ceiling for divergence alert
 
 # ─── Page 10: Options Chain ──────────────────────────────────────────────────
 OI_STRIKE_RANGE=500; OI_STRIKE_STEP=50; OI_WALL_PCT=0.75
