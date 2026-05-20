@@ -169,7 +169,8 @@ st.divider()
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: ui.metric_card("ENTRY VERDICT", verdict,    sub=f"Skip score {skip_score}/5",        color=VERDICT_COLOUR.get(verdict,"default"))
 with c2: ui.metric_card("2H REGIME",    bb_regime,   sub=f"BW% {bw_2h:.2f}% (primary TF)",   color=REGIME_COLOUR.get(bb_regime,"default"))
-with c3: ui.metric_card("SQUEEZE",      squeeze,     sub="ALIGNED = best IC setup",           color=SQ_COLOUR.get(squeeze,"default"))
+_sq_sub = {"ALIGNED": "Best IC setup of the cycle", "PARTIAL": "2H coiled — 4H not yet", "DEEP": "Hard veto — direction unknowable", "NONE": "Standard operation"}.get(squeeze, "")
+with c3: ui.metric_card("SQUEEZE",      squeeze,     sub=_sq_sub,                             color=SQ_COLOUR.get(squeeze,"default"))
 with c4: ui.metric_card("ASYMMETRY",    asymmetry,   sub=f"Primary risk: {risk_side}",        color="amber" if asymmetry != "1:1" else "green")
 with c5: ui.metric_card("CONFIDENCE",   confidence,  sub="4H agreement quality",              color=CONF_COLOUR.get(confidence,"default"))
 with c6: ui.metric_card("DRIFT RISK",   drift_risk,  sub="CE breach probability level",       color=DRIFT_COLOUR.get(drift_risk,"default"))
@@ -258,13 +259,21 @@ _CONF_DESC = {
 _ma_note = ""
 if asymmetry == "1:1" and zone_2h in ("ABOVE_BAND","UPPER","LOWER","BELOW_BAND"):
     _ma_note = "  ⚠️ MA override applied — ratio stepped to 1:1 (MA contradicts %B direction)"
+_LENS_MULT = {"CALM":2.0,"SQUEEZE":2.25,"MOMENTUM":2.25,"EXTREME_SQUEEZE":2.5,"HIGH_VOL":2.5,"MEAN_REVERT":2.75}
+_base_mult = _LENS_MULT.get(bb_regime, 2.25)
+_conf_risk = risk_side if risk_side != "NEUTRAL" else "neither"
+_CONF_DESC = {
+    "HIGH":   f"4H confirms 2H direction → full ratio (+{round(0.5*atr14/50)*50:,} pts extra on {_conf_risk} leg)",
+    "MEDIUM": f"4H neutral or MA contradicts → half ratio (+{round(0.25*atr14/50)*50:,} pts extra on {_conf_risk} leg)",
+    "WEAK":   "4H contradicts 2H direction → override to 1:1, no extra distance",
+}
 ui.simple_technical(
     f"2H %B zone = {zone_2h} → base: {_ZONE_RATIO.get(zone_2h,'1:1')}\n"
     f"Squeeze: {squeeze}" + (" → uses %B value directly for direction" if squeeze in ("ALIGNED","PARTIAL") else "") + "\n"
     f"4H confidence = {confidence} → {_CONF_DESC.get(confidence,'')}\n"
     f"2H MA = {ma_2h}  |  4H MA = {ma_4h}{_ma_note}",
     f"Final asymmetry: {asymmetry}  ·  Primary risk: {risk_side}\n"
-    f"Lens L4 → PE {l4_pe:,} pts  |  CE {l4_ce:,} pts  (from {round(_LENS_BASE := 2.0 if bb_regime=='CALM' else 2.25 if bb_regime in ('SQUEEZE','MOMENTUM') else 2.5 if bb_regime=='HIGH_VOL' else 2.75, 2) if False else ''}base {round(2.0 if bb_regime=='CALM' else 2.25 if bb_regime in ('SQUEEZE','MOMENTUM') else 2.5 if bb_regime=='HIGH_VOL' else 2.75, 2)}× ATR14)"
+    f"Lens L4 → PE {l4_pe:,} pts  |  CE {l4_ce:,} pts  (from base {_base_mult}× ATR14)"
 )
 
 with st.expander("Asymmetry & Confidence Reference — Full Rule Table", expanded=False):
