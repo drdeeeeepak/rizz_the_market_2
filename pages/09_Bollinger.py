@@ -35,7 +35,6 @@ if _is_live():
         _atr = sig.get("atr14", 200)
 
         if not _df.empty:
-            # 2H / 4H from 1H resample
             try:
                 _df_1h = get_nifty_1h_phase()
                 _df_2h = resample_ohlcv(_df_1h, "2h") if not _df_1h.empty else pd.DataFrame()
@@ -43,7 +42,6 @@ if _is_live():
             except Exception:
                 _df_2h = _df_4h = pd.DataFrame()
 
-            # 1W from daily — guarded for tz and duplicates
             _df_1w = pd.DataFrame()
             try:
                 _tmp = _df.copy()
@@ -59,7 +57,6 @@ if _is_live():
                 pass
 
             _bb = BollingerOptionsEngine().signals(_df_2h, _df_4h, _df, _df_1w, atr14=_atr)
-
             sig = {**sig, **{f"bb_{k}": v for k, v in _bb.items()}}
             sig["bb_regime"]            = _bb["regime_2h"]
             sig["bw_pct"]               = _bb["bw_2h"]
@@ -99,7 +96,6 @@ asymmetry   = sig.get("bb_asymmetry_signal",  "1:1")
 confidence  = sig.get("bb_confidence",        "MEDIUM")
 skip_score  = sig.get("bb_skip_score",        0)
 skip_conds  = sig.get("bb_skip_conditions",   {})
-verdict     = sig.get("bb_entry_verdict",     "PROCEED")
 risk_side   = sig.get("bb_primary_risk_side", "NEUTRAL")
 drift_risk  = sig.get("bb_drift_risk",        "BASE")
 ma_2h       = sig.get("bb_ma_position_2h",   "AT_MA")
@@ -117,369 +113,516 @@ l4_pe       = sig.get("bb_l4_pe",            0)
 l4_ce       = sig.get("bb_l4_ce",            0)
 atr14       = sig.get("atr14",               200)
 
-REGIME_COLOUR = {
-    "EXTREME_SQUEEZE": "red", "SQUEEZE": "red", "CALM": "green",
-    "MOMENTUM": "amber",      "HIGH_VOL": "red", "MEAN_REVERT": "red",
-}
-VERDICT_COLOUR = {"PROCEED": "green", "CAUTION": "amber", "SKIP": "red"}
-CONF_COLOUR    = {"HIGH": "green", "MEDIUM": "amber", "WEAK": "red"}
-DRIFT_COLOUR   = {"BASE": "green", "ELEVATED": "amber", "VERY_HIGH": "red", "VETO": "red"}
-WALK_COLOUR    = {"STRONG": "red", "MODERATE": "red", "MILD": "amber", "NONE": "green"}
-SQ_COLOUR      = {"ALIGNED": "green", "PARTIAL": "amber", "DEEP": "red", "NONE": "default"}
+# ── Derived trade parameters ──────────────────────────────────────────────────
+ce_strike = int(round(spot * 1.035 / 50) * 50) if spot > 0 else 0
+pe_strike = int(round(spot * 0.960 / 50) * 50) if spot > 0 else 0
 
-# ── Alert banners ─────────────────────────────────────────────────────────────
-if verdict == "SKIP":
-    if squeeze == "DEEP":
-        st.error("🔴 SKIP — DEEP SQUEEZE. EXTREME_SQUEEZE active on 2H or 4H. Direction unknowable. Do NOT enter.")
-    else:
-        st.error(f"🔴 SKIP — skip score {skip_score}/5. Multiple structural risk conditions active. Stand aside this week.")
-elif verdict == "CAUTION":
-    st.warning(f"⚠️ CAUTION — skip score {skip_score}/5. Proceed at 50% lots only.")
+# Lot size — stress drives sizing, never skips
+lot_pct    = 100
+lot_reason = "No significant stress — full entry"
+if vix_div and bb_regime == "EXTREME_SQUEEZE":
+    lot_pct    = 25
+    lot_reason = "VIX divergence + EXTREME_SQUEEZE — dangerous combination"
+elif bw_1w > 10.2:
+    lot_pct    = 25
+    lot_reason = f"1W macro event active (BW% {bw_1w:.1f}%) — weekly bands blown wide"
+elif skip_score >= 3:
+    lot_pct    = 25
+    lot_reason = f"{skip_score}/5 stress conditions firing"
+elif squeeze == "DEEP":
+    lot_pct    = 50
+    lot_reason = "DEEP SQUEEZE — coil before explosion, direction unknown"
+elif bb_regime == "EXTREME_SQUEEZE":
+    lot_pct    = 50
+    lot_reason = "EXTREME_SQUEEZE — explosive move imminent"
+elif skip_score == 2:
+    lot_pct    = 50
+    lot_reason = "2/5 stress conditions active"
+
+# Ratio — engine output, forced 1:1 on DEEP squeeze
+ratio = "1:1" if squeeze == "DEEP" else asymmetry
+
+# Watch leg
+if squeeze == "DEEP":
+    watch_leg = "BOTH"
+elif risk_side == "CE" or zone_2h in ("ABOVE_BAND", "UPPER") or (wlbl_2h != "NONE" and wu_2h >= wd_2h):
+    watch_leg = "CE"
+elif risk_side == "PE" or zone_2h in ("BELOW_BAND", "LOWER") or (wlbl_2h != "NONE" and wd_2h > wu_2h):
+    watch_leg = "PE"
+elif ma_4h == "BELOW_MA":
+    watch_leg = "PE"
+elif ce_watch:
+    watch_leg = "CE"
+elif pe_watch:
+    watch_leg = "PE"
 else:
-    st.success("✅ PROCEED — BB conditions acceptable for full IC entry.")
+    watch_leg = "BOTH"
 
-if squeeze == "ALIGNED":
-    st.info("🔵 ALIGNED SQUEEZE — 2H+4H both coiled. Best IC setup of the cycle: IV elevated vs realised vol. Use %B for direction lean.")
-elif squeeze == "PARTIAL":
-    st.info("🔵 PARTIAL SQUEEZE — 2H squeezed, 4H not yet aligned. Good setup — use %B for direction.")
+# CE extra distance advisory
+ce_extra_advisory = None
+if (vix_div or bb_regime == "EXTREME_SQUEEZE") and ce_strike > 0:
+    _ce_wide = ce_strike + 100
+    ce_extra_advisory = (
+        f"Consider CE {_ce_wide:,} (+100 pts wider) instead of {ce_strike:,} "
+        f"given {'VIX divergence' if vix_div else 'EXTREME_SQUEEZE'} — implied risk is higher than intraday vol suggests."
+    )
 
-walk_2h_max = max(wu_2h, wd_2h)
+# Traffic light
+if lot_pct == 25:
+    tl_icon, tl_label, tl_color = "🔴", "HIGH STRESS", "red"
+elif lot_pct == 50:
+    tl_icon, tl_label, tl_color = "🟡", "MODERATE STRESS", "amber"
+else:
+    tl_icon, tl_label, tl_color = "🟢", "CLEAN WEEK", "green"
+
+# Plain English summary (2–3 sentences)
+def _build_summary():
+    s = []
+    # Sentence 1: what the chart looks like
+    if squeeze == "DEEP" or bb_regime == "EXTREME_SQUEEZE":
+        s.append(
+            f"The 2H chart is extremely compressed (BW% {bw_2h:.1f}%) — "
+            "Nifty is coiled like a spring before a sharp directional break."
+        )
+    elif squeeze == "ALIGNED":
+        s.append(
+            "Both the 2H and 4H bands are compressed — the best IC entry setup of the cycle. "
+            "Options premium is rich relative to the actual move space available."
+        )
+    elif squeeze == "PARTIAL":
+        s.append(
+            f"The 2H is coiled (BW% {bw_2h:.1f}%) but the 4H hasn't compressed yet — "
+            "a developing setup with decent edge."
+        )
+    elif bb_regime == "CALM":
+        s.append(
+            f"Bands are gently stable (2H BW% {bw_2h:.1f}%) — "
+            "ideal premium decay conditions, no directional stress."
+        )
+    elif bb_regime == "MOMENTUM":
+        s.append(
+            f"Market is picking direction on the 2H (BW% {bw_2h:.1f}%) — "
+            "one leg is under building pressure."
+        )
+    elif bb_regime == "HIGH_VOL":
+        s.append(
+            f"Volatility is elevated on the 2H (BW% {bw_2h:.1f}%) — "
+            "a significant move is already in progress."
+        )
+    elif bb_regime == "MEAN_REVERT":
+        s.append(
+            f"The 2H bands are overextended (BW% {bw_2h:.1f}%) — "
+            "the big move already happened and snap-back risk is high."
+        )
+    else:
+        s.append(f"2H regime: {bb_regime} (BW% {bw_2h:.1f}%).")
+
+    # Sentence 2: VIX / macro context
+    if vix_div:
+        s.append(
+            "VIX is elevated while 2H realised vol is quiet — "
+            "the options market is pricing in danger that intraday price hasn't shown yet."
+        )
+    elif bw_1w > 10.2:
+        s.append(
+            f"The weekly chart is in macro mean-revert territory (BW% {bw_1w:.1f}%) — "
+            "a large event has already unfolded and aftershocks are possible."
+        )
+    elif reg_1w == "MEAN_REVERT":
+        s.append(
+            "Price is below its weekly moving average — macro drift is downward, PE leg carries more structural stress."
+        )
+
+    # Sentence 3: direction lean / action
+    if squeeze == "DEEP":
+        s.append(
+            "Direction is genuinely unknowable — enter both legs at equal size and monitor daily for the breakout direction."
+        )
+    elif risk_side == "CE":
+        s.append("Price is drifting toward the upper band — keep a closer eye on the CE leg after entry.")
+    elif risk_side == "PE" or ma_4h == "BELOW_MA":
+        s.append("Price is below the 4H moving average with a slight downside lean — PE leg has more structural stress.")
+    elif ratio == "1:1":
+        s.append("No directional pressure on either leg — this is a symmetric, well-balanced IC week.")
+
+    return " ".join(s[:3])
+
+plain_summary = _build_summary()
+
+# ── Colour maps ───────────────────────────────────────────────────────────────
+REGIME_COLOUR = {
+    "EXTREME_SQUEEZE":"red","SQUEEZE":"red","CALM":"green",
+    "MOMENTUM":"amber","HIGH_VOL":"red","MEAN_REVERT":"red",
+}
+SQ_COLOUR    = {"ALIGNED":"green","PARTIAL":"amber","DEEP":"red","NONE":"default"}
+CONF_COLOUR  = {"HIGH":"green","MEDIUM":"amber","WEAK":"red"}
+DRIFT_COLOUR = {"BASE":"green","ELEVATED":"amber","VERY_HIGH":"red","VETO":"red"}
+WALK_COLOUR  = {"STRONG":"red","MODERATE":"red","MILD":"amber","NONE":"green"}
+LOT_COLOUR   = {100:"green",50:"amber",25:"red"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1 — THIS WEEK'S TRADE
+# ─────────────────────────────────────────────────────────────────────────────
+ui.section_header(f"{tl_icon}  This Week's Trade — {tl_label}")
+st.markdown(f"> {plain_summary}")
+st.divider()
+
+c1, c2, c3, c4, c5 = st.columns(5)
+with c1:
+    _ce_disp = f"{ce_strike:,}" if ce_strike > 0 else "—"
+    ui.metric_card("SELL CE AT", _ce_disp,
+                   sub=f"+3.5% from {spot:,.0f}" if spot > 0 else "spot unknown",
+                   color="amber" if watch_leg in ("CE","BOTH") else "green")
+with c2:
+    _pe_disp = f"{pe_strike:,}" if pe_strike > 0 else "—"
+    ui.metric_card("SELL PE AT", _pe_disp,
+                   sub=f"−4.0% from {spot:,.0f}" if spot > 0 else "spot unknown",
+                   color="amber" if watch_leg in ("PE","BOTH") else "green")
+with c3:
+    ui.metric_card("RATIO", ratio,
+                   sub="CE lots : PE lots",
+                   color="amber" if ratio != "1:1" else "green")
+with c4:
+    _reason_short = lot_reason[:42] + "…" if len(lot_reason) > 42 else lot_reason
+    ui.metric_card("LOT SIZE", f"{lot_pct}%",
+                   sub=_reason_short,
+                   color=LOT_COLOUR.get(lot_pct, "green"))
+with c5:
+    _watch_color = "red" if (watch_leg == "BOTH" and squeeze == "DEEP") else \
+                   "amber" if watch_leg in ("CE","PE") else "green"
+    ui.metric_card("WATCH LEG", watch_leg,
+                   sub="Post-entry monitoring priority",
+                   color=_watch_color)
+
+if ce_extra_advisory:
+    st.info(f"ℹ️ {ce_extra_advisory}")
+
+# Condition-specific callouts
+if squeeze == "DEEP":
+    st.warning(
+        "⚠️ **DEEP SQUEEZE** — EXTREME_SQUEEZE active on 2H or 4H. "
+        "Ratio locked to 1:1 and lots capped at 50%. "
+        "Monitor daily: once bands start expanding, lean ratio toward the breakout direction."
+    )
 if wlbl_2h == "STRONG":
     _ws = "upper" if wu_2h >= wd_2h else "lower"
-    st.error(f"🔴 2H STRONG WALK — Day {walk_2h_max} along {_ws} band. Hard skip regardless of skip score.")
+    _leg = "CE" if wu_2h >= wd_2h else "PE"
+    st.warning(
+        f"⚠️ **2H STRONG WALK** — Day {max(wu_2h,wd_2h)} along {_ws} band. "
+        f"{_leg} short is under sustained pressure — ratio already reflects this, size reduced."
+    )
 elif wlbl_2h == "MODERATE":
     _ws = "upper" if wu_2h >= wd_2h else "lower"
-    st.warning(f"⚠️ 2H MODERATE WALK — Day {walk_2h_max} along {_ws} band. Apply strong asymmetry or skip.")
-elif wlbl_2h == "MILD":
-    _ws = "upper" if wu_2h >= wd_2h else "lower"
-    _leg = "CE" if wu_2h >= wd_2h else "PE"
-    st.warning(f"⚠️ 2H MILD WALK — Day {walk_2h_max} along {_ws} band. Lean asymmetry, flag {_leg} leg.")
-
-if vix_div:
-    st.warning(f"⚠️ BB-VIX DIVERGENCE — VIX elevated but 2H BW% tight ({bw_2h:.2f}%). Implied vol says danger, realised vol quiet. Treat as extra caution.")
-
-if ce_watch:
-    st.info("ℹ️ CE WATCH — 2H %B in UP_NEUTRAL (0.55–0.75). Price drifting toward upper band. Monitor CE leg.")
-if pe_watch:
-    st.info("ℹ️ PE WATCH — 2H %B in LO_NEUTRAL (0.25–0.45). Price drifting toward lower band. Monitor PE leg.")
+    st.warning(f"⚠️ **2H MODERATE WALK** — Day {max(wu_2h,wd_2h)} along {_ws} band. Asymmetry applied.")
 
 st.divider()
 
-# ── Headline metrics ──────────────────────────────────────────────────────────
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-with c1: ui.metric_card("ENTRY VERDICT", verdict,    sub=f"Skip score {skip_score}/5",        color=VERDICT_COLOUR.get(verdict,"default"))
-with c2: ui.metric_card("2H REGIME",    bb_regime,   sub=f"BW% {bw_2h:.2f}% (primary TF)",   color=REGIME_COLOUR.get(bb_regime,"default"))
-_sq_sub = {"ALIGNED": "Best IC setup of the cycle", "PARTIAL": "2H coiled — 4H not yet", "DEEP": "Hard veto — direction unknowable", "NONE": "Standard operation"}.get(squeeze, "")
-with c3: ui.metric_card("SQUEEZE",      squeeze,     sub=_sq_sub,                             color=SQ_COLOUR.get(squeeze,"default"))
-with c4: ui.metric_card("ASYMMETRY",    asymmetry,   sub=f"Primary risk: {risk_side}",        color="amber" if asymmetry != "1:1" else "green")
-with c5: ui.metric_card("CONFIDENCE",   confidence,  sub="4H agreement quality",              color=CONF_COLOUR.get(confidence,"default"))
-with c6: ui.metric_card("DRIFT RISK",   drift_risk,  sub="CE breach probability level",       color=DRIFT_COLOUR.get(drift_risk,"default"))
-
-st.divider()
-
-# ── 4-TF Regime Overview ──────────────────────────────────────────────────────
-ui.section_header("4-TF Regime Overview")
-c1, c2, c3, c4 = st.columns(4)
-for _col, _label, _bw, _reg, _note in [
-    (c1, "2H — PRIMARY",   bw_2h, bb_regime, "Drives asymmetry + lens distance"),
-    (c2, "4H — SECONDARY", bw_4h, reg_4h,   "Confidence modifier on ratio"),
-    (c3, "1D — BG",        bw_1d, reg_1d,   "Skip score cond 1 if BW% >5.6%"),
-    (c4, "1W — MACRO",     bw_1w, reg_1w,   "Skip score conds 2 and 5"),
-]:
-    with _col:
-        ui.metric_card(_label, _reg, sub=f"BW% {_bw:.2f}% · {_note}",
-                       color=REGIME_COLOUR.get(_reg, "default"))
-
-with st.expander("Regime Reference — What Each State Means for Your IC", expanded=False):
-    st.markdown("""
-| Regime | BW% (2H/4H) | IC Meaning | Action |
-|---|---|---|---|
-| **EXTREME_SQUEEZE** | < 2% | Bands collapsed — explosive move imminent, direction unknown | Hard skip · DEEP squeeze veto |
-| **SQUEEZE** | 2–3.5% | Bands coiled — IV elevated vs realised vol, premium-rich setup | Best IC entry if direction known from %B |
-| **CALM** | 3.5–4.5% | Bands gently compressed — ideal premium decay environment | Proceed · tight distance (2.0× ATR14) |
-| **MOMENTUM** | 4.5–5.6% | Market picking direction — one leg building pressure | Proceed with asymmetry · 2.25× ATR14 |
-| **HIGH_VOL** | 5.6–6.5% | Elevated volatility — significant move already in progress | Widen both legs · 2.5× ATR14 |
-| **MEAN_REVERT** | > 6.5% | Bands overextended — snap-back risk is high | Skip (adds to skip score) |
-
-**1D thresholds are wider** (SQUEEZE <3.5%, CALM 3.5–5.6%, HIGH_VOL >5.6%) because daily bands compress more slowly.
-**1W thresholds are different** (EXTREME_SQ <4.5%, MEAN_REVERT >10.2%) — weekly bands move in a different vol regime.
-""")
-
-st.divider()
-
-# ── %B Zone + MA Position ─────────────────────────────────────────────────────
-ui.section_header("%B Zone — Position Within the Band", "2H %B drives the asymmetry ratio · 4H %B drives confidence")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-with c1: ui.metric_card("2H %B",   f"{pb_2h:.3f}", sub=zone_2h,
-                         color="red"   if zone_2h in ("ABOVE_BAND","BELOW_BAND") else
-                               "amber" if zone_2h in ("UPPER","LOWER") else "default")
-with c2: ui.metric_card("2H ZONE",  zone_2h, sub="Primary ratio driver")
-with c3: ui.metric_card("2H MA",    ma_2h,   sub="±0.3% around 2H basis",
-                         color="amber" if ma_2h != "AT_MA" else "green")
-with c4: ui.metric_card("4H %B",   f"{pb_4h:.3f}", sub=zone_4h,
-                         color="red"   if zone_4h in ("ABOVE_BAND","BELOW_BAND") else "default")
-with c5: ui.metric_card("4H ZONE",  zone_4h, sub="Confidence modifier")
-with c6: ui.metric_card("4H MA",    ma_4h,   sub="±0.3% around 4H basis",
-                         color="amber" if ma_4h != "AT_MA" else "green")
-
-with st.expander("%B Zone Reference — How Each Zone Maps to IC Ratio", expanded=False):
-    st.markdown("""
-%B = (close − lower band) / (upper − lower band). Values outside 0–1 mean close is outside the band.
-
-| Zone | %B Range | Base Ratio | IC Meaning |
-|---|---|---|---|
-| **ABOVE_BAND** | > 1.0 | **1:2** (CE threatened) | Price above upper band — sustained bullish pressure, CE short at risk |
-| **UPPER** | 0.75–1.0 | **1:2** (CE threatened) | Price in upper quartile — approaching upper band, CE needs extra distance |
-| **UP_NEUTRAL** | 0.55–0.75 | 1:1 + CE watch | Price drifting up — no asymmetry yet, flag CE leg for monitoring |
-| **MIDLINE** | 0.45–0.55 | **1:1** | Price centred on 20-period SMA — ideal symmetric IC |
-| **LO_NEUTRAL** | 0.25–0.45 | 1:1 + PE watch | Price drifting down — no asymmetry yet, flag PE leg for monitoring |
-| **LOWER** | 0.0–0.25 | **2:1** (PE threatened) | Price in lower quartile — approaching lower band, PE needs extra distance |
-| **BELOW_BAND** | < 0.0 | **2:1** (PE threatened) | Price below lower band — sustained bearish pressure, PE short at risk |
-
-**MA override:** if the 2H basis (20-SMA) contradicts the %B direction, the ratio steps to 1:1.
-Example: %B = UPPER (→1:2) but price is 0.5% below basis (BELOW_MA) → overrides to 1:1.
-Same rule applies if 4H MA contradicts 2H direction.
-""")
-
-st.divider()
-
-# ── Asymmetry Formula ─────────────────────────────────────────────────────────
-ui.section_header("Asymmetry Formula — Active Computation")
-_ZONE_RATIO = {
-    "ABOVE_BAND": "1:2 (CE threatened)", "UPPER":      "1:2 (CE threatened)",
-    "UP_NEUTRAL": "1:1 + CE watch",      "MIDLINE":    "1:1",
-    "LO_NEUTRAL": "1:1 + PE watch",
-    "LOWER":      "2:1 (PE threatened)", "BELOW_BAND": "2:1 (PE threatened)",
-}
-_CONF_DESC = {
-    "HIGH":   f"4H confirms 2H direction → full ratio (+{round(0.5*atr14/50)*50:,} pts extra on {risk_side} leg)",
-    "MEDIUM": f"4H neutral or MA contradicts → half ratio (+{round(0.25*atr14/50)*50:,} pts extra on {risk_side} leg)",
-    "WEAK":   "4H contradicts 2H direction → override to 1:1, no extra distance",
-}
-_ma_note = ""
-if asymmetry == "1:1" and zone_2h in ("ABOVE_BAND","UPPER","LOWER","BELOW_BAND"):
-    _ma_note = "  ⚠️ MA override applied — ratio stepped to 1:1 (MA contradicts %B direction)"
-_LENS_MULT = {"CALM":2.0,"SQUEEZE":2.25,"MOMENTUM":2.25,"EXTREME_SQUEEZE":2.5,"HIGH_VOL":2.5,"MEAN_REVERT":2.75}
-_base_mult = _LENS_MULT.get(bb_regime, 2.25)
-_conf_risk = risk_side if risk_side != "NEUTRAL" else "neither"
-_CONF_DESC = {
-    "HIGH":   f"4H confirms 2H direction → full ratio (+{round(0.5*atr14/50)*50:,} pts extra on {_conf_risk} leg)",
-    "MEDIUM": f"4H neutral or MA contradicts → half ratio (+{round(0.25*atr14/50)*50:,} pts extra on {_conf_risk} leg)",
-    "WEAK":   "4H contradicts 2H direction → override to 1:1, no extra distance",
-}
-ui.simple_technical(
-    f"2H %B zone = {zone_2h} → base: {_ZONE_RATIO.get(zone_2h,'1:1')}\n"
-    f"Squeeze: {squeeze}" + (" → uses %B value directly for direction" if squeeze in ("ALIGNED","PARTIAL") else "") + "\n"
-    f"4H confidence = {confidence} → {_CONF_DESC.get(confidence,'')}\n"
-    f"2H MA = {ma_2h}  |  4H MA = {ma_4h}{_ma_note}",
-    f"Final asymmetry: {asymmetry}  ·  Primary risk: {risk_side}\n"
-    f"Lens L4 → PE {l4_pe:,} pts  |  CE {l4_ce:,} pts  (from base {_base_mult}× ATR14)"
-)
-
-with st.expander("Asymmetry & Confidence Reference — Full Rule Table", expanded=False):
-    st.markdown(f"""
-**Lens L4 base multipliers (ATR14 = {atr14:,} pts):**
-
-| 2H Regime | Base Mult | Base Pts | IC Meaning |
-|---|---|---|---|
-| EXTREME_SQUEEZE | 2.5× | {round(2.5*atr14/50)*50:,} | Precautionary wide — but verdict is SKIP |
-| SQUEEZE | 2.25× | {round(2.25*atr14/50)*50:,} | Standard — direction lean from %B |
-| CALM | 2.0× | {round(2.0*atr14/50)*50:,} | Tighter — ideal environment |
-| MOMENTUM | 2.25× | {round(2.25*atr14/50)*50:,} | Standard |
-| HIGH_VOL | 2.5× | {round(2.5*atr14/50)*50:,} | Wider — vol elevated |
-| MEAN_REVERT | 2.75× | {round(2.75*atr14/50)*50:,} | Widest — snap risk |
-
-**Asymmetry extra on threatened leg:**
-
-| Confidence | Extra Mult | Extra Pts | Condition |
-|---|---|---|---|
-| HIGH | +0.5× ATR14 | +{round(0.5*atr14/50)*50:,} | 4H %B agrees with 2H direction |
-| MEDIUM | +0.25× ATR14 | +{round(0.25*atr14/50)*50:,} | 4H neutral, or 4H MA contradicts |
-| WEAK | +0.0 | +0 | 4H in opposite directional half → default 1:1 |
-
-**Hard cap:** threatened leg capped at 3.0× ATR14 = {round(3.0*atr14/50)*50:,} pts.
-
-**Squeeze direction rule:** when ALIGNED or PARTIAL, %B value overrides zone name:
-- %B > 0.55 → 1:2 (expansion likely upward)
-- %B < 0.45 → 2:1 (expansion likely downward)
-- %B 0.45–0.55 → 1:1 (direction genuinely unknown — do not force a lean)
-""")
-
-st.divider()
-
-# ── Skip Score ────────────────────────────────────────────────────────────────
-ui.section_header("Skip Score", f"{skip_score}/5  ·  SKIP ≥3  |  CAUTION =2  |  PROCEED 0–1")
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2 — STRESS CHECK
+# ─────────────────────────────────────────────────────────────────────────────
+ui.section_header("Stress Check", f"{skip_score}/5 active  ·  0–1 = full lots  |  2 = half  |  3+ = quarter")
 
 _yes = "background-color:#fee2e2;font-weight:700"
 _no  = "background-color:#dcfce7"
 
-_skip_rows = [
-    ["1", "1D BW% > 5.6%",
-     "YES" if skip_conds.get("1d_high_vol", bw_1d > 5.6)  else "NO",
-     f"{bw_1d:.2f}%  ({reg_1d})"],
-    ["2", "1W price > 2% below 1W MA",
-     "YES" if skip_conds.get("1w_below_ma", False)         else "NO",
-     f"1W regime: {reg_1w}"],
-    ["3", "4H STRONG walk ≥ 4 days",
+_stress_rows = [
+    ["1",
+     "Daily chart heating up (1D BW% > 5.6%)",
+     "YES" if skip_conds.get("1d_high_vol", bw_1d > 5.6) else "NO",
+     f"{bw_1d:.2f}%  ({reg_1d})",
+     "−25% lots"],
+    ["2",
+     "Weekly trend is down (1W price > 2% below MA)",
+     "YES" if skip_conds.get("1w_below_ma", False) else "NO",
+     f"1W {reg_1w}  BW% {bw_1w:.2f}%",
+     "−25% lots"],
+    ["3",
+     "4H trend established — 4H walk ≥ 4 days",
      "YES" if skip_conds.get("4h_strong_walk", max(wu_4h,wd_4h)>=4) else "NO",
-     f"max {max(wu_4h,wd_4h)} days  ({wlbl_4h})"],
-    ["4", "2H regime = MEAN_REVERT",
+     f"max {max(wu_4h,wd_4h)} days  ({wlbl_4h})",
+     "−25% lots"],
+    ["4",
+     "2H bands overextended (MEAN_REVERT)",
      "YES" if skip_conds.get("2h_mean_revert", bb_regime=="MEAN_REVERT") else "NO",
-     f"{bb_regime}  ({bw_2h:.2f}%)"],
-    ["5", "1W BW% > 10.2%",
+     f"{bb_regime}  ({bw_2h:.2f}%)",
+     "−25% lots"],
+    ["5",
+     "Macro event in progress (1W BW% > 10.2%)",
      "YES" if skip_conds.get("1w_mean_revert", bw_1w > 10.2) else "NO",
-     f"{bw_1w:.2f}%  ({reg_1w})"],
+     f"{bw_1w:.2f}%  ({reg_1w})",
+     "→ 25% lots (hard)"],
 ]
-_skip_df = pd.DataFrame(_skip_rows, columns=["#","Condition","Active","Value"])
+_stress_df = pd.DataFrame(
+    _stress_rows,
+    columns=["#", "What it means in plain English", "Active", "Current value", "Impact on lots"],
+)
 st.dataframe(
-    _skip_df.style.map(lambda v: _yes if v=="YES" else _no if v=="NO" else "",
-                       subset=["Active"]),
+    _stress_df.style.map(
+        lambda v: _yes if v=="YES" else _no if v=="NO" else "",
+        subset=["Active"],
+    ),
     use_container_width=True, hide_index=True,
 )
-if squeeze == "DEEP":
-    st.error("DEEP SQUEEZE is a hard veto — skip score is bypassed.")
 
-with st.expander("Skip Score Reference — Why Each Condition Exists", expanded=False):
+with st.expander("Lot Sizing Rules — Full Reference", expanded=False):
     st.markdown("""
-Each condition represents a structural risk that materially increases the probability of an IC leg breach during the 5-day hold.
+You always enter — the stress score just tells you how big to be.
 
-| # | Condition | Rationale |
+| Stress Score | Lot Size | What it means |
 |---|---|---|
-| 1 | **1D BW% > 5.6%** | Daily market already in HIGH_VOL or MEAN_REVERT. The move has happened — entering IC now means selling into momentum with insufficient distance. |
-| 2 | **1W price > 2% below 1W MA** | Macro bearish drift — the weekly trend is structurally down. Entry IC is working against the weekly current. PE leg is at elevated structural risk. |
-| 3 | **4H STRONG walk ≥ 4 days** | Four consecutive 4H closes outside the band = confirmed trend on the 4H timeframe. IC boundary will be tested. The edge has flipped from IC to directional. |
-| 4 | **2H MEAN_REVERT** | 2H BW% > 6.5% means the intraday bands are extremely wide — the explosive move already happened. What follows is a snap-back that is statistically violent in both directions. |
-| 5 | **1W BW% > 10.2%** | Weekly bands at macro mean-revert level — implies a major volatility event (budget, election, global shock). IC is structurally unsuited. |
+| 0–1 | **100%** | Clean week — deploy full capital, theta works efficiently |
+| 2 | **50%** | Two things going wrong at once — halve size, reduce P&L variance |
+| 3+ | **25%** | Multiple structural risks stacking — protect capital, collect small theta |
 
-**DEEP SQUEEZE veto** is separate — it fires when 2H or 4H BW% < 2%, making direction genuinely unknowable. Entering an IC before a direction-unknown explosion is asymmetrically punished.
+**Hard overrides** (take priority over the score above):
 
-**Score thresholds:** 0–1 = proceed. 2 = caution (50% lots — your theta still works, you reduce P&L variance). ≥3 = skip (multiple conditions failing simultaneously = structurally bad week).
+| Condition | Lot Size | Reason |
+|---|---|---|
+| VIX divergence + EXTREME_SQUEEZE | **25%** | Most dangerous setup — implied vol is warning, direction unknown |
+| 1W BW% > 10.2% (macro event) | **25%** | Weekly move capacity is unbounded, stay very small |
+| DEEP SQUEEZE (either TF < 2%) | **max 50%** | Can't know direction — enter small, add to winning side after breakout |
+| EXTREME_SQUEEZE alone | **50%** | Coil is tight but 4H not confirming yet |
 """)
 
 st.divider()
 
-# ── Walk Status ───────────────────────────────────────────────────────────────
-ui.section_header("Band Walk Status", "Consecutive closes at or beyond the band on each TF")
-c1, c2, c3, c4 = st.columns(4)
-with c1: ui.metric_card("2H WALK UP",   f"Day {wu_2h}", sub=wlbl_2h, color=WALK_COLOUR.get(wlbl_2h,"default"))
-with c2: ui.metric_card("2H WALK DOWN", f"Day {wd_2h}", sub=wlbl_2h, color=WALK_COLOUR.get(wlbl_2h,"default"))
-with c3: ui.metric_card("4H WALK UP",   f"Day {wu_4h}", sub=wlbl_4h, color=WALK_COLOUR.get(wlbl_4h,"default"))
-with c4: ui.metric_card("4H WALK DOWN", f"Day {wd_4h}", sub=wlbl_4h, color=WALK_COLOUR.get(wlbl_4h,"default"))
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 3 — MARKET ANALYSIS DETAIL (collapsed by default)
+# ─────────────────────────────────────────────────────────────────────────────
+with st.expander("Market Analysis — 4-TF Regime · %B · Walk · Drift Risk", expanded=False):
 
-with st.expander("Walk Reference — Rules and IC Implications", expanded=False):
-    st.markdown("""
-A "walk" is when price closes at or beyond the Bollinger Band for consecutive bars. It signals sustained directional momentum — the IC boundary on that side is being tested repeatedly.
+    ui.section_header("4-TF Regime Overview")
+    c1, c2, c3, c4 = st.columns(4)
+    for _col, _label, _bw, _reg, _note in [
+        (c1, "2H — PRIMARY",   bw_2h, bb_regime, "Drives ratio + lot size"),
+        (c2, "4H — SECONDARY", bw_4h, reg_4h,   "Confidence modifier"),
+        (c3, "1D — BG",        bw_1d, reg_1d,   "Stress cond 1 if >5.6%"),
+        (c4, "1W — MACRO",     bw_1w, reg_1w,   "Stress conds 2 and 5"),
+    ]:
+        with _col:
+            ui.metric_card(_label, _reg, sub=f"BW% {_bw:.2f}% · {_note}",
+                           color=REGIME_COLOUR.get(_reg, "default"))
 
-| Days | Label | 2H/4H Action | IC Implication |
+    with st.expander("Regime Reference — What Each State Means for Your IC", expanded=False):
+        st.markdown("""
+| Regime | BW% (2H/4H) | Lot Size | Ratio | What it means |
+|---|---|---|---|---|
+| EXTREME_SQUEEZE | < 2% | 50% | 1:1 | Coiled spring — direction unknown, explosive move coming |
+| SQUEEZE | 2–3.5% | 100% | From %B | Best entry — premium rich, bands compressed |
+| CALM | 3.5–4.5% | 100% | 1:1 most weeks | Sweet spot — ideal decay environment |
+| MOMENTUM | 4.5–5.6% | 100% | From %B | Market picking direction — one leg under pressure |
+| HIGH_VOL | 5.6–6.5% | 50% | From %B | Move already in progress — widen both legs |
+| MEAN_REVERT | > 6.5% | 50% | 1:1 | Overextended — snap-back risk, +1 stress |
+""")
+
+    st.divider()
+
+    ui.section_header("%B Zone — Where Price Sits Within the Band")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1: ui.metric_card("2H %B",   f"{pb_2h:.3f}", sub=zone_2h,
+                             color="red"   if zone_2h in ("ABOVE_BAND","BELOW_BAND") else
+                                   "amber" if zone_2h in ("UPPER","LOWER") else "default")
+    with c2: ui.metric_card("2H ZONE",  zone_2h, sub="Primary ratio driver")
+    with c3: ui.metric_card("2H MA",    ma_2h,
+                             sub="±0.3% around 2H basis",
+                             color="amber" if ma_2h != "AT_MA" else "green")
+    with c4: ui.metric_card("4H %B",   f"{pb_4h:.3f}", sub=zone_4h,
+                             color="red" if zone_4h in ("ABOVE_BAND","BELOW_BAND") else "default")
+    with c5: ui.metric_card("4H ZONE",  zone_4h, sub="Confidence modifier")
+    with c6: ui.metric_card("4H MA",    ma_4h,
+                             sub="±0.3% around 4H basis",
+                             color="amber" if ma_4h != "AT_MA" else "green")
+
+    with st.expander("%B Zone Reference — How Each Zone Maps to Ratio", expanded=False):
+        st.markdown("""
+%B = (close − lower band) / (upper − lower). 0 = touching lower band. 1 = touching upper band.
+
+| Zone | %B | Ratio | What it means |
 |---|---|---|---|
-| 1 | *(breach)* | Monitor only — single bar outside band | No action — could be noise |
-| 2 | **MILD** | Lean asymmetry + flag threatened leg | Apply 1:2 or 2:1 ratio toward threatened side |
-| 3 | **MODERATE** | Strong asymmetry OR skip | If confidence is WEAK, prefer skip. If HIGH, apply max ratio. |
-| 4+ | **STRONG** | Hard skip | 4+ days = trend established. IC is the wrong strategy this week. |
-
-**TF scope:**
-- **2H walk** → primary actionable signal. Drives asymmetry directly.
-- **4H walk STRONG (≥4)** → adds +1 to skip score (condition 3).
-- **1D walk** → informational display. A confirmed 1D walk adds context but doesn't independently trigger action.
-- **1W walk** → macro veto signal. Treat any 1W walk day ≥2 as structural — combine with 1W BW% and MA position.
-
-**Why the walk modifier is NOT in pts:** the old engine added ATR-scaled pts to the walk leg. The new system instead flows through the skip score (for strong walks) and the asymmetry ratio (for mild/moderate), which is more principled — you're not arbitrarily widening a boundary, you're deciding whether to enter at all and at what ratio.
+| ABOVE_BAND | > 1.0 | 1:2 CE | Price outside upper band — sustained bullish push, CE under pressure |
+| UPPER | 0.75–1.0 | 1:2 CE | Approaching upper band — CE needs more room |
+| UP_NEUTRAL | 0.55–0.75 | 1:1 + CE watch | Drifting up, no asymmetry yet — monitor CE |
+| MIDLINE | 0.45–0.55 | 1:1 | Centred on the 20-period MA — ideal symmetric week |
+| LO_NEUTRAL | 0.25–0.45 | 1:1 + PE watch | Drifting down, no asymmetry yet — monitor PE |
+| LOWER | 0.0–0.25 | 2:1 PE | Approaching lower band — PE needs more room |
+| BELOW_BAND | < 0.0 | 2:1 PE | Price outside lower band — sustained bearish push, PE under pressure |
 """)
 
-st.divider()
+    st.divider()
 
-# ── Drift Risk ────────────────────────────────────────────────────────────────
-ui.section_header("CE Breach Drift Risk", "CE short at +3.5% OTM · base breach probability = 1/20 (5%)")
-_DRIFT_DESC = {
-    "VERY_HIGH": "EXTREME_SQUEEZE or HIGH_VOL regime active — CE breach probability elevated to ~20% (4×). Nifty has statistical capacity for a 3.5%+ intraweek move.",
-    "ELEVATED":  "SQUEEZE or MOMENTUM regime — CE breach probability elevated to ~10% (2×). Market picking direction with energy remaining.",
-    "BASE":      "CALM regime — CE at +3.5% is at the 95th pctl of weekly drift. Breach probability at historical base rate (~5%).",
-    "VETO":      "MEAN_REVERT — bands overextended. A violent snap-back is statistically probable. CE side is exposed to a rapid move back to basis.",
-}
-ui.alert_box(
-    f"Drift Risk: {drift_risk}",
-    _DRIFT_DESC.get(drift_risk, ""),
-    level="danger" if drift_risk in ("VERY_HIGH","VETO") else "warning" if drift_risk == "ELEVATED" else "success",
-)
+    ui.section_header("Band Walk Status", "Consecutive closes at or beyond the band")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: ui.metric_card("2H WALK UP",   f"Day {wu_2h}", sub=wlbl_2h, color=WALK_COLOUR.get(wlbl_2h,"default"))
+    with c2: ui.metric_card("2H WALK DOWN", f"Day {wd_2h}", sub=wlbl_2h, color=WALK_COLOUR.get(wlbl_2h,"default"))
+    with c3: ui.metric_card("4H WALK UP",   f"Day {wu_4h}", sub=wlbl_4h, color=WALK_COLOUR.get(wlbl_4h,"default"))
+    with c4: ui.metric_card("4H WALK DOWN", f"Day {wd_4h}", sub=wlbl_4h, color=WALK_COLOUR.get(wlbl_4h,"default"))
 
-with st.expander("Drift Risk Reference — Regime → CE Breach Probability", expanded=False):
+    with st.expander("Walk Reference", expanded=False):
+        st.markdown("""
+A walk = price closing at or beyond the band on consecutive bars — a sustained push against your short leg.
+
+| Days | Label | What to do |
+|---|---|---|
+| 1 | (breach) | Monitor only |
+| 2 | **MILD** | Lean ratio toward walk side |
+| 3 | **MODERATE** | Max ratio toward walk side |
+| 4+ | **STRONG** | Reduce size, apply max ratio |
+
+**4H walk ≥ 4 days** = stress condition 3 fires (+1 to stress score, −25% lots).
+""")
+
+    st.divider()
+
+    ui.section_header("CE Breach Drift Risk", "CE short at +3.5% · base weekly breach probability ~5%")
+    _DRIFT_DESC = {
+        "VERY_HIGH": "EXTREME_SQUEEZE or HIGH_VOL active — breach probability ~20%. Nifty has statistical capacity for a 3.5%+ intraweek move.",
+        "ELEVATED":  "SQUEEZE or MOMENTUM — breach probability ~10%. Directional energy is still building.",
+        "BASE":      "CALM regime — CE at +3.5% is safely in the 95th pctl of weekly drift. Historical base rate ~5%.",
+        "VETO":      "MEAN_REVERT — snap-back dynamics. CE exposed to a rapid return to basis.",
+    }
+    ui.alert_box(
+        f"Drift Risk: {drift_risk}",
+        _DRIFT_DESC.get(drift_risk, ""),
+        level="danger" if drift_risk in ("VERY_HIGH","VETO") else
+              "warning" if drift_risk == "ELEVATED" else "success",
+    )
+
+    st.divider()
+
+    _LENS_MULT = {
+        "CALM":2.0,"SQUEEZE":2.25,"MOMENTUM":2.25,
+        "EXTREME_SQUEEZE":2.5,"HIGH_VOL":2.5,"MEAN_REVERT":2.75,
+    }
+    _base_mult = _LENS_MULT.get(bb_regime, 2.25)
+    _conf_risk = risk_side if risk_side != "NEUTRAL" else "neither"
+    _CONF_DESC = {
+        "HIGH":   f"4H confirms direction → full extra (+{round(0.5*atr14/50)*50:,} pts on {_conf_risk} leg)",
+        "MEDIUM": f"4H neutral → half extra (+{round(0.25*atr14/50)*50:,} pts on {_conf_risk} leg)",
+        "WEAK":   "4H contradicts 2H → 1:1 override, no extra distance",
+    }
+    _ZONE_RATIO = {
+        "ABOVE_BAND":"1:2 CE","UPPER":"1:2 CE","UP_NEUTRAL":"1:1+CE watch",
+        "MIDLINE":"1:1","LO_NEUTRAL":"1:1+PE watch",
+        "LOWER":"2:1 PE","BELOW_BAND":"2:1 PE",
+    }
+    _ma_note = ""
+    if asymmetry == "1:1" and zone_2h in ("ABOVE_BAND","UPPER","LOWER","BELOW_BAND"):
+        _ma_note = "  ⚠️ MA override → ratio stepped to 1:1"
+    ui.section_header("Asymmetry Formula")
+    ui.simple_technical(
+        f"2H %B zone = {zone_2h} → base: {_ZONE_RATIO.get(zone_2h,'1:1')}\n"
+        f"Squeeze: {squeeze}" +
+        (" → uses %B value directly for direction" if squeeze in ("ALIGNED","PARTIAL") else "") + "\n"
+        f"4H confidence = {confidence} → {_CONF_DESC.get(confidence,'')}\n"
+        f"2H MA = {ma_2h}  |  4H MA = {ma_4h}{_ma_note}",
+        f"Ratio: {ratio}  ·  Risk side: {risk_side}\n"
+        f"L4 → PE {l4_pe:,} pts  |  CE {l4_ce:,} pts  (base {_base_mult}× ATR14)",
+    )
+
+    with st.expander("Asymmetry & Lens Reference", expanded=False):
+        st.markdown(f"""
+**Base distance multipliers (ATR14 = {atr14:,} pts):**
+
+| 2H Regime | Mult | Distance |
+|---|---|---|
+| EXTREME_SQUEEZE | 2.5× | {round(2.5*atr14/50)*50:,} pts |
+| SQUEEZE | 2.25× | {round(2.25*atr14/50)*50:,} pts |
+| CALM | 2.0× | {round(2.0*atr14/50)*50:,} pts |
+| MOMENTUM | 2.25× | {round(2.25*atr14/50)*50:,} pts |
+| HIGH_VOL | 2.5× | {round(2.5*atr14/50)*50:,} pts |
+| MEAN_REVERT | 2.75× | {round(2.75*atr14/50)*50:,} pts |
+
+**Extra on threatened leg:**  HIGH +{round(0.5*atr14/50)*50:,} pts · MEDIUM +{round(0.25*atr14/50)*50:,} pts · WEAK +0 pts
+**Hard cap:** max 3.0× ATR14 = {round(3.0*atr14/50)*50:,} pts on either leg.
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 4 — POST-ENTRY MONITORING
+# ─────────────────────────────────────────────────────────────────────────────
+with st.expander("Post-Entry Monitoring — What to Watch After Tuesday EOD", expanded=False):
     st.markdown(f"""
-The base CE breach probability is calibrated to your entry: CE short at **+3.5% OTM**, with **95th pctl weekly drift = 3.51%**. This means 1 in 20 weeks the market moves far enough to test the CE strike.
+These rules apply **after you've entered** using live 4H and 2H data during the week.
 
-The drift risk modifier adjusts this base rate based on how much structural momentum is present:
-
-| 2H Regime | Risk Level | Approx CE Breach Prob | Reason |
+| What to check | Trigger | What it means | What to do |
 |---|---|---|---|
-| CALM | BASE | ~5% (1/20) | No momentum — drift is bounded |
-| SQUEEZE | ELEVATED | ~10% (2/20) | Coiled spring — release move can be sharp |
-| MOMENTUM | ELEVATED | ~10% (2/20) | Directional energy building |
-| EXTREME_SQUEEZE | VERY_HIGH | ~20% (4/20) | Explosion imminent, magnitude unknown |
-| HIGH_VOL | VERY_HIGH | ~20% (4/20) | Large move already in progress |
-| MEAN_REVERT | VETO | Not modelled | Snap-back dynamics — structural tail risk |
+| **CE leg threat** | 4H %B > 0.85 | Price deep in upper zone — CE short under daily pressure | Watch for roll. If sustained 2 days, act. |
+| **PE leg threat** | 4H %B < 0.15 | Price deep in lower zone — PE short under daily pressure | Watch for roll. If sustained 2 days, act. |
+| **Vol explosion** | 4H BW% > 1.5× entry BW% | Bands expanding fast after entry — market chose direction | Reduce losing leg or close and re-enter wider. |
+| **Walk developing** | 2H walk ≥ 2 days | Directional push building post-entry | Flag threatened leg. Prepare for roll if walk reaches MODERATE. |
+| **Perfect decay** | Both 2H + 4H %B in 0.30–0.70 all week | Price oscillating near basis — no stress | Do nothing. Hold to expiry. Theta working. |
 
-**Note:** drift risk is informational — it tells you the quality of the CE short, not whether to skip. The skip score handles the binary entry decision. Drift risk informs sizing and roll readiness.
+**Entry BW% baseline:** {bw_2h:.2f}% (2H at time of this signal)
+**Vol expansion triggers if 4H BW% exceeds:** {bw_2h * 1.5:.2f}% within 2 days of entry
 """)
 
-st.divider()
-
-# ── Squeeze States ────────────────────────────────────────────────────────────
-with st.expander("Squeeze State Reference — ALIGNED / PARTIAL / DEEP / NONE", expanded=False):
-    st.markdown("""
-Squeeze status combines 2H and 4H BW% to characterise the volatility compression state across timeframes.
-
-| State | Definition | IC Strategy |
-|---|---|---|
-| **ALIGNED** | 2H in SQUEEZE (2–3.5%) AND 4H in SQUEEZE | **Best IC entry of the cycle.** Both TFs coiled — IV is elevated relative to realised vol. Premium is rich. Use %B value to determine direction lean. Home score = 12/14. |
-| **PARTIAL** | 2H in SQUEEZE, 4H not in SQUEEZE | Good setup — 2H has compressed but 4H has not yet confirmed. Confidence will be MEDIUM or WEAK. Proceed but size conservatively. Home score = 10/14. |
-| **DEEP** | Either TF in EXTREME_SQUEEZE (<2%) | **Hard skip.** The coil is so tight that any release will be violent. The direction cannot be known from %B. An IC entered here risks a full-leg breach on the first significant move. |
-| **NONE** | 2H not in SQUEEZE or EXTREME_SQUEEZE | Standard operation — use %B zone for asymmetry, BW% regime for distance. |
-
-**Why squeeze + %B is the best IC entry setup:** when BW% is compressed, the market has been range-bound long enough that options sellers have bid down IV to match the low realised vol. The IC premium collected is therefore rich relative to the actual statistical move space available. When the bands eventually expand, they return to a wider range — but in the meantime, time decay is fast.
-""")
-
-# ── BW% Reference ────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 5 — REFERENCE EXPANDERS
+# ─────────────────────────────────────────────────────────────────────────────
 with st.expander("BW% Reference Tables — All 4 TFs", expanded=False):
     _ca, _cb = st.columns(2)
     with _ca:
-        st.markdown("**2H and 4H thresholds** (same table)")
+        st.markdown("**2H / 4H thresholds (primary + secondary TF)**")
         st.dataframe(pd.DataFrame([
-            ["< 2.0%",    "EXTREME_SQUEEZE", "Hard skip — DEEP squeeze veto"],
-            ["2.0–3.5%",  "SQUEEZE",         "Best IC entry if %B gives direction"],
-            ["3.5–4.5%",  "CALM",            "Sweet spot — tight distance (2.0× ATR)"],
-            ["4.5–5.6%",  "MOMENTUM",        "Directional — apply asymmetry"],
-            ["5.6–6.5%",  "HIGH_VOL",        "Widen both legs (2.5× ATR)"],
-            ["> 6.5%",    "MEAN_REVERT",     "Skip — adds +1 to skip score"],
-        ], columns=["BW%","Regime","IC Rule"]), use_container_width=True, hide_index=True)
+            ["< 2.0%",    "EXTREME_SQUEEZE", "50% lots · 1:1 ratio"],
+            ["2.0–3.5%",  "SQUEEZE",         "100% lots · ratio from %B"],
+            ["3.5–4.5%",  "CALM",            "100% lots · 1:1 most weeks"],
+            ["4.5–5.6%",  "MOMENTUM",        "100% lots · ratio from %B"],
+            ["5.6–6.5%",  "HIGH_VOL",        "50% lots · widen both legs"],
+            ["> 6.5%",    "MEAN_REVERT",     "50% lots · +1 stress condition"],
+        ], columns=["BW%","Regime","Sizing Rule"]), use_container_width=True, hide_index=True)
     with _cb:
-        st.markdown("**1D thresholds** (skip score + display only)")
+        st.markdown("**1D BW% (stress check only)**")
         st.dataframe(pd.DataFrame([
-            ["< 3.5%",    "SQUEEZE",     "—"],
-            ["3.5–5.6%",  "CALM",        "—"],
-            ["5.6–7.0%",  "MOMENTUM",    "Skip +1 if BW% > 5.6%"],
-            ["7.0–9.0%",  "HIGH_VOL",    "Skip +1"],
-            ["> 9.0%",    "MEAN_REVERT", "Skip +1"],
-        ], columns=["1D BW%","Regime","Skip Score"]), use_container_width=True, hide_index=True)
-        st.markdown("**1W thresholds** (macro skip score + display)")
+            ["< 3.5%",    "SQUEEZE",     "No stress"],
+            ["3.5–5.6%",  "CALM",        "No stress"],
+            ["> 5.6%",    "HIGH_VOL+",   "+1 stress condition (cond 1)"],
+        ], columns=["1D BW%","Regime","Effect"]), use_container_width=True, hide_index=True)
+        st.markdown("**1W BW% (macro check)**")
         st.dataframe(pd.DataFrame([
-            ["< 4.5%",    "EXTREME_SQ",  "Macro caution"],
-            ["4.5–6.5%",  "CALM",        "—"],
-            ["6.5–8.0%",  "MOMENTUM",    "—"],
-            ["8.0–10.2%", "HIGH_VOL",    "—"],
-            ["> 10.2%",   "MEAN_REVERT", "Skip +1 (cond 5)"],
-        ], columns=["1W BW%","Regime","Skip Score"]), use_container_width=True, hide_index=True)
+            ["< 4.5%",    "EXTREME_SQ",  "Macro caution — note it"],
+            ["4.5–6.5%",  "CALM",        "Clean macro"],
+            ["6.5–10.2%", "MOV / H_VOL", "No direct stress"],
+            ["> 10.2%",   "MEAN_REVERT", "→ 25% lots ALWAYS (cond 5)"],
+        ], columns=["1W BW%","Regime","Effect"]), use_container_width=True, hide_index=True)
 
-# ── Midweek Monitoring ────────────────────────────────────────────────────────
-with st.expander("Midweek Monitoring Rules — Post-Entry (4H + 2H)", expanded=False):
+with st.expander("Squeeze State Reference — ALIGNED / PARTIAL / DEEP / NONE", expanded=False):
+    st.markdown("""
+| State | What it means | What to do |
+|---|---|---|
+| **ALIGNED** | 2H + 4H both in SQUEEZE (2–3.5%) | Best entry of the cycle. Full lots, use %B for ratio direction. |
+| **PARTIAL** | 2H squeezed, 4H not yet | Good entry. Moderate confidence. Proceed at full lots. |
+| **DEEP** | Either TF in EXTREME_SQUEEZE (< 2%) | Cap at 50% lots. Force 1:1. Monitor daily for breakout direction — lean ratio once confirmed. |
+| **NONE** | 2H not in SQUEEZE or EXTREME_SQUEEZE | Standard operation — %B and regime drive everything. |
+
+**Why ALIGNED squeeze = best entry:** when BW% is compressed, options sellers have reduced IV to match low realised vol. The IC premium is rich relative to actual move space. Time decay works fast.
+""")
+
+with st.expander("Drift Risk Reference — CE Breach Probability by Regime", expanded=False):
     st.markdown(f"""
-These rules apply **after Tuesday EOD entry** using live 4H and 2H data. They are informational — they tell you when the IC is being stressed and whether to act. They do not change strikes retrospectively.
+CE short at **+3.5% OTM** · Nifty's 95th pctl weekly drift ≈ 3.51% → base breach probability ~5% (1 in 20 weeks).
 
-| Signal | Condition | Interpretation | Action |
+| 2H Regime | Risk Level | Approx CE Breach Prob | Why |
 |---|---|---|---|
-| CE leg threat | 4H %B > 0.85 | Price deep in upper zone — CE short under daily pressure | Reassess CE distance. Consider defensive roll if sustained. |
-| PE leg threat | 4H %B < 0.15 | Price deep in lower zone — PE short under daily pressure | Reassess PE distance. Consider defensive roll if sustained. |
-| Vol expansion | 4H BW > 1.5× entry BW in ≤ 2 days | Bands expanding rapidly post-entry — market chose direction | IC width may be insufficient. Size reduction or close weaker leg. |
-| Directional pressure | 2H walk_day ≥ 2 | 2H band walk developing after entry | Monitor threatened leg daily. Flag for early exit if walk reaches MODERATE. |
-| Ideal decay | 2H + 4H %B both 0.30–0.70 all week | Price oscillating near basis — no directional stress | No action needed. Theta working cleanly. Hold to expiry. |
+| CALM | BASE | ~5% | Bounded drift — no momentum |
+| SQUEEZE | ELEVATED | ~10% | Coiled spring — release move can be sharp |
+| MOMENTUM | ELEVATED | ~10% | Directional energy building |
+| EXTREME_SQUEEZE | VERY_HIGH | ~20% | Explosion imminent, size unknown |
+| HIGH_VOL | VERY_HIGH | ~20% | Big move already in progress |
+| MEAN_REVERT | VETO | Unmodelled | Snap-back risk — structural tail |
 
-**Entry BW% baseline:** store the 2H BW% at Tuesday EOD close. The vol expansion alert uses this stored value as the reference. If BW% at entry was {bw_2h:.2f}%, vol expansion triggers if 4H BW% exceeds {bw_2h*1.5:.2f}% within 2 days.
+**This is informational** — it tells you CE leg quality, not whether to enter. Lot sizing handles the entry size decision.
+""")
+
+with st.expander("Walk Reference — Consecutive Band Closes and IC Response", expanded=False):
+    st.markdown("""
+A walk = price closing at or beyond the Bollinger Band on consecutive bars. It signals a trend on that TF against your short leg.
+
+| Days | Label | 2H Action | 4H Effect |
+|---|---|---|---|
+| 1 | *(breach)* | Monitor only — single bar could be noise | — |
+| 2 | **MILD** | Lean ratio toward threatened leg | — |
+| 3 | **MODERATE** | Max ratio toward threatened leg | — |
+| 4+ | **STRONG** | Max ratio + reduce size | +1 stress condition if on 4H |
+
+**2H walk** drives ratio directly. **4H walk ≥ 4 days** adds +1 to stress score (condition 3 in the table above).
 """)
