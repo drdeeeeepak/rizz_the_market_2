@@ -169,98 +169,31 @@ elif src1 == 3:
 elif src1 == 2:
     skew_label = "1:1 Forced"; skew_note = f"Gap D2 ({gap_pct:.0f}% ATR) — moderate trend, flatten skew"; skew_col = "#d97706"; skew_forced = True
 
-# Source 3 — Expiry anchor with phase-aware logic
+# Source 3 — Anchor from rolled_positions.json (set by EOD job each Tuesday)
 import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
-anchor_mode = "NORMAL"
-try:
-    from data.live_fetcher import get_nifty_daily, get_nifty_daily_live
-    _now_ist        = _dt.datetime.now(pytz.timezone("Asia/Kolkata"))
-    _today          = _now_ist.date()
-    _cur_mins       = _now_ist.hour * 60 + _now_ist.minute
-    _PROV_START     = 15 * 60 + 15
-    _PROV_END       = 15 * 60 + 30
-    _days_since_tue = (_today.weekday() - 1) % 7
-    _last_tue       = _today - _dt.timedelta(days=_days_since_tue)
-
-    _is_tue         = (_last_tue == _today)
-    _use_live_daily = _is_tue and (_cur_mins >= _PROV_END)
-    _daily = get_nifty_daily_live() if _use_live_daily else get_nifty_daily()
-
-    if not _daily.empty:
-        _trading_dates  = set(_daily.index.date)
-        _is_expiry_day  = _is_tue  # today IS expiry day if it's Tuesday; _today in _trading_dates fails before EOD candle closes
-
-        def _find_anchor(target_tue):
-            for _off in range(7):
-                _c = target_tue - _dt.timedelta(days=_off)
-                if _c in _trading_dates:
-                    return _c
-            return None
-
-        def _load_anchor(date):
-            _h2 = _daily[_daily.index.date <= date].tail(15)
-            _cl = float(_h2["close"].iloc[-1])
-            _hh, _ll, _cc = _h2["high"].values, _h2["low"].values, _h2["close"].values
-            _tr = [max(_hh[i]-_ll[i], abs(_hh[i]-_cc[i-1]), abs(_ll[i]-_cc[i-1]))
-                   for i in range(1, len(_h2))]
-            _atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
-            return _cl, _atr
-
-        if _is_expiry_day and _cur_mins < _PROV_START:
-            anchor_mode = "PRE_EXPIRY"
-            _prev_tue = _last_tue - _dt.timedelta(days=7)
-            _ad = _find_anchor(_prev_tue)
-            if _ad:
-                tue_close, tue_atr = _load_anchor(_ad)
-                tue_anchor_date = str(_ad) + " (prior expiry)"
-                tue_anchor_available = True
-
-        elif _is_expiry_day and _PROV_START <= _cur_mins < _PROV_END:
-            anchor_mode = "PROVISIONAL"
-            tue_close = float(spot_now) if spot_now > 0 else 0.0
-            tue_anchor_date = f"PROVISIONAL {_now_ist.strftime('%H:%M')} IST"
-            tue_anchor_available = tue_close > 0
-            _hist_atr = _daily.tail(15)
-            _hh, _ll, _cc = _hist_atr["high"].values, _hist_atr["low"].values, _hist_atr["close"].values
-            _tr = [max(_hh[i]-_ll[i], abs(_hh[i]-_cc[i-1]), abs(_ll[i]-_cc[i-1]))
-                   for i in range(1, len(_hist_atr))]
-            tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
-
-        else:
-            anchor_mode = "POST_EXPIRY" if _is_expiry_day else "NORMAL"
-            _ad = _find_anchor(_last_tue)
-            if _ad:
-                tue_close, tue_atr = _load_anchor(_ad)
-                tue_anchor_date = str(_ad)
-                tue_anchor_available = True
-except Exception:
-    pass
-
-if not tue_anchor_available:
+from data.rolled_positions import load_rolled, rolled_strikes as _rs_fn
+_rolled = load_rolled()
+_anchor_val = _rolled.get("anchor")
+if _anchor_val and float(_anchor_val) > 0:
+    tue_close            = float(_anchor_val)
+    tue_anchor_date      = str(_rolled.get("anchor_date", ""))
+    tue_anchor_available = True
+    # ATR from daily data for DTB calculation
     try:
-        from analytics.constituent_ema import _load_anchors as _la
-        _anch = _la().get("NIFTY", {})
-        if _anch.get("close") and _anch.get("date"):
-            tue_close          = float(_anch["close"])
-            tue_atr            = float(_anch.get("atr", atr14))
-            tue_anchor_date    = str(_anch["date"]) + " (cached)"
-            tue_anchor_available = True
-            anchor_mode        = "NORMAL"
+        from data.live_fetcher import get_nifty_daily
+        _daily_atr = get_nifty_daily()
+        if not _daily_atr.empty and len(_daily_atr) >= 15:
+            _hh = _daily_atr["high"].values[-15:]
+            _ll = _daily_atr["low"].values[-15:]
+            _cc = _daily_atr["close"].values[-15:]
+            _tr = [max(_hh[i]-_ll[i], abs(_hh[i]-_cc[i-1]), abs(_ll[i]-_cc[i-1]))
+                   for i in range(1, len(_hh))]
+            tue_atr = float(_np.mean(_tr[-14:])) if len(_tr) >= 14 else float(_np.mean(_tr)) if _tr else 200.0
     except Exception:
-        pass
-
-if not tue_anchor_available:
-    _fb_tc = float(sig.get("tue_close", 0))
-    _fb_td = sig.get("tue_date", "")
-    if _fb_tc > 0 and _fb_td:
-        tue_close          = _fb_tc
-        tue_atr            = float(sig.get("tue_atr", atr14))
-        tue_anchor_date    = _fb_td + " (signals)"
-        tue_anchor_available = True
-        anchor_mode        = "NORMAL"
+        tue_atr = atr14
 
 # ── DTE & Threat Multiplier (Trading Session Upgraded) ───────────────────────
 try:
@@ -340,19 +273,13 @@ src3_pe = src3_ce = 0
 pe_sold = ce_sold = 0
 drift_pct = 0.0
 
-# ── Rolled positions ──────────────────────────────────────────────────────────
-from data.rolled_positions import (
-    load_rolled, maybe_update_anchors as _mua, rolled_strike as _rs,
-)
-import datetime as _dtrp, pytz as _pyrp
-_rolled = load_rolled()
-_ist_rp = _dtrp.datetime.now(_pyrp.timezone("Asia/Kolkata"))
-if _ist_rp.hour * 60 + _ist_rp.minute >= 15 * 60 + 15:
-    _rolled = _mua(spot_now, float(tue_close or 0), sig, _rolled)
-_ce_rolled   = _rolled.get("CE", {})
-_pe_rolled   = _rolled.get("PE", {})
-ce_is_rolled = bool(_ce_rolled.get("active"))
-pe_is_rolled = bool(_pe_rolled.get("active"))
+# ── Rolled positions (already loaded above as _rolled) ───────────────────────
+# Strikes come directly from rolled_positions.json — set by EOD job only
+_rp_ce = _rolled.get("ce_strike")
+_rp_pe = _rolled.get("pe_strike")
+_rp_history = _rolled.get("history", [])
+# is_rolled: True if there was a mid-cycle roll (history has >1 entry)
+_is_rolled = len(_rp_history) > 1
 
 def _moat_pull(m):
     if m >= 4: return 100
@@ -361,14 +288,9 @@ def _moat_pull(m):
     return 0
 
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
-    _pe_pull  = _moat_pull(_entry_put_moats)
-    _ce_pull  = _moat_pull(_entry_call_moats)
-    pe_sold   = int(round((tue_close * 0.96  + _pe_pull) / 50) * 50)
-    ce_sold   = int(round((tue_close * 1.035 - _ce_pull) / 50) * 50)
-    if ce_is_rolled and _ce_rolled.get("strike"):
-        ce_sold = int(_ce_rolled["strike"])
-    if pe_is_rolled and _pe_rolled.get("strike"):
-        pe_sold = int(_pe_rolled["strike"])
+    # Strikes from rolled_positions.json; fall back to formula if not set yet
+    ce_sold   = int(_rp_ce) if _rp_ce else int(round(tue_close * 1.035 / 50) * 50)
+    pe_sold   = int(_rp_pe) if _rp_pe else int(round(tue_close * 0.960 / 50) * 50)
     drift_pct = (spot_now - tue_close) / tue_close * 100
     if   drift_pct >= 3.0: src3_ce = 4
     elif drift_pct >= 2.5: src3_ce = 3
@@ -383,52 +305,32 @@ if tue_anchor_available and tue_close > 0 and spot_now > 0:
 _DEF_THR, _OFF_THR = 2.5, 1.8
 
 if tue_anchor_available and tue_close > 0 and spot_now > 0:
-    _ce_anc = float(_ce_rolled["anchor"]) if ce_is_rolled else float(tue_close)
-    _pe_anc = float(_pe_rolled["anchor"]) if pe_is_rolled else float(tue_close)
+    ce_def_trig_spot = int(round(tue_close * (1 + _DEF_THR / 100) / 50) * 50)
+    pe_def_trig_spot = int(round(tue_close * (1 - _DEF_THR / 100) / 50) * 50)
+    pe_off_trig_spot = int(round(tue_close * (1 + _OFF_THR / 100) / 50) * 50)
+    ce_off_trig_spot = int(round(tue_close * (1 - _OFF_THR / 100) / 50) * 50)
 
-    ce_def_trig_spot = int(round(_ce_anc * (1 + _DEF_THR / 100) / 50) * 50)
-    pe_def_trig_spot = int(round(_pe_anc * (1 - _DEF_THR / 100) / 50) * 50)
-    pe_off_trig_spot = int(round(_pe_anc * (1 + _OFF_THR / 100) / 50) * 50)
-    ce_off_trig_spot = int(round(_ce_anc * (1 - _OFF_THR / 100) / 50) * 50)
+    ce_adverse = max((spot_now - tue_close) / tue_close * 100, 0.0)
+    pe_adverse = max((tue_close - spot_now) / tue_close * 100, 0.0)
+    pe_favor   = max((spot_now - tue_close) / tue_close * 100, 0.0)
+    ce_favor   = max((tue_close - spot_now) / tue_close * 100, 0.0)
 
-    ce_adverse = max((spot_now - _ce_anc) / _ce_anc * 100, 0.0)
-    pe_adverse = max((_pe_anc - spot_now) / _pe_anc * 100, 0.0)
-    pe_favor   = max((spot_now - _pe_anc) / _pe_anc * 100, 0.0)
-    ce_favor   = max((_ce_anc - spot_now) / _ce_anc * 100, 0.0)
-
-    ce_def_fired = ce_adverse >= _DEF_THR and ce_threat_mult > 1.15
-    pe_def_fired = pe_adverse >= _DEF_THR and pe_threat_mult > 1.15
-    ce_def_near  = not ce_def_fired and ce_adverse >= _DEF_THR * 0.75
-    pe_def_near  = not pe_def_fired and pe_adverse >= _DEF_THR * 0.75
-    ce_off_fired = ce_favor >= _OFF_THR
-    pe_off_fired = pe_favor >= _OFF_THR
-
-    ce_def_roll_to = int(round(spot_now * 1.035 / 50) * 50)
-    pe_def_roll_to = int(round(spot_now * 0.960 / 50) * 50)
+    # Book state — pure price, closing basis (displayed intraday as live proxy)
+    ce_book_loss   = ce_adverse >= _DEF_THR
+    pe_book_loss   = pe_adverse >= _DEF_THR
+    ce_book_profit = ce_favor   >= _OFF_THR
+    pe_book_profit = pe_favor   >= _OFF_THR
 
     ce_off_pct, pe_off_pct = 3.5, 4.0
-    ce_off_roll_to = int(round(spot_now * (1 + ce_off_pct / 100) / 50) * 50)
-    pe_off_roll_to = int(round(spot_now * (1 - pe_off_pct / 100) / 50) * 50)
 else:
-    _ce_anc = _pe_anc = 0.0
     ce_adverse = pe_adverse = pe_favor = ce_favor = 0.0
-    ce_def_fired = pe_def_fired = ce_def_near = pe_def_near = False
-    ce_off_fired = pe_off_fired = False
+    ce_book_loss = pe_book_loss = ce_book_profit = pe_book_profit = False
     ce_def_trig_spot = pe_def_trig_spot = pe_off_trig_spot = ce_off_trig_spot = 0
-    ce_def_roll_to = pe_def_roll_to = ce_off_roll_to = pe_off_roll_to = 0
     ce_off_pct, pe_off_pct = 3.5, 4.0
 
 pe_canary = max(src1_pe, src2_pe, src3_pe)
 ce_canary = max(src1_ce, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)
-
-if _ist_rp.hour * 60 + _ist_rp.minute >= 15 * 60 + 15:
-    _rolled = _mua(spot_now, float(tue_close or 0), sig, _rolled,
-                   ce_canary=ce_canary, pe_canary=pe_canary)
-    _ce_rolled   = _rolled.get("CE", {})
-    _pe_rolled   = _rolled.get("PE", {})
-    ce_is_rolled = bool(_ce_rolled.get("active"))
-    pe_is_rolled = bool(_pe_rolled.get("active"))
 
 # ── India VIX ────────────────────────────────────────────────────────────────
 vix_current = vix_chg_pct = 0.0
@@ -450,36 +352,7 @@ if not vix_available:
         vix_rising = False
         _vix_is_fallback = True
 
-if tue_anchor_available and tue_close > 0 and spot_now > 0:
-    ce_f1 = ce_adverse >= _DEF_THR
-    ce_f2 = ce_threat_mult > 1.15
-    ce_f3 = ce_canary >= 2
-    ce_f4 = mom_score > 0
-    ce_fp = int(ce_f1) + int(ce_f2) + int(ce_f3) + int(ce_f4)
-
-    pe_f1 = pe_adverse >= _DEF_THR
-    pe_f2 = pe_threat_mult > 1.15
-    pe_f3 = pe_canary >= 2
-    pe_f4 = mom_score < 0
-    pe_fp = int(pe_f1) + int(pe_f2) + int(pe_f3) + int(pe_f4)
-
-    ce_book_loss    = ce_f1 and ce_f2 and ce_f3 and ce_f4
-    pe_book_loss    = pe_f1 and pe_f2 and pe_f3 and pe_f4
-
-    ce_prepare_loss = (not ce_book_loss) and (
-        ce_adverse >= _DEF_THR * 0.90 or (ce_adverse >= _DEF_THR * 0.80 and ce_fp >= 3))
-    pe_prepare_loss = (not pe_book_loss) and (
-        pe_adverse >= _DEF_THR * 0.90 or (pe_adverse >= _DEF_THR * 0.80 and pe_fp >= 3))
-
-    ce_book_profit    = ce_favor >= _OFF_THR
-    pe_book_profit    = pe_favor >= _OFF_THR
-    ce_prepare_profit = (not ce_book_profit) and ce_favor >= _OFF_THR * 0.75
-    pe_prepare_profit = (not pe_book_profit) and pe_favor >= _OFF_THR * 0.75
-else:
-    ce_f1=ce_f2=ce_f3=ce_f4=pe_f1=pe_f2=pe_f3=pe_f4=False
-    ce_fp=pe_fp=0
-    ce_book_loss=ce_prepare_loss=ce_book_profit=ce_prepare_profit=False
-    pe_book_loss=pe_prepare_loss=pe_book_profit=pe_prepare_profit=False
+# book states already computed in roll matrix pre-compute above
 
 PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#bbf7d0", 4:"#dcfce7"}
 CE_RED   = {0:"#b91c1c", 1:"#dc2626", 2:"#ef4444", 3:"#fca5a5", 4:"#fee2e2"}
@@ -543,81 +416,58 @@ def _chip(lvl, palette):
     return (f"<span style='background:{bg};color:{tc};border-radius:3px;"
             f"padding:2px 6px;font-size:14px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
 
-def _roll_state(bl, pl, bp, pp):
-    if bl: return "🔴 BOOK LOSS",    "#b91c1c"
-    if pl: return "⚠️ PREPARE LOSS", "#ea580c"
-    if bp: return "🟢 BOOK PROFIT",  "#0f766e"
-    if pp: return "🔵 PREP PROFIT",  "#0369a1"
-    return         "✅ HOLD",         "#1e3a5f"
+def _roll_state(bl, bp):
+    if bl: return "🔴 BOOK LOSS",   "#b91c1c"
+    if bp: return "🟢 BOOK PROFIT", "#0f766e"
+    return         "✅ HOLD",        "#1e3a5f"
 
-pe_rs_txt, pe_rs_col = _roll_state(pe_book_loss, pe_prepare_loss, pe_book_profit, pe_prepare_profit)
-ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_prepare_loss, ce_book_profit, ce_prepare_profit)
+pe_rs_txt, pe_rs_col = _roll_state(pe_book_loss, pe_book_profit)
+ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_book_profit)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ROLL MATRIX — Defensive Book Loss · Offensive Book Profit
 # ══════════════════════════════════════════════════════════════════════════════
 show_page_header(spot, signals_ts)
 
-if anchor_mode == "PROVISIONAL":
-    _prov_ce = int(round(spot_now * 1.035 / 50) * 50)
-    _prov_pe = int(round(spot_now * 0.960 / 50) * 50)
-    st.markdown(
-        f"<div style='background:#6d28d9;border-radius:8px;padding:14px 20px;"
-        f"margin-bottom:12px;border:2px solid #a78bfa;'>"
-        f"<div style='color:white;font-size:14px;font-weight:700;opacity:0.85;'>"
-        f"🟣 EXPIRY CLOSING WINDOW · 3:15–3:30 PM IST</div>"
-        f"<div style='color:white;font-size:20px;font-weight:900;margin:4px 0;'>"
-        f"PROVISIONAL STRIKES — NEXT WEEK</div>"
-        f"<div style='color:white;font-size:14px;'>"
-        f"Anchor = CMP {spot_now:,.0f} · "
-        f"Sell CE → <b>{_prov_ce:,}</b> (+3.5%) · "
-        f"Sell PE → <b>{_prov_pe:,}</b> (−4.0%)</div>"
-        f"<div style='color:rgba(255,255,255,0.65);font-size:14px;margin-top:4px;'>"
-        f"Anchor locks to today's EOD close after 3:30 PM</div>"
-        f"</div>", unsafe_allow_html=True)
-elif anchor_mode == "PRE_EXPIRY":
-    st.markdown(
-        f"<div style='background:#1e3a5f;border-radius:8px;padding:10px 16px;"
-        f"margin-bottom:10px;border:1px solid #3b82f6;'>"
-        f"<div style='color:#bfdbfe;font-size:12px;'>"
-        f"📅 <b>Expiry day</b> — monitoring open position against prior anchor "
-        f"<b>{tue_anchor_date}</b> ({tue_close:,.0f}). "
-        f"Provisional new-week strikes appear at <b>3:15 PM IST</b>.</div>"
-        f"</div>", unsafe_allow_html=True)
-
 ui.section_header("Roll Matrix",
-                  "Four-filter defensive gate · Offensive theta harvest · Exact roll-to strikes")
+                  "EOD price-based · Unified anchor · Book Loss ≥2.5% · Book Profit ≥1.8%")
 
 with st.expander("Roll Matrix — Reference", expanded=False):
-    st.markdown(
-        "**BOOK LOSS (Defensive Roll)**\n\n"
-        "All 6 filters must pass simultaneously:\n\n"
-        "1. **Drift ≥ 2.5%** adverse from anchor close\n"
-        "2. **Threat Multiplier > 1.15** — move is institutionally backed\n"
-        "3. **Canary ≥ Day 2** on the threatened side\n"
-        "4. **Momentum agrees** — mom_score > 0 for CE threat · mom_score < 0 for PE threat\n"
-        "5. **Days to Breach ≤ 1.5d** — spot is close enough to the trigger that volatility-adjusted pace matters\n"
-        "6. **VIX regime confirms** — VIX↑ + mkt↓ confirms PE loss (fear-driven); "
-        "VIX↑ + mkt↑ warns CE may revert (use as caution, not confirmation)\n\n"
-        "Action: Buy back losing leg · Roll OUT 3.5% (CE) / 4% (PE) from CMP (nearest 50pt)\n\n"
-        "---\n\n"
-        "**PREPARE TO BOOK LOSS:** Drift ≥ 2.25% (90%) regardless of filters, "
-        "OR drift ≥ 2.0% (80%) + 3 of 4 core filters pass.\n\n"
-        "---\n\n"
-        "**BOOK PROFIT (Offensive Roll):** Favorable drift ≥ 1.8%\n\n"
-        "Action: Buy back dead leg · Roll IN 3.5% (CE) / 4% (PE) from CMP (nearest 50pt)\n\n"
-        "**PREPARE TO BOOK PROFIT:** Favorable drift ≥ 1.35% (75% of 1.8%)\n\n"
-        "---\n\n"
-        "**Threat Multiplier (RTR Proxy)** = |daily return %| × Relative True Range\n\n"
-        "RTR = Today's High-Low True Range ÷ 14-day Average True Range (ATR).\n"
-        "Filters out low-volume drift and intraday noise. "
-        "> 1.15 = institutional backing confirmed. Below 1.15 = drift/noise.\n\n"
-        "---\n\n"
-        "**Days to Breach (VIX-Adjusted)**\n\n"
-        "How many trading days at the *current* or *VIX-expected* pace before spot reaches the defensive trigger.\n\n"
-        "Formula: gap% ÷ max(actual daily pace%, VIX-expected pace%)\n"
-        "- Lower number = more urgency. Warns early if implied volatility spikes, even on flat days.\n"
-    )
+    st.markdown("""
+**Anchor** — Tuesday's EOD close, set by the EOD job at 3:35 PM. Both CE and PE always share the same anchor.
+
+**Entry strikes** (from anchor):
+- CE sold at anchor + 3.5% (nearest 50pt)
+- PE sold at anchor − 4.0% (nearest 50pt)
+
+---
+
+**BOOK LOSS — drift ≥ 2.5% adverse (EOD closing basis)**
+
+| Direction | Trigger |
+|---|---|
+| CE LOSS | EOD close ≥ anchor + 2.5% (market moved up) |
+| PE LOSS | EOD close ≤ anchor − 2.5% (market moved down) |
+
+Action: New anchor = that day's EOD close. Both CE and PE strikes recalculated.
+
+---
+
+**BOOK PROFIT — drift ≥ 1.8% favorable (EOD closing basis)**
+
+| Direction | Trigger |
+|---|---|
+| PE PROFIT | EOD close ≥ anchor + 1.8% (PE premium dead, CE still fine) |
+| CE PROFIT | EOD close ≤ anchor − 1.8% (CE premium dead, PE still fine) |
+
+Action: Same as loss — new anchor = EOD close, both strikes reset.
+
+---
+
+**Priority:** LOSS events take priority over PROFIT (2.5% adverse implies 1.8% favorable on the other side, but the loss is what drives the roll).
+
+**Cycle:** Starts at Tuesday EOD. History cleared every Tuesday when new anchor is set.
+""")
 
 # Define basic DTB strings for the top metrics card (Showing Background Math)
 _vix_floor = vix_current if (vix_current and vix_current > 0) else 15.0
@@ -808,208 +658,129 @@ if not tue_anchor_available:
         st.warning("⚠️ Expiry anchor unavailable. Click ↻ refresh to reload data.")
 else:
     # ── Entry / rolled strike card ────────────────────────────────────────────
-    _pe_pull = _moat_pull(_entry_put_moats)
-    _ce_pull = _moat_pull(_entry_call_moats)
-    _pe_base = int(round(tue_close * 0.96  / 50) * 50)
-    _ce_base = int(round(tue_close * 1.035 / 50) * 50)
-    _pe_moat_warn = put_moats < _entry_put_moats and not pe_is_rolled
-    _ce_moat_warn = call_moats < _entry_call_moats and not ce_is_rolled
-
-    if pe_is_rolled:
-        _pe_strike_note = (f"🔄 ROLLED {_pe_rolled.get('roll_type','?')} · "
-                           f"anchor {_pe_rolled.get('anchor',0):,.0f} · "
-                           f"date {_pe_rolled.get('anchor_date','?')}")
-    else:
-        _pe_strike_note = (f"−4% base {_pe_base:,}"
-                           + (f" + {_pe_pull}pt moat pull ({_entry_put_moats} moats at entry)"
-                              if _pe_pull else " · 0 moats at entry"))
-    if ce_is_rolled:
-        _ce_strike_note = (f"🔄 ROLLED {_ce_rolled.get('roll_type','?')} · "
-                           f"anchor {_ce_rolled.get('anchor',0):,.0f} · "
-                           f"date {_ce_rolled.get('anchor_date','?')}")
-    else:
-        _ce_strike_note = (f"+3.5% base {_ce_base:,}"
-                           + (f" − {_ce_pull}pt moat pull ({_entry_call_moats} moats at entry)"
-                              if _ce_pull else " · 0 moats at entry"))
-
-    _card_title = "ENTRY STRIKES"
-    if ce_is_rolled or pe_is_rolled:
-        _rolled_sides = " + ".join(
-            (["CE"] if ce_is_rolled else []) + (["PE"] if pe_is_rolled else []))
-        _card_title = f"ENTRY STRIKES · {_rolled_sides} ROLLED"
+    _card_title = "ENTRY STRIKES" + (" · ROLLED" if _is_rolled else "")
+    _last_roll  = _rp_history[-1] if _rp_history else {}
+    _roll_note  = (f"🔄 {_last_roll.get('event','?')} on {_last_roll.get('date','?')} · "
+                   f"anchor {_last_roll.get('old_anchor',0):,.0f} → {_last_roll.get('new_anchor',0):,.0f}"
+                   if _is_rolled else "")
 
     st.markdown(
         f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
         f"border:1px solid #1e293b;margin-bottom:10px;'>"
         f"<div style='font-size:13px;font-weight:700;color:#94a3b8;"
         f"letter-spacing:1.5px;margin-bottom:8px;'>{_card_title}</div>"
-        f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
-        # PE strike
+        + (f"<div style='font-size:12px;color:#fbbf24;margin-bottom:8px;'>{_roll_note}</div>"
+           if _roll_note else "")
+        + f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
         f"<div>"
         f"<span style='font-size:14px;color:#94a3b8;'>PE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;"
-        f"color:{'#fbbf24' if pe_is_rolled else '#16a34a'};'>{pe_sold:,}</span>"
-        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_pe_strike_note}</div>"
-        + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
-           f"⚠️ PE moats {_entry_put_moats}→{put_moats} · Support thinning · Strike locked</div>"
-           if _pe_moat_warn else "")
-        + f"</div>"
-        # CE strike
+        f"<span style='font-size:20px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#16a34a'};'>"
+        f"{pe_sold:,}</span>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>"
+        f"anchor {tue_close:,.0f} − 4.0%</div></div>"
         f"<div>"
         f"<span style='font-size:14px;color:#94a3b8;'>CE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;"
-        f"color:{'#fbbf24' if ce_is_rolled else '#dc2626'};'>{ce_sold:,}</span>"
-        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>{_ce_strike_note}</div>"
-        + (f"<div style='font-size:14px;font-weight:700;color:#f59e0b;margin-top:3px;'>"
-           f"⚠️ CE moats {_entry_call_moats}→{call_moats} · Resistance weakening · Strike locked</div>"
-           if _ce_moat_warn else "")
-        + f"</div>"
-        f"</div>"
-        f"</div>",
+        f"<span style='font-size:20px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#dc2626'};'>"
+        f"{ce_sold:,}</span>"
+        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>"
+        f"anchor {tue_close:,.0f} + 3.5%</div></div>"
+        f"</div></div>",
         unsafe_allow_html=True)
-    def _frow(label, passed, value_str):
-        icon = "✅" if passed else "❌"
-        col  = "#14532d" if passed else "#7f1d1d"
-        return (
-            f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
-            f"<span style='font-size:13px;'>{icon}</span>"
-            f"<span style='font-size:15px;color:#000000;flex:1;'>{label}</span>"
-            f"<span style='font-size:16px;font-weight:700;color:{col};'>{value_str}</span>"
-            f"</div>"
-        )
 
-    def _side_card(side_tag, palette,
-                   book_loss, prep_loss, book_profit, prep_profit,
-                   adverse, favor,
-                   def_roll_to, off_roll_to, def_trig_spot, off_trig_spot,
-                   f1, f2, f3, f4, fp, canary_val, is_ce,
-                   rolled_info=None):
-        _roll_pct = "3.5%" if is_ce else "4%"
-        if book_loss:
-            bg    = palette[0]
-            state = "🔴 BOOK LOSS — ROLL OUT"
-            action = f"Buy back losing leg · Roll OUT {_roll_pct} from CMP → {def_roll_to:,}"
-        elif prep_loss:
-            bg    = "#ea580c"
-            state = "⚠️ PREPARE TO BOOK LOSS"
-            action = f"Approaching threshold · {_DEF_THR - adverse:.2f}% to trigger · Spot {def_trig_spot:,}"
-        elif book_profit:
-            bg    = "#0f766e"
-            state = "🟢 BOOK PROFIT — ROLL IN"
-            action = f"Buy back dead leg · Roll IN {_roll_pct} from CMP → {off_roll_to:,}"
-        elif prep_profit:
-            bg    = "#0369a1"
-            state = "🔵 PREPARE TO BOOK PROFIT"
-            action = f"Favorable drift building · {_OFF_THR - favor:.2f}% to trigger · Spot {off_trig_spot:,}"
-        else:
-            bg    = palette[4] if adverse < 0.5 and favor < 0.5 else palette[3]
-            state = "✅ HOLD"
-            action = (f"Def gap {_DEF_THR - adverse:.2f}% · Off gap {_OFF_THR - favor:.2f}% · "
-                      f"Def trig {def_trig_spot:,} · Off trig {off_trig_spot:,}")
-
-        txt_col = "#1e293b" if bg in _LIGHT_COLS else "white"
-
-        rolled_banner = ""
-        if rolled_info and rolled_info.get("active"):
-            rolled_banner = (
-                f"<div style='background:rgba(0,0,0,0.30);border-radius:6px;"
-                f"padding:5px 10px;margin-bottom:8px;"
-                f"font-size:11px;font-weight:700;color:#fbbf24;'>"
-                f"🔄 ROLLED {rolled_info.get('roll_type','?')} · "
-                f"anchor {float(rolled_info.get('anchor') or 0):,.0f} · "
-                f"date {rolled_info.get('anchor_date','?')}"
+    # ── Cycle history card ────────────────────────────────────────────────────
+    if _rp_history:
+        _EV_LABEL = {
+            "EXPIRY_ANCHOR": ("📅 EXPIRY ANCHOR", "#1e3a5f"),
+            "CE_LOSS":       ("🔴 CE BOOK LOSS",  "#7f1d1d"),
+            "PE_LOSS":       ("🔴 PE BOOK LOSS",  "#7f1d1d"),
+            "CE_PROFIT":     ("🟢 CE BOOK PROFIT","#0f766e"),
+            "PE_PROFIT":     ("🟢 PE BOOK PROFIT","#0f766e"),
+        }
+        _hist_rows = ""
+        for _he in reversed(_rp_history):
+            _el, _ec = _EV_LABEL.get(_he.get("event",""), ("?", "#334155"))
+            _old_a   = _he.get("old_anchor")
+            _anc_str = (f"{_old_a:,.0f} → {_he.get('new_anchor',0):,.0f}"
+                        if _old_a else f"{_he.get('new_anchor',0):,.0f} (new cycle)")
+            _hist_rows += (
+                f"<div style='display:flex;gap:10px;align-items:center;padding:7px 10px;"
+                f"border-radius:6px;background:{_ec}22;margin:3px 0;border-left:3px solid {_ec};'>"
+                f"<span style='font-size:13px;font-weight:700;color:#e2e8f0;min-width:90px;'>"
+                f"{_he.get('date','?')}</span>"
+                f"<span style='font-size:13px;font-weight:700;color:{_ec};min-width:150px;'>{_el}</span>"
+                f"<span style='font-size:13px;color:#94a3b8;'>Anchor {_anc_str}</span>"
+                f"<span style='font-size:13px;color:#64748b;margin-left:auto;'>"
+                f"CE {_he.get('new_ce',0):,} · PE {_he.get('new_pe',0):,}</span>"
                 f"</div>"
             )
+        st.markdown(
+            f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
+            f"border:1px solid #1e293b;margin-bottom:10px;'>"
+            f"<div style='font-size:12px;font-weight:700;color:#94a3b8;"
+            f"letter-spacing:1.5px;margin-bottom:8px;'>CYCLE HISTORY · {tue_anchor_date}</div>"
+            + _hist_rows + "</div>",
+            unsafe_allow_html=True)
+    def _side_card(side_tag, palette, book_loss, book_profit, adverse, favor,
+                   def_trig_spot, off_trig_spot, is_ce):
+        if book_loss:
+            bg     = palette[0]
+            state  = "🔴 BOOK LOSS"
+            action = f"EOD close crossed {_DEF_THR}% adverse · Roll BOTH strikes from new anchor"
+        elif book_profit:
+            bg     = "#0f766e"
+            state  = "🟢 BOOK PROFIT"
+            action = f"EOD close crossed {_OFF_THR}% favorable · Roll BOTH strikes from new anchor"
+        else:
+            bg     = palette[4] if adverse < 0.5 and favor < 0.5 else palette[3]
+            state  = "✅ HOLD"
+            action = (f"Loss trig {def_trig_spot:,} ({_DEF_THR - adverse:.2f}% away) · "
+                      f"Profit trig {off_trig_spot:,} ({_OFF_THR - favor:.2f}% away)")
 
+        txt_col  = "#1e293b" if bg in _LIGHT_COLS else "white"
+        adv_str  = f"{adverse:.2f}% {'above' if is_ce else 'below'} anchor"
+        fav_str  = f"{favor:.2f}%  {'below' if is_ce else 'above'} anchor"
         vix_line = ""
         if vix_available and vix_rising:
             if is_ce:
-                vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
-                            f"background:rgba(0,0,0,0.25);color:#fef08a;"
-                            f"font-size:14px;font-weight:700;'>"
-                            f"⚠️ VIX RISING {vix_chg_pct:+.1f}% — CAUTION: up moves may revert</div>")
+                vix_line = (f"<div style='margin-top:6px;padding:4px 8px;border-radius:4px;"
+                            f"background:rgba(0,0,0,0.25);color:#fef08a;font-size:13px;font-weight:700;'>"
+                            f"⚠️ VIX RISING {vix_chg_pct:+.1f}% — up moves may revert</div>")
             else:
-                vix_line = (f"<div style='margin-top:4px;padding:4px 8px;border-radius:4px;"
-                            f"background:rgba(0,0,0,0.25);color:#bfdbfe;"
-                            f"font-size:14px;font-weight:700;'>"
-                            f"🔵 VIX RISING {vix_chg_pct:+.1f}% — EXTRA CONFIRMATION: fear-driven</div>")
-
-        scorecard = (
-            _frow("Drift ≥ 2.5% adverse",  f1, f"{adverse:.2f}%")
-            + _frow("Threat Mult > 1.15",   f2, f"{ce_threat_mult:.2f}" if is_ce else f"{pe_threat_mult:.2f}")
-            + _frow(f"Canary ≥ Day 2 ({canary_val}/4)", f3, f"Day {canary_val}")
-            + _frow(f"Mom {'> 0 bullish' if is_ce else '< 0 bearish'}", f4, f"{mom_score:+.1f}%ATR")
-        )
+                vix_line = (f"<div style='margin-top:6px;padding:4px 8px;border-radius:4px;"
+                            f"background:rgba(0,0,0,0.25);color:#bfdbfe;font-size:13px;font-weight:700;'>"
+                            f"🔵 VIX RISING {vix_chg_pct:+.1f}% — fear-driven move</div>")
         st.markdown(
             f"<div style='background:{bg};border-radius:10px;padding:14px 16px;margin-bottom:8px;'>"
-            f"<div style='color:{txt_col};font-size:14px;font-weight:700;"
-            f"opacity:0.8;letter-spacing:1px;'>{side_tag}</div>"
-            f"<div style='color:{txt_col};font-size:18px;font-weight:900;margin:3px 0 6px;'>{state}</div>"
-            + rolled_banner
-            + f"<div style='color:{txt_col};font-size:12px;font-weight:700;"
-            f"opacity:0.9;margin-bottom:8px;'>{action}</div>"
-            f"<div style='background:rgba(0,0,0,0.20);border-radius:6px;padding:8px 10px;'>"
-            f"<div style='color:#e2e8f0;font-size:13px;font-weight:700;"
-            f"margin-bottom:4px;letter-spacing:1px;'>FILTER SCORECARD — {fp}/4 PASS</div>"
-            + scorecard + f"</div>" + vix_line + f"</div>",
+            f"<div style='color:{txt_col};font-size:13px;font-weight:700;opacity:0.8;letter-spacing:1px;'>"
+            f"{side_tag}</div>"
+            f"<div style='color:{txt_col};font-size:20px;font-weight:900;margin:4px 0 6px;'>{state}</div>"
+            f"<div style='color:{txt_col};font-size:12px;opacity:0.9;margin-bottom:8px;'>{action}</div>"
+            f"<div style='background:rgba(0,0,0,0.18);border-radius:6px;padding:8px 10px;"
+            f"font-size:13px;color:{txt_col};'>"
+            f"Adverse {adv_str} · Favorable {fav_str}"
+            f"</div>" + vix_line + f"</div>",
             unsafe_allow_html=True)
 
     col_ce, col_pe = st.columns(2)
     with col_ce:
         _side_card("CE · CALL SIDE", CE_RED,
-                   ce_book_loss, ce_prepare_loss, ce_book_profit, ce_prepare_profit,
-                   ce_adverse, ce_favor,
-                   ce_def_roll_to, ce_off_roll_to, ce_def_trig_spot, ce_off_trig_spot,
-                   ce_f1, ce_f2, ce_f3, ce_f4, ce_fp, ce_canary, is_ce=True,
-                   rolled_info=_ce_rolled)
+                   ce_book_loss, ce_book_profit, ce_adverse, ce_favor,
+                   ce_def_trig_spot, ce_off_trig_spot, is_ce=True)
     with col_pe:
         _side_card("PE · PUT SIDE", PE_GREEN,
-                   pe_book_loss, pe_prepare_loss, pe_book_profit, pe_prepare_profit,
-                   pe_adverse, pe_favor,
-                   pe_def_roll_to, pe_off_roll_to, pe_def_trig_spot, pe_off_trig_spot,
-                   pe_f1, pe_f2, pe_f3, pe_f4, pe_fp, pe_canary, is_ce=False,
-                   rolled_info=_pe_rolled)
+                   pe_book_loss, pe_book_profit, pe_adverse, pe_favor,
+                   pe_def_trig_spot, pe_off_trig_spot, is_ce=False)
 
     # ── Strike-Path Corridor ──────────────────────────────────────────────────
     if ema_vals and spot_now > 0 and tue_anchor_available:
-        _all_emas   = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
-        _anc        = float(tue_close)
-        _pct_anc    = lambda v: (float(v) - _anc) / _anc * 100 if _anc > 0 else 0
-
-        _ce_prep_trig = int(round(_anc * (1 + _DEF_THR * 0.90 / 100) / 50) * 50)
-        _pe_prep_trig = int(round(_anc * (1 - _DEF_THR * 0.90 / 100) / 50) * 50)
-        _ce_prep_prof = int(round(_anc * (1 - _OFF_THR * 0.75 / 100) / 50) * 50)
-        _pe_prep_prof = int(round(_anc * (1 + _OFF_THR * 0.75 / 100) / 50) * 50)
-
-        def _sub(kind, val, extra=""):
-            pct = _pct_anc(val)
-            base = {
-                "neutral":      "anchor",
-                "cmp":          "current price",
-                "above":        "moat EMA",
-                "below":        "moat EMA",
-                "sold_ce":      f"CE sold · {extra}" if extra else "CE sold",
-                "sold_pe":      f"PE sold · {extra}" if extra else "PE sold",
-                "book_loss":    "📕 BOOK LOSS",
-                "prep_loss":    "⚠️ PREPARE LOSS",
-                "book_profit":  "📗 BOOK PROFIT",
-                "prep_profit":  "🔵 PREP PROFIT",
-            }.get(kind, kind)
-            return f"{pct:+.2f}% · {base}"
-
-        def _col(kind):
-            return {"neutral":"anchor","cmp":"blue",
-                    "above":"red","sold_ce":"sold_ce",
-                    "below":"green","sold_pe":"sold_pe",
-                    "book_loss":"loss","prep_loss":"loss",
-                    "book_profit":"profit","prep_profit":"profit"}.get(kind,"default")
+        _all_emas = [(p, float(v)) for p, v in ema_vals.items() if v and float(v) > 0]
+        _anc      = float(tue_close)
+        _pct_anc  = lambda v: (float(v) - _anc) / _anc * 100 if _anc > 0 else 0
 
         _ce_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
         if ce_def_trig_spot > 0:
-            _ce_items.append(("PREP LOSS",  float(_ce_prep_trig),   "prep_loss"))
-            _ce_items.append(("BOOK LOSS",  float(ce_def_trig_spot), "book_loss"))
+            _ce_items.append(("BOOK LOSS",   float(ce_def_trig_spot), "book_loss"))
         if ce_off_trig_spot > 0:
-            _ce_items.append(("PREP PROFIT", float(_ce_prep_prof),   "prep_profit"))
             _ce_items.append(("BOOK PROFIT", float(ce_off_trig_spot), "book_profit"))
         if ce_sold > 0:
             for p, v in _all_emas:
@@ -1023,10 +794,8 @@ else:
 
         _pe_items = [("ANCHOR", _anc, "neutral"), ("CMP", float(spot_now), "cmp")]
         if pe_def_trig_spot > 0:
-            _pe_items.append(("PREP LOSS",  float(_pe_prep_trig),   "prep_loss"))
-            _pe_items.append(("BOOK LOSS",  float(pe_def_trig_spot), "book_loss"))
+            _pe_items.append(("BOOK LOSS",   float(pe_def_trig_spot), "book_loss"))
         if pe_off_trig_spot > 0:
-            _pe_items.append(("PREP PROFIT", float(_pe_prep_prof),   "prep_profit"))
             _pe_items.append(("BOOK PROFIT", float(pe_off_trig_spot), "book_profit"))
         if pe_sold > 0:
             for p, v in _all_emas:
@@ -1046,9 +815,7 @@ else:
             "sold_ce":     ("#1e293b", "white"),
             "sold_pe":     ("#1e293b", "white"),
             "book_loss":   ("#7f1d1d", "white"),
-            "prep_loss":   ("#ea580c", "white"),
             "book_profit": ("#0f766e", "white"),
-            "prep_profit": ("#0369a1", "white"),
         }
 
         def _render_vc(title, items):

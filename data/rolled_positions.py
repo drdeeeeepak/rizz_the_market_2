@@ -1,39 +1,32 @@
 """
-Per-side rolled-anchor positions.
+Unified anchor for Iron Condor position management.
 
 Storage: data/rolled_positions.json
 Format:
   {
-    "CE": {"active": bool, "anchor": float, "strike": int,
-           "anchor_date": "YYYY-MM-DD", "roll_type": "LOSS"|"PROFIT"},
-    "PE": { same },
-    "last_expiry_clear": "YYYY-MM-DD" | null,
-    "provisional_anchor": float | null
+    "anchor":       float,          # current anchor price
+    "anchor_date":  "YYYY-MM-DD",  # date anchor was set
+    "ce_strike":    int,            # anchor × 1.035 nearest 50pt
+    "pe_strike":    int,            # anchor × 0.960 nearest 50pt
+    "history":      [...]           # current cycle events (cleared each Tuesday)
   }
 
-Rules (per spec):
-- At 3:15 PM IST each trading day, if BOOK_LOSS or BOOK_PROFIT is still active
-  on a side, that day's 3:15 PM spot becomes the new anchor for that side.
-- New rolled strike = anchor × 1.035 (CE) or × 0.960 (PE), nearest 50pt.
-- Expiry = Tuesday of each week; if Tuesday is a holiday use the last trading day before.
-- At 3:16 PM on expiry day: both sides clear; spot becomes provisional anchor.
+Rules:
+- EOD job on Tuesday: calls set_expiry_anchor(eod_close, date) → starts new cycle
+- EOD job Mon/Wed/Thu/Fri: calls eod_update(eod_close, date) → checks book levels
+- Book loss:   EOD close drifts ≥ 2.5% adverse from anchor → roll both strikes
+- Book profit: EOD close drifts ≥ 1.8% favorable from anchor → roll both strikes
+- Both sides always reset together from unified anchor = that day's EOD close
+- No intraday triggers. No filter gates. Pure price, EOD only.
 """
 
 import json
 import datetime
 from pathlib import Path
-import pytz
 
-_PATH = Path(__file__).parent / "rolled_positions.json"
-_IST  = pytz.timezone("Asia/Kolkata")
-
-_DEF_THR = 2.5   # % adverse for BOOK_LOSS
-_OFF_THR = 1.8   # % favorable for BOOK_PROFIT
-
-_EMPTY_SIDE: dict = {
-    "active": False, "anchor": None, "strike": None,
-    "anchor_date": None, "roll_type": None,
-}
+_PATH    = Path(__file__).parent / "rolled_positions.json"
+_DEF_THR = 2.5   # % adverse → BOOK LOSS
+_OFF_THR = 1.8   # % favorable → BOOK PROFIT
 
 
 # ── I/O ───────────────────────────────────────────────────────────────────────
@@ -42,17 +35,16 @@ def load_rolled() -> dict:
     try:
         if _PATH.exists():
             d = json.loads(_PATH.read_text())
-            d.setdefault("CE", dict(_EMPTY_SIDE))
-            d.setdefault("PE", dict(_EMPTY_SIDE))
-            d.setdefault("last_expiry_clear", None)
-            d.setdefault("provisional_anchor", None)
+            d.setdefault("anchor",      None)
+            d.setdefault("anchor_date", None)
+            d.setdefault("ce_strike",   None)
+            d.setdefault("pe_strike",   None)
+            d.setdefault("history",     [])
             return d
     except Exception:
         pass
-    return {
-        "CE": dict(_EMPTY_SIDE), "PE": dict(_EMPTY_SIDE),
-        "last_expiry_clear": None, "provisional_anchor": None,
-    }
+    return {"anchor": None, "anchor_date": None,
+            "ce_strike": None, "pe_strike": None, "history": []}
 
 
 def save_rolled(data: dict) -> None:
@@ -60,131 +52,104 @@ def save_rolled(data: dict) -> None:
     _PATH.write_text(json.dumps(data, indent=2, default=str))
 
 
-# ── Expiry ────────────────────────────────────────────────────────────────────
+# ── Strike calculation ─────────────────────────────────────────────────────────
 
-def get_expiry_date(ref_date: datetime.date | None = None) -> datetime.date:
-    """Return this/next Tuesday (weekday=1). If today IS Tuesday, return today."""
-    if ref_date is None:
-        ref_date = datetime.date.today()
-    days_ahead = (1 - ref_date.weekday()) % 7   # 0 when today is Tuesday
-    return ref_date + datetime.timedelta(days=days_ahead)
+def rolled_strikes(anchor: float) -> tuple:
+    """Return (ce_strike, pe_strike) from anchor price."""
+    ce = int(round(anchor * 1.035 / 50) * 50)
+    pe = int(round(anchor * 0.960 / 50) * 50)
+    return ce, pe
 
 
-# ── Book-state logic ──────────────────────────────────────────────────────────
+# ── Roll event check ─────────────────────────────────────────────────────────
 
-def _side_book_state(
-    spot: float, anchor: float, side: str,
-    threat_mult: float, canary_count: int, mom_score: float,
-) -> str:
+def check_roll_event(eod_close: float, anchor: float) -> str | None:
     """
-    Returns one of: BOOK_LOSS | PREPARE_LOSS | BOOK_PROFIT | PREPARE_PROFIT | HOLD.
-    canary_count is the per-side canary day (0-4).
+    Pure price check against current anchor.
+    Returns event string or None.
+    Priority: LOSS events before PROFIT events.
     """
-    if anchor <= 0 or spot <= 0:
-        return "HOLD"
-
-    if side == "CE":
-        adv = max((spot - anchor) / anchor * 100, 0.0)
-        fav = max((anchor - spot) / anchor * 100, 0.0)
-        mom_ok = mom_score > 0
-    else:
-        adv = max((anchor - spot) / anchor * 100, 0.0)
-        fav = max((spot - anchor) / anchor * 100, 0.0)
-        mom_ok = mom_score < 0
-
-    f1 = adv >= _DEF_THR
-    f2 = threat_mult > 1.15
-    f3 = canary_count >= 2
-    f4 = mom_ok
-    fp = int(f1) + int(f2) + int(f3) + int(f4)
-
-    if f1 and f2 and f3 and f4:
-        return "BOOK_LOSS"
-    if adv >= _DEF_THR * 0.90 or (adv >= _DEF_THR * 0.80 and fp >= 3):
-        return "PREPARE_LOSS"
-    if fav >= _OFF_THR:
-        return "BOOK_PROFIT"
-    if fav >= _OFF_THR * 0.75:
-        return "PREPARE_PROFIT"
-    return "HOLD"
+    if anchor <= 0 or eod_close <= 0:
+        return None
+    drift = (eod_close - anchor) / anchor * 100
+    if drift >= _DEF_THR:   return "CE_LOSS"
+    if drift <= -_DEF_THR:  return "PE_LOSS"
+    if drift <= -_OFF_THR:  return "CE_PROFIT"
+    if drift >= _OFF_THR:   return "PE_PROFIT"
+    return None
 
 
-def rolled_strike(anchor: float, side: str) -> int:
-    """3.5 % above anchor for CE, 4 % below for PE, nearest 50 pt."""
-    pct = 1.035 if side == "CE" else 0.960
-    return int(round(anchor * pct / 50) * 50)
+# ── EOD update functions ──────────────────────────────────────────────────────
 
-
-# ── Main update function ──────────────────────────────────────────────────────
-
-def maybe_update_anchors(
-    spot: float,
-    tue_close: float,
-    sig: dict,
-    rolled: dict | None = None,
-    ce_canary: int = 0,
-    pe_canary: int = 0,
-) -> dict:
+def set_expiry_anchor(eod_close: float, eod_date: str) -> dict:
     """
-    Call on every page load.  Before 3:15 PM returns unchanged.
-    At/after 3:15 PM: evaluates each side; if BOOK_LOSS or BOOK_PROFIT is active
-    and the anchor has not already been updated today, sets new anchor = spot.
-    At 3:16 PM on expiry day: clears both sides.
+    Called by EOD job on Tuesday (expiry day).
+    Starts a new cycle: clears history, sets anchor = today's EOD close.
     """
-    now     = datetime.datetime.now(_IST)
-    minutes = now.hour * 60 + now.minute
-    today   = now.date()
+    rolled   = load_rolled()
+    old_anc  = rolled.get("anchor")
+    old_ce   = rolled.get("ce_strike")
+    old_pe   = rolled.get("pe_strike")
+    ce, pe   = rolled_strikes(eod_close)
 
-    if rolled is None:
-        rolled = load_rolled()
+    rolled["anchor"]      = round(eod_close, 2)
+    rolled["anchor_date"] = eod_date
+    rolled["ce_strike"]   = ce
+    rolled["pe_strike"]   = pe
+    rolled["history"]     = [{
+        "date":       eod_date,
+        "event":      "EXPIRY_ANCHOR",
+        "eod_close":  round(eod_close, 2),
+        "old_anchor": old_anc,
+        "new_anchor": round(eod_close, 2),
+        "old_ce":     old_ce,
+        "new_ce":     ce,
+        "old_pe":     old_pe,
+        "new_pe":     pe,
+    }]
+    save_rolled(rolled)
+    return rolled
 
-    expiry = get_expiry_date(today)
 
-    # ── Expiry auto-clear ─────────────────────────────────────────────────────
-    if today == expiry and minutes >= 15 * 60 + 16:
-        if rolled.get("last_expiry_clear") != str(today):
-            rolled["CE"]                 = dict(_EMPTY_SIDE)
-            rolled["PE"]                 = dict(_EMPTY_SIDE)
-            rolled["last_expiry_clear"]  = str(today)
-            rolled["provisional_anchor"] = round(spot, 2)
-            save_rolled(rolled)
+def eod_update(eod_close: float, eod_date: str) -> dict:
+    """
+    Called by EOD job on non-Tuesday days.
+    Checks if book profit or book loss was reached on closing basis.
+    If so, rolls both strikes to new anchor = today's EOD close.
+    Idempotent: skips if already updated today.
+    """
+    rolled = load_rolled()
+    anchor = float(rolled.get("anchor") or 0)
+    if anchor <= 0:
         return rolled
 
-    # ── Only evaluate at/after 3:15 PM ───────────────────────────────────────
-    if minutes < 15 * 60 + 15:
+    # Idempotent: skip if already updated today
+    history = rolled.get("history", [])
+    if history and history[-1].get("date") == eod_date:
         return rolled
 
-    threat_mult = float(sig.get("threat_mult", 0.0))
-    mom_score   = float(sig.get("cr_mom_score", 0.0))
+    event = check_roll_event(eod_close, anchor)
+    if event is None:
+        return rolled
 
-    # Per-side canary counts: prefer caller-supplied; fall back to sig direction
-    if ce_canary == 0 and pe_canary == 0:
-        _cdir = str(sig.get("canary_direction", "NONE"))
-        _clvl = int(sig.get("canary_level", 0))
-        ce_canary = _clvl if _cdir in ("BULL",) else 0
-        pe_canary = _clvl if _cdir in ("BEAR",) else 0
+    old_ce, old_pe = rolled.get("ce_strike"), rolled.get("pe_strike")
+    new_anc        = round(eod_close, 2)
+    new_ce, new_pe = rolled_strikes(new_anc)
 
-    changed = False
-    for side, canary_cnt in (("CE", ce_canary), ("PE", pe_canary)):
-        s = rolled.setdefault(side, dict(_EMPTY_SIDE))
-        # Effective anchor for this side
-        anchor = (float(s["anchor"]) if s.get("active") and s.get("anchor")
-                  else float(tue_close or 0))
-        if anchor <= 0:
-            continue
-
-        state = _side_book_state(spot, anchor, side, threat_mult, canary_cnt, mom_score)
-
-        if state in ("BOOK_LOSS", "BOOK_PROFIT"):
-            if s.get("anchor_date") != str(today):   # not already updated today
-                s["active"]      = True
-                s["anchor"]      = round(spot, 2)
-                s["strike"]      = rolled_strike(spot, side)
-                s["anchor_date"] = str(today)
-                s["roll_type"]   = "LOSS" if state == "BOOK_LOSS" else "PROFIT"
-                changed = True
-
-    if changed:
-        save_rolled(rolled)
-
+    rolled["anchor"]      = new_anc
+    rolled["anchor_date"] = eod_date
+    rolled["ce_strike"]   = new_ce
+    rolled["pe_strike"]   = new_pe
+    rolled.setdefault("history", []).append({
+        "date":       eod_date,
+        "event":      event,
+        "eod_close":  new_anc,
+        "old_anchor": anchor,
+        "new_anchor": new_anc,
+        "old_ce":     old_ce,
+        "new_ce":     new_ce,
+        "old_pe":     old_pe,
+        "new_pe":     new_pe,
+    })
+    save_rolled(rolled)
     return rolled
