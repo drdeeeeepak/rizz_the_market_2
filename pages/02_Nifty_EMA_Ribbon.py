@@ -984,39 +984,63 @@ else:
         else:
             _pe_moat_count, _pe_note = 0, ""
 
+        # (bg, text, accent-color)
         _KIND_BG = {
-            "neutral":     ("#1e3a5f", "#93c5fd"),
-            "cmp":         ("#0ea5e9", "white"),
-            "above":       ("#4c0519", "#ff8fa3"),
-            "below":       ("#022c22", "#6ee7b7"),
-            "sold_ce":     ("#be123c", "white"),
-            "sold_pe":     ("#065f46", "white"),
-            "book_loss":   ("#7f1d1d", "#fecaca"),
-            "book_profit": ("#064e3b", "#6ee7b7"),
+            "neutral":     ("#1a1500", "#fde68a", "#f59e0b"),   # amber — anchor
+            "cmp":         ("#071e33", "#67e8f9", "#0ea5e9"),   # cyan  — spot
+            "above":       ("#2d0a0a", "#fca5a5", "#ef4444"),   # red   — EMA overhead
+            "below":       ("#021f14", "#6ee7b7", "#10b981"),   # green — EMA support
+            "sold_ce":     ("#3b0a1c", "#ff8fa3", "#ff4757"),   # hot red  — CE sold
+            "sold_pe":     ("#001f16", "#5eead4", "#00b894"),   # teal     — PE sold
+            "book_loss":   ("#450a0a", "#fca5a5", "#dc2626"),   # blood red — loss level
+            "book_profit": ("#022c22", "#86efac", "#22c55e"),   # emerald   — profit level
         }
 
         def _render_vc(title, items):
             items_desc = sorted(items, key=lambda x: x[1], reverse=True)
-            html = (f"<div style='background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-radius:12px;padding:16px;"
-                    f"border:1px solid #334155;box-shadow:0 4px 24px rgba(0,0,0,0.4);'>")
-            html += (f"<div style='font-size:15px;font-weight:800;color:#e2e8f0;"
-                     f"margin-bottom:16px;letter-spacing:2px;text-transform:uppercase;'>{title}</div>")
+            hdr_accent = "#ff4757" if "CE" in title else "#00b894"
+            html = (
+                f"<div style='background:linear-gradient(160deg,#0a0f1e 0%,#111827 60%,#0f172a 100%);"
+                f"border-radius:14px;padding:0;border:1px solid rgba(255,255,255,0.08);"
+                f"box-shadow:0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04);overflow:hidden;'>"
+            )
+            html += (
+                f"<div style='background:linear-gradient(90deg,{hdr_accent}28 0%,transparent 100%);"
+                f"border-bottom:2px solid {hdr_accent};padding:13px 16px 11px;'>"
+                f"<span style='font-size:13px;font-weight:900;color:{hdr_accent};"
+                f"letter-spacing:2px;text-transform:uppercase;'>{title}</span>"
+                f"</div>"
+            )
+            html += "<div style='padding:10px 12px 14px;'>"
             for lbl, val, kind in items_desc:
-                bg, txt = _KIND_BG.get(kind, ("#334155", "white"))
+                bg, txt, accent = _KIND_BG.get(kind, ("#1e293b", "#e2e8f0", "#64748b"))
                 is_spot = kind == "cmp"
-                border = "border:2px solid #38bdf8;box-shadow:0 0 10px rgba(56,189,248,0.4);" if is_spot else "border:1px solid rgba(255,255,255,0.08);"
-                margin = "margin:10px 0;" if is_spot else "margin:3px 0;"
+                is_sold = kind in ("sold_ce", "sold_pe")
                 pct = _pct_anc(val)
-                pct_str = f"{pct:+.2f}% anchor" if kind != "cmp" else "—"
-                html += (f"<div style='background:{bg};color:{txt};padding:10px 14px;"
-                         f"border-radius:6px;{border}{margin}display:flex;"
-                         f"justify-content:space-between;align-items:center;'>")
-                html += f"<span style='font-weight:700;font-size:14px;'>{lbl}</span>"
+                pct_str = f"{pct:+.2f}%" if kind not in ("cmp", "neutral") else ("anchor" if kind == "neutral" else "—")
+                pad   = "13px 14px 13px 16px" if is_sold else "8px 12px 8px 14px"
+                margin = "margin:7px 0;" if is_spot or is_sold else "margin:2px 0;"
+                val_sz = "19px" if is_sold else ("16px" if is_spot else "14px")
+                lbl_sz = "13px" if is_sold else "12px"
+                if is_spot:
+                    border = f"border:2px solid {accent};box-shadow:0 0 16px {accent}55,inset 0 0 8px {accent}11;"
+                elif is_sold:
+                    border = f"border:1px solid {accent}aa;box-shadow:0 0 20px {accent}66,inset 0 0 10px {accent}15;"
+                else:
+                    border = "border:1px solid rgba(255,255,255,0.05);"
+                glow = f"text-shadow:0 0 12px {accent};" if is_sold or is_spot else ""
+                html += (
+                    f"<div style='background:{bg};color:{txt};padding:{pad};"
+                    f"border-radius:8px;{border}{margin}display:flex;"
+                    f"justify-content:space-between;align-items:center;"
+                    f"border-left:4px solid {accent};'>"
+                )
+                html += f"<span style='font-weight:700;font-size:{lbl_sz};letter-spacing:0.5px;'>{lbl}</span>"
                 html += f"<div style='text-align:right;'>"
-                html += f"<div style='font-weight:900;font-size:16px;'>{val:,.0f}</div>"
-                html += f"<div style='font-size:11px;opacity:0.8;'>{pct_str}</div>"
+                html += f"<div style='font-weight:900;font-size:{val_sz};{glow}'>{val:,.0f}</div>"
+                html += f"<div style='font-size:10px;opacity:0.65;margin-top:1px;'>{pct_str}</div>"
                 html += "</div></div>"
-            html += "</div>"
+            html += "</div></div>"
             return html
 
         _corr_col1, _corr_col2 = st.columns(2)
