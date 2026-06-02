@@ -5,10 +5,10 @@
 **rizz_the_market_2** is a production-grade Nifty 50 Iron Condor options trading dashboard built with Streamlit and Zerodha Kite Connect. It runs a 16-page multi-timeframe analysis suite, aggregates 11 signal engines into a 100-point home score, and automates EOD signal computation via GitHub Actions.
 
 - **Stack:** Python 3.11+, Streamlit 1.35+, Kite Connect 5.0+, Pandas 2.2+, Plotly
-- **Broker API:** Zerodha Kite Connect (OAuth, automatic token lifecycle)
-- **Automation:** GitHub Actions crons (EOD compute, pre-market gap, event fetch, scans)
-- **Mode dispatcher:** PLANNING / PRE_MARKET / LIVE / TRANSITION (driven by IST clock in `Home.py`)
-- **No test suite.** No Docker. No pyproject.toml.
+- **Broker:** Zerodha Kite Connect (OAuth, automatic token lifecycle)
+- **Automation:** GitHub Actions crons — EOD compute, pre-market gap, event fetch, scans
+- **Mode dispatcher:** PLANNING / PRE_MARKET / LIVE / TRANSITION (IST clock in `Home.py`)
+- **No test suite. No Docker. No pyproject.toml.**
 
 ---
 
@@ -19,8 +19,8 @@
 | File | Purpose |
 |---|---|
 | `Home.py` | Streamlit entry point; mode dispatcher; 100-point home score dashboard |
-| `config.py` | **Single source of truth** for all strategy constants (VIX bands, EMA periods, DTE targets, scoring weights, universe tokens) |
-| `page_utils.py` | `bootstrap_signals()` 3-tier fallback; IST helpers; Streamlit caching wrappers |
+| `config.py` | **Single source of truth** — all strategy constants, VIX bands, EMA periods, DTE targets, scoring weights, universe tokens |
+| `page_utils.py` | `bootstrap_signals()` 3-tier fallback; IST clock helpers; Streamlit caching wrappers |
 | `requirements.txt` | All runtime dependencies |
 | `README.md` | Setup guide, page index, GitHub Actions cron schedule, scoring system |
 
@@ -28,9 +28,9 @@
 
 | File | Purpose |
 |---|---|
-| `compute_signals.py` | Master orchestrator; calls all 11 engines; saves/loads `data/signals.json` |
-| `home_engine.py` | Rescales 8 lens scores to max=100 (weights in `config.py`) |
-| `base_strategy.py` | Abstract base; shared `ema()`, `rsi()`, `sma()`, `atr()` utilities |
+| `compute_signals.py` | Master orchestrator; calls all 11 engines; reads/writes `data/signals.json` |
+| `home_engine.py` | Rescales 8 lens scores → max 100 (weights defined in `config.py`) |
+| `base_strategy.py` | Abstract base class; shared `ema()`, `rsi()`, `sma()`, `atr()` |
 | `ema.py` | EMA Ribbon engine (Pages 1–4); dual PUT/CALL safety scores |
 | `rsi_engine.py` | RSI regime detection (Pages 5, 7); Wilder's 14-period |
 | `bollinger.py` | Bollinger Bands + VIX-adjusted width (Page 9) |
@@ -48,10 +48,10 @@
 | File | Purpose |
 |---|---|
 | `kite_client.py` | Kite Connect OAuth wrapper; automatic token lifecycle → GitHub push |
-| `live_fetcher.py` | All Kite data fetching (`get_nifty_spot`, `get_nifty_daily`, `get_top10_daily`, `get_india_vix`, `get_dual_expiry_chains`, `get_nifty_1h_phase`, MTF candles); Streamlit TTL caching |
+| `live_fetcher.py` | All Kite fetches (spot, daily OHLCV, VIX, options chains, MTF candles); Streamlit TTL caching |
 | `rolled_positions.py` | Position state for gamma/gamma_accel calculations |
 | `signals.json` | EOD compute output; cold-start fallback for all pages |
-| `gap_check.json` | Pre-market gap check result (direction, action, pct, pts) |
+| `gap_check.json` | Pre-market gap result (direction, action, pct, pts) |
 | `events.json` | RBI/NSE economic event calendar |
 | `README.md` | Token flow diagram; file manifest; required GitHub secrets |
 
@@ -80,9 +80,9 @@
 
 | File | Schedule (IST) | Purpose |
 |---|---|---|
-| `eod_compute.py` | 3:35 PM | Fetch EOD OHLCV; run all engines; write `signals.json`; Telegram |
-| `premarket_gap.py` | 8:45 AM | Gift Nifty gap → action enum; write `gap_check.json`; Telegram |
-| `fetch_events.py` | 6:00 AM | RBI/NSE event calendar → `events.json` + `events.parquet` |
+| `eod_compute.py` | 3:35 PM | Fetch EOD OHLCV; run all engines; write `signals.json`; Telegram alert |
+| `premarket_gap.py` | 8:45 AM | Gift Nifty gap → action enum; write `gap_check.json`; Telegram alert |
+| `fetch_events.py` | 6:00 AM | RBI/NSE calendar → `events.json` + `events.parquet` |
 | `run_scan.py` | Multiple | Geometric Edge scans; EOD OI snapshot; watchlist JSON |
 | `generate_token.py` | Manual | One-time: Kite request_token → access_token |
 | `refresh_token.py` | Manual | Push new `KITE_ACCESS_TOKEN` to GitHub repo secrets via API |
@@ -121,23 +121,23 @@ python scripts/refresh_token.py
 python scripts/run_scan.py
 ```
 
-**Required environment variables** (`.env` or Streamlit secrets):
-`KITE_API_KEY`, `KITE_API_SECRET`, `KITE_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GH_PAT` (for secret refresh only)
+**Required env vars** (`.env` or Streamlit secrets):
+`KITE_API_KEY`, `KITE_API_SECRET`, `KITE_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GH_PAT`
 
 ---
 
 ## 4. Architectural Decisions
 
-**Single config module (`config.py`):** All strategy constants, thresholds, universe tokens, and scoring weights live in one file. No magic numbers in engine or page files.
+**Single config module (`config.py`):** All strategy constants, thresholds, universe tokens, and scoring weights live here. No magic numbers in engine or page files.
 
-**Modular engine pattern:** Every analytics engine extends `base_strategy.BaseStrategy` and is independently testable. `compute_signals.py` is the only caller; pages never import engines directly.
+**Modular engine pattern:** Every analytics engine extends `base_strategy.BaseStrategy`. `compute_signals.py` is the sole orchestrator; pages never import engines directly.
 
-**3-tier bootstrap fallback (`page_utils.bootstrap_signals`):** Pages first check `st.session_state`, then `data/signals.json`, then trigger live compute. This decouples UI from live API availability.
+**3-tier bootstrap fallback (`page_utils.bootstrap_signals`):** Pages resolve signals via `st.session_state` → `data/signals.json` → live compute. Decouples UI from live API availability.
 
-**Automatic token lifecycle (`kite_client.py`):** The dashboard's first login generates the access token and pushes it to the GitHub repo. GitHub Actions consume it for overnight cron jobs. Token expires at midnight IST and is regenerated on the next dashboard login.
+**Automatic token lifecycle (`kite_client.py`):** Dashboard login generates the access token and pushes it to GitHub. Actions consume it overnight. Token expires at midnight IST and regenerates on next login.
 
-**Streamlit TTL caching in `live_fetcher.py`:** All Kite API calls are wrapped in `@st.cache_data`. TTLs are tuned per data type (spot: 60s, daily OHLCV: 3600s, options chain: 300s). Analytics engines receive DataFrames, never raw API objects.
+**Streamlit TTL caching (`live_fetcher.py`):** All Kite API calls use `@st.cache_data` with per-type TTLs (spot: 60s, daily OHLCV: 3600s, options chain: 300s). Engines receive DataFrames, never raw API objects.
 
-**No shared state between pages:** Pages communicate only through `st.session_state` (position tracker) or `data/*.json` files written by scripts. There are no shared singletons or global mutable state.
+**No shared state between pages:** Pages communicate only via `st.session_state` (position tracker) or `data/*.json` files. No shared singletons or global mutable state.
 
-**Score rescaling in `home_engine.py`:** Eight lens scores (raw 0–100) are weighted and summed to a max of 100. Weights are defined in `config.py` (OC=22, RSI=18, MP=18, BB=14, ST=9, VIX=9, EMA=5, Dow=5).
+**Score rescaling (`home_engine.py`):** Eight lens scores (0–100 each) are weighted and summed to a max of 100. Weights: OC=22, RSI=18, MP=18, BB=14, ST=9, VIX=9, EMA=5, Dow=5.
