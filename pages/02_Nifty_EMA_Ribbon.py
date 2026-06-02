@@ -624,6 +624,16 @@ with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=Fa
   - The `max()` ensures pace never drops below VIX-implied — i.e. even on a flat day, we assume the market *can* move at its VIX-implied speed. This prevents false confidence.
 - CE and PE use separate paces: CE pace uses upward move, PE pace uses downward move.
 - Example: Gap = 466 pts, Pace = 225 pts (VIX 15.3 at spot 23,400) → DTB = 2.1 days
+
+---
+
+**Table highlighting rules**
+| Highlight | Condition | Meaning |
+|---|---|---|
+| 🟥 Red row (CE DTB or PE DTB) | DTB < 2.0 days | That side is within 2 days of hitting the book-loss trigger — urgent attention needed |
+| 🔴 Red text (CE/PE Threat) | Threat Mult > 1.15 | Today's move × range expansion is unusually large — high-stress day |
+
+A row where **both** CE DTB and PE DTB are red means a very volatile day with the market threatening both sides simultaneously.
 """)
     st.divider()
     try:
