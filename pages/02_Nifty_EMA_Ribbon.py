@@ -532,30 +532,31 @@ Action: Same as loss — new anchor = EOD close, both strikes reset.
 
 # Define basic DTB strings for the top metrics card (Showing Background Math)
 _vix_floor = vix_current if (vix_current and vix_current > 0) else 15.0
-_vix_daily_pts = (spot_now * (_vix_floor / 100)) / 16   # VIX-implied 1-day move
-_rtr_now       = rel_range if rel_range > 0 else 1.0
-_pace_pts      = _vix_daily_pts * _rtr_now               # single pace: VIX × RTR
+_expected_daily_move_pts = (spot_now * (_vix_floor / 100)) / 16   # VIX-implied 1-day move
 
 if tue_anchor_available and ce_def_trig_spot > 0 and pe_def_trig_spot > 0:
     _ce_gap_pts = max(0, ce_def_trig_spot - spot_now)
     _pe_gap_pts = max(0, spot_now - pe_def_trig_spot)
 
-    _ce_days_s = f"{_ce_gap_pts / _pace_pts:.1f}d" if _pace_pts > 0 else "—"
-    _pe_days_s = f"{_pe_gap_pts / _pace_pts:.1f}d" if _pace_pts > 0 else "—"
+    _ce_pace = max(_today_move_pts, _expected_daily_move_pts)
+    _pe_pace = max(abs(_today_move_pts), _expected_daily_move_pts)
+
+    _ce_days_s = f"{_ce_gap_pts / _ce_pace:.1f}d" if _ce_pace > 0 else "—"
+    _pe_days_s = f"{_pe_gap_pts / _pe_pace:.1f}d" if _pe_pace > 0 else "—"
     _dtb_val   = f"CE {_ce_days_s} · PE {_pe_days_s}"
-    _dtb_sub   = (f"CE {_ce_gap_pts:.0f}÷{_pace_pts:.0f}pt · "
-                  f"PE {_pe_gap_pts:.0f}÷{_pace_pts:.0f}pt  "
-                  f"[VIX {_vix_floor:.1f}→{_vix_daily_pts:.0f}pt × RTR {_rtr_now:.2f}]")
+    _dtb_sub   = (f"CE {_ce_gap_pts:.0f}÷{_ce_pace:.0f}pt · "
+                  f"PE {_pe_gap_pts:.0f}÷{_pe_pace:.0f}pt  "
+                  f"[VIX→{_expected_daily_move_pts:.0f}pt · RTR {rel_range:.2f}×]")
 
     if _yday_move_pts != 0 and _prev_close_live > 0:
-        _yd_cl     = _prev_close_live
-        _yd_rtr    = _yday_rel_range if "_yday_rel_range" in dir() else _rtr_now
-        _yd_pace   = _vix_daily_pts * (_yd_rtr if _yd_rtr > 0 else 1.0)
-        _yd_ce_gap = max(0, ce_def_trig_spot - _yd_cl)
-        _yd_pe_gap = max(0, _yd_cl - pe_def_trig_spot)
-        _yd_ce_s   = f"{_yd_ce_gap / _yd_pace:.1f}d" if _yd_pace > 0 else "—"
-        _yd_pe_s   = f"{_yd_pe_gap / _yd_pace:.1f}d" if _yd_pace > 0 else "—"
-        _dtb_sub  += f"  ·  Yday CE {_yd_ce_s} · PE {_yd_pe_s}"
+        _yd_cl      = _prev_close_live
+        _yd_ce_gap  = max(0, ce_def_trig_spot - _yd_cl)
+        _yd_pe_gap  = max(0, _yd_cl - pe_def_trig_spot)
+        _yd_ce_pace = max(_yday_move_pts, _expected_daily_move_pts)
+        _yd_pe_pace = max(abs(_yday_move_pts), _expected_daily_move_pts)
+        _yd_ce_s    = f"{_yd_ce_gap / _yd_ce_pace:.1f}d" if _yd_ce_pace > 0 else "—"
+        _yd_pe_s    = f"{_yd_pe_gap / _yd_pe_pace:.1f}d" if _yd_pe_pace > 0 else "—"
+        _dtb_sub   += f"  ·  Yday CE {_yd_ce_s} · PE {_yd_pe_s}"
     
     # Update Threat Subtitle to show the explicit math
     _thr_sub = f"CE: {max(daily_ret_pct, 0):.2f}% × {rel_range:.2f} RTR · PE: {max(-daily_ret_pct, 0):.2f}% × {rel_range:.2f} RTR"
@@ -605,6 +606,26 @@ with c6: ui.metric_card("DAYS TO BREACH", _dtb_val,
 
 # ── Threat & DTB daily history table — RTR + VIX-Adjusted (Math UI) ───────────
 with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=False):
+    st.markdown("""
+**How Threat Multiplier is calculated**
+> `Threat = Chng% × RTR`
+- **Chng%** — today's close vs yesterday's close as a percentage
+- **RTR (Relative True Range)** — today's true range (high − low + overnight gap) divided by the 14-day average true range. RTR = 1.0 means a normal-sized day. RTR = 1.5 means today's range is 50% wider than usual.
+- CE Threat uses the upward move only; PE Threat uses the downward move only.
+- A Threat Mult above 1.0 = dangerous day — consider reducing size.
+
+---
+
+**How Days to Breach (DTB) is calculated**
+> `DTB = Gap pts ÷ Pace pts`
+- **Gap pts** — distance in points from current spot to the book-loss trigger (anchor ± 2.5%)
+- **Pace pts** — `max(today's actual move in pts, VIX-implied daily move)`
+  - *VIX-implied daily move* = `Spot × VIX% ÷ 16` (annualised VIX converted to 1-day expected move using Rule of 16 / √252)
+  - The `max()` ensures pace never drops below VIX-implied — i.e. even on a flat day, we assume the market *can* move at its VIX-implied speed. This prevents false confidence.
+- CE and PE use separate paces: CE pace uses upward move, PE pace uses downward move.
+- Example: Gap = 466 pts, Pace = 225 pts (VIX 15.3 at spot 23,400) → DTB = 2.1 days
+""")
+    st.divider()
     try:
         from data.live_fetcher import get_nifty_daily_live as _gdl
         _dlive = _gdl() 
@@ -679,8 +700,8 @@ with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=Fa
                 "RTR":       f"{rel_range:.2f}×",
                 "CE Threat": f"{ce_threat_mult:.2f}  ({max(daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
                 "PE Threat": f"{pe_threat_mult:.2f}  ({max(-daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
-                "CE DTB":    f"{_ce_gap_pts / _pace_pts:.1f}d  ({_ce_gap_pts:.0f}÷{_pace_pts:.0f}pt)",
-                "PE DTB":    f"{_pe_gap_pts / _pace_pts:.1f}d  ({_pe_gap_pts:.0f}÷{_pace_pts:.0f}pt)",
+                "CE DTB":    f"{_ce_gap_pts / _ce_pace:.1f}d  ({_ce_gap_pts:.0f}÷{_ce_pace:.0f}pt)",
+                "PE DTB":    f"{_pe_gap_pts / _pe_pace:.1f}d  ({_pe_gap_pts:.0f}÷{_pe_pace:.0f}pt)",
             })
         
         _tbl = pd.DataFrame(list(reversed(_display_rows)))
