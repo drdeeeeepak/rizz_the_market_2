@@ -532,32 +532,30 @@ Action: Same as loss — new anchor = EOD close, both strikes reset.
 
 # Define basic DTB strings for the top metrics card (Showing Background Math)
 _vix_floor = vix_current if (vix_current and vix_current > 0) else 15.0
-_expected_daily_move_pts = (spot_now * (_vix_floor / 100)) / 16
+_vix_daily_pts = (spot_now * (_vix_floor / 100)) / 16   # VIX-implied 1-day move
+_rtr_now       = rel_range if rel_range > 0 else 1.0
+_pace_pts      = _vix_daily_pts * _rtr_now               # single pace: VIX × RTR
 
 if tue_anchor_available and ce_def_trig_spot > 0 and pe_def_trig_spot > 0:
     _ce_gap_pts = max(0, ce_def_trig_spot - spot_now)
     _pe_gap_pts = max(0, spot_now - pe_def_trig_spot)
-    
-    _ce_pace = max(_today_move_pts, _expected_daily_move_pts)
-    _pe_pace = max(abs(_today_move_pts), _expected_daily_move_pts)
-    
-    _ce_days_s  = f"{_ce_gap_pts / _ce_pace:.1f}d"
-    _pe_days_s  = f"{_pe_gap_pts / _pe_pace:.1f}d"
-    _dtb_val    = f"CE {_ce_days_s} · PE {_pe_days_s}"
-    
+
+    _ce_days_s = f"{_ce_gap_pts / _pace_pts:.1f}d" if _pace_pts > 0 else "—"
+    _pe_days_s = f"{_pe_gap_pts / _pace_pts:.1f}d" if _pace_pts > 0 else "—"
+    _dtb_val   = f"CE {_ce_days_s} · PE {_pe_days_s}"
+    _dtb_sub   = (f"CE {_ce_gap_pts:.0f}÷{_pace_pts:.0f}pt · "
+                  f"PE {_pe_gap_pts:.0f}÷{_pace_pts:.0f}pt  "
+                  f"[VIX {_vix_floor:.1f}→{_vix_daily_pts:.0f}pt × RTR {_rtr_now:.2f}]")
+
     if _yday_move_pts != 0 and _prev_close_live > 0:
-        _yd_cl       = _prev_close_live
-        _yd_ce_gap   = max(0, ce_def_trig_spot - _yd_cl)
-        _yd_pe_gap   = max(0, _yd_cl - pe_def_trig_spot)
-        
-        _yd_ce_pace  = max(_yday_move_pts, _expected_daily_move_pts)
-        _yd_pe_pace  = max(abs(_yday_move_pts), _expected_daily_move_pts)
-        
-        _yd_ce_s     = f"{_yd_ce_gap / _yd_ce_pace:.1f}d"
-        _yd_pe_s     = f"{_yd_pe_gap / _yd_pe_pace:.1f}d"
-        _dtb_sub     = f"Yday CE: {_yd_ce_s} ({_yd_ce_gap:.0f}pt÷{_yd_ce_pace:.0f}pt) · PE: {_yd_pe_s} ({_yd_pe_gap:.0f}pt÷{_yd_pe_pace:.0f}pt)"
-    else:
-        _dtb_sub = "gap_pts ÷ pace_pts"
+        _yd_cl     = _prev_close_live
+        _yd_rtr    = _yday_rel_range if "_yday_rel_range" in dir() else _rtr_now
+        _yd_pace   = _vix_daily_pts * (_yd_rtr if _yd_rtr > 0 else 1.0)
+        _yd_ce_gap = max(0, ce_def_trig_spot - _yd_cl)
+        _yd_pe_gap = max(0, _yd_cl - pe_def_trig_spot)
+        _yd_ce_s   = f"{_yd_ce_gap / _yd_pace:.1f}d" if _yd_pace > 0 else "—"
+        _yd_pe_s   = f"{_yd_pe_gap / _yd_pace:.1f}d" if _yd_pace > 0 else "—"
+        _dtb_sub  += f"  ·  Yday CE {_yd_ce_s} · PE {_yd_pe_s}"
     
     # Update Threat Subtitle to show the explicit math
     _thr_sub = f"CE: {max(daily_ret_pct, 0):.2f}% × {rel_range:.2f} RTR · PE: {max(-daily_ret_pct, 0):.2f}% × {rel_range:.2f} RTR"
@@ -657,34 +655,32 @@ with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=Fa
         if _hist_end > 0:
             _th_hist = _th_cycle.iloc[:_hist_end]
             for _idx, _r in _th_hist.iterrows():
-                _move = max(abs(_r["close"] - _r["open"]), _expected_daily_move_pts)
+                _h_rtr   = float(_r["rel_range"]) if float(_r["rel_range"]) > 0 else 1.0
+                _h_pace  = _expected_daily_move_pts * _h_rtr
                 _display_rows.append({
                     "Date":      _idx.strftime("%d %b"),
                     "Chng%":     f"{_r['ret_pct']:+.2f}%",
-                    "Rel Rng":   f"{_r['rel_range']:.2f}×",
+                    "RTR":       f"{_r['rel_range']:.2f}×",
                     "CE Threat": f"{float(_r['ce_thr']):.2f}  ({max(float(_r['ret_pct']), 0):.2f}% × {_r['rel_range']:.2f})",
                     "PE Threat": f"{float(_r['pe_thr']):.2f}  ({max(float(-_r['ret_pct']), 0):.2f}% × {_r['rel_range']:.2f})",
-                    "CE DTB":    f"{_r['ce_gap'] / _move:.1f}d  ({_r['ce_gap']:.0f}pt ÷ {_move:.0f}pt)",
-                    "PE DTB":    f"{_r['pe_gap'] / _move:.1f}d  ({_r['pe_gap']:.0f}pt ÷ {_move:.0f}pt)",
+                    "CE DTB":    f"{_r['ce_gap'] / _h_pace:.1f}d  ({_r['ce_gap']:.0f}÷{_h_pace:.0f}pt)",
+                    "PE DTB":    f"{_r['pe_gap'] / _h_pace:.1f}d  ({_r['pe_gap']:.0f}÷{_h_pace:.0f}pt)",
                 })
 
         # 5. Latest Session Row with Background Math
         if len(_th_cycle) > 0:
-            _ce_pace = max(_today_move_pts, _expected_daily_move_pts)
-            _pe_pace = max(abs(_today_move_pts), _expected_daily_move_pts)
-            
             _last_dt = _th_cycle.index[-1].date() if hasattr(_th_cycle.index[-1], 'date') else _th_cycle.index[-1].to_pydatetime().date()
             _is_actual_today = (_last_dt == _now_ist_t.date())
             _row_label = "LIVE ▶" if _is_actual_today else f"{_last_dt.strftime('%d %b')} (Latest)"
-            
+
             _display_rows.append({
                 "Date":      _row_label,
                 "Chng%":     f"{daily_ret_pct:+.2f}%",
-                "Rel Rng":   f"{rel_range:.2f}×",
+                "RTR":       f"{rel_range:.2f}×",
                 "CE Threat": f"{ce_threat_mult:.2f}  ({max(daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
                 "PE Threat": f"{pe_threat_mult:.2f}  ({max(-daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
-                "CE DTB":    f"{_ce_gap_pts / _ce_pace:.1f}d  ({_ce_gap_pts:.0f}pt ÷ {_ce_pace:.0f}pt)",
-                "PE DTB":    f"{_pe_gap_pts / _pe_pace:.1f}d  ({_pe_gap_pts:.0f}pt ÷ {_pe_pace:.0f}pt)",
+                "CE DTB":    f"{_ce_gap_pts / _pace_pts:.1f}d  ({_ce_gap_pts:.0f}÷{_pace_pts:.0f}pt)",
+                "PE DTB":    f"{_pe_gap_pts / _pace_pts:.1f}d  ({_pe_gap_pts:.0f}÷{_pace_pts:.0f}pt)",
             })
         
         _tbl = pd.DataFrame(list(reversed(_display_rows)))
