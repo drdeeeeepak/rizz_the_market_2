@@ -986,23 +986,23 @@ else:
 
         # (bg, text, accent-color)
         _KIND_BG = {
-            "neutral":     ("#1a1500", "#fde68a", "#f59e0b"),   # amber — anchor
-            "cmp":         ("#071e33", "#67e8f9", "#0ea5e9"),   # cyan  — spot
-            "above":       ("#2d0a0a", "#fca5a5", "#ef4444"),   # red   — EMA overhead
-            "below":       ("#021f14", "#6ee7b7", "#10b981"),   # green — EMA support
-            "sold_ce":     ("#3b0a1c", "#ff8fa3", "#ff4757"),   # hot red  — CE sold
-            "sold_pe":     ("#001f16", "#5eead4", "#00b894"),   # teal     — PE sold
-            "book_loss":   ("#450a0a", "#fca5a5", "#dc2626"),   # blood red — loss level
-            "book_profit": ("#022c22", "#86efac", "#22c55e"),   # emerald   — profit level
+            "neutral":     ("#2a2000", "#fde68a", "#f59e0b"),   # amber — anchor
+            "cmp":         ("#0a2a45", "#67e8f9", "#0ea5e9"),   # cyan  — spot
+            "above":       ("#3a1010", "#ff9090", "#ef4444"),   # red   — EMA overhead (lighter bg)
+            "below":       ("#0a2e1e", "#6ee7b7", "#10b981"),   # green — EMA support  (lighter bg)
+            "sold_ce":     ("#4a0a20", "#ff4757", "#ff4757"),   # hot red  — CE sold   (vivid text)
+            "sold_pe":     ("#002e20", "#00e5b0", "#00b894"),   # teal     — PE sold   (vivid text)
+            "book_loss":   ("#3a1000", "#fb923c", "#f97316"),   # orange-red — loss (distinct from EMA)
+            "book_profit": ("#052e18", "#4ade80", "#22c55e"),   # bright green — profit
         }
 
         def _render_vc(title, items):
             items_desc = sorted(items, key=lambda x: x[1], reverse=True)
             hdr_accent = "#ff4757" if "CE" in title else "#00b894"
             html = (
-                f"<div style='background:linear-gradient(160deg,#0a0f1e 0%,#111827 60%,#0f172a 100%);"
-                f"border-radius:14px;padding:0;border:1px solid rgba(255,255,255,0.08);"
-                f"box-shadow:0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04);overflow:hidden;'>"
+                f"<div style='background:linear-gradient(160deg,#141b2d 0%,#1a2235 60%,#141b2d 100%);"
+                f"border-radius:14px;padding:0;border:1px solid rgba(255,255,255,0.10);"
+                f"box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.04);overflow:hidden;'>"
             )
             html += (
                 f"<div style='background:linear-gradient(90deg,{hdr_accent}28 0%,transparent 100%);"
