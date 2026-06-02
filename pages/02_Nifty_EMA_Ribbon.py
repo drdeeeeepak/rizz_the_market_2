@@ -174,7 +174,7 @@ import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
-from data.rolled_positions import load_rolled, rolled_strikes as _rs_fn
+from data.rolled_positions import load_rolled
 _rolled = load_rolled()
 _anchor_val = _rolled.get("anchor")
 if _anchor_val and float(_anchor_val) > 0:
