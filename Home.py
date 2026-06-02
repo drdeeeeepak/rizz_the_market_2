@@ -734,9 +734,10 @@ with st.sidebar:
     if st.button("🚪 Logout / Clear Token", width="stretch"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         import os
-        for tp in [".kite_token","data/.kite_token", Path(__file__).parent/"data"/".kite_token"]:
+        for tp in ["access_token.txt", "data/access_token.txt",
+                   str(Path(__file__).parent / "access_token.txt")]:
             try:
-                if os.path.exists(str(tp)): os.remove(str(tp))
+                if os.path.exists(tp): os.remove(tp)
             except Exception: pass
         st.cache_data.clear()
         st.success("Logged out. Refresh to re-authenticate.")
