@@ -191,7 +191,7 @@ try:
 
     if not _daily.empty:
         _trading_dates  = set(_daily.index.date)
-        _is_expiry_day  = _is_tue and (_today in _trading_dates)
+        _is_expiry_day  = _is_tue  # today IS expiry day if it's Tuesday; _today in _trading_dates fails before EOD candle closes
 
         def _find_anchor(target_tue):
             for _off in range(7):
