@@ -48,29 +48,32 @@ def main():
     )
     save_signals(sig)
 
-    # Update rolled positions from EOD close
-    import datetime as _dt
-    import pytz as _pytz
-    _ist_now   = _dt.datetime.now(_pytz.timezone("Asia/Kolkata"))
-    _today_str = _ist_now.strftime("%Y-%m-%d")
-    _is_tue    = _ist_now.weekday() == 1
+    # Update rolled positions from EOD close (only if we got a valid spot)
+    if spot > 0:
+        import datetime as _dt
+        import pytz as _pytz
+        _ist_now   = _dt.datetime.now(_pytz.timezone("Asia/Kolkata"))
+        _today_str = _ist_now.strftime("%Y-%m-%d")
+        _is_tue    = _ist_now.weekday() == 1
 
-    from data.rolled_positions import set_expiry_anchor, eod_update
-    if _is_tue:
-        set_expiry_anchor(spot, _today_str)
-        log.info("Tuesday EOD: expiry anchor set to %.0f", spot)
+        from data.rolled_positions import set_expiry_anchor, eod_update
+        if _is_tue:
+            set_expiry_anchor(spot, _today_str)
+            log.info("Tuesday EOD: expiry anchor set to %.0f", spot)
+        else:
+            _roll_result = eod_update(spot, _today_str)
+            _hist = _roll_result.get("history", [])
+            if _hist and _hist[-1].get("date") == _today_str and _hist[-1].get("event") != "EXPIRY_ANCHOR":
+                _ev = _hist[-1]
+                log.info("EOD roll: %s  anchor %.0f→%.0f  CE %s→%d  PE %s→%d",
+                         _ev["event"], _ev["old_anchor"] or 0, _ev["new_anchor"],
+                         _ev["old_ce"], _ev["new_ce"], _ev["old_pe"], _ev["new_pe"])
     else:
-        _roll_result = eod_update(spot, _today_str)
-        _hist = _roll_result.get("history", [])
-        if _hist and _hist[-1].get("date") == _today_str and _hist[-1].get("event") != "EXPIRY_ANCHOR":
-            _ev = _hist[-1]
-            log.info("EOD roll: %s  anchor %.0f→%.0f  CE %s→%d  PE %s→%d",
-                     _ev["event"], _ev["old_anchor"] or 0, _ev["new_anchor"],
-                     _ev["old_ce"], _ev["new_ce"], _ev["old_pe"], _ev["new_pe"])
+        log.warning("Spot is 0 — skipping rolled positions update (Kite auth likely failed)")
 
     # Write breach levels
     dow_eng = DowTheoryEngine()
-    dow_sig = dow_eng.signals(nifty_df.copy())
+    dow_sig = dow_eng.signals(nifty_df.copy(), spot)
     (DATA_DIR / "breach_levels.json").write_text(json.dumps({
         "put_breach_level":  dow_sig.get("put_breach_level",  0),
         "call_breach_level": dow_sig.get("call_breach_level", 0),
