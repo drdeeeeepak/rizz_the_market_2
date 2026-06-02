@@ -348,21 +348,21 @@ ce_canary = max(src1_ce, src2_ce, src3_ce)
 overall_canary = max(pe_canary, ce_canary, canary)
 
 # ── India VIX ────────────────────────────────────────────────────────────────
-vix_current = vix_chg_pct = 0.0
+vix_current = vix_chg_pts = vix_chg_pct = 0.0
 vix_available = vix_rising = False
 _vix_is_fallback = False
 try:
     from data.live_fetcher import get_india_vix_detail as _get_vix
-    vix_current, vix_chg_pct = _get_vix()
+    vix_current, vix_chg_pts, vix_chg_pct = _get_vix()
     vix_available = vix_current > 0
-    vix_rising = vix_chg_pct > 5.0
+    vix_rising = vix_chg_pct > 0   # any positive change = rising
 except Exception:
     pass
 if not vix_available:
     _fb_vix = sig.get("vix", 0.0) or 0.0
     if _fb_vix > 0:
         vix_current = _fb_vix
-        vix_chg_pct = 0.0
+        vix_chg_pts = vix_chg_pct = 0.0
         vix_available = True
         vix_rising = False
         _vix_is_fallback = True
@@ -594,9 +594,11 @@ with c5:
                 _vix_interp = "⚠️ VIX↓+mkt↓ → complacency"
             else:
                 _vix_interp = f"Chg {vix_chg_pct:+.1f}% · stable"
+        _vix_chg_str = f"{vix_chg_pts:+.2f} pts ({vix_chg_pct:+.1f}%)" if vix_chg_pts != 0 else ""
+        _vix_sub = f"{_vix_chg_str} · {_vix_interp}" if _vix_chg_str else _vix_interp
         _vix_color = "red" if vix_current > 20 else "default"
         ui.metric_card("INDIA VIX", f"{vix_current:.2f}",
-                        sub=_vix_interp, color=_vix_color)
+                        sub=_vix_sub, color=_vix_color)
     else:
         ui.metric_card("INDIA VIX", "N/A", sub="Feed unavailable")
 with c6: ui.metric_card("DAYS TO BREACH", _dtb_val,

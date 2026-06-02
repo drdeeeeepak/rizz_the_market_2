@@ -446,27 +446,32 @@ def get_india_vix() -> float:
 
 @st.cache_data(ttl=TTL_PRICE, show_spinner=False)
 def get_india_vix_detail() -> tuple:
-    """Returns (vix_current, vix_change_pct). Both 0.0 on failure."""
+    """Returns (vix_current, vix_chg_pts, vix_chg_pct). All 0.0 on failure."""
     from data.kite_client import get_kite, get_kite_action
     kite = get_kite_action() if not _HAS_ST else get_kite()
     try:
-        quote = kite.quote([f"NSE:{INDIA_VIX_TOKEN}"])
-        for key in [f"NSE:{INDIA_VIX_TOKEN}", str(INDIA_VIX_TOKEN)]:
-            if key in quote:
-                q = quote[key]
-                cur = float(q.get("last_price", 0) or 0)
-                chg = float(q.get("change_percent", 0) or q.get("net_change", 0) or 0)
-                return cur, chg
-        quote = kite.quote(["NSE:INDIA VIX"])
-        for key in ["NSE:INDIA VIX", str(INDIA_VIX_TOKEN)]:
-            if key in quote:
-                q = quote[key]
-                cur = float(q.get("last_price", 0) or 0)
-                chg = float(q.get("change_percent", 0) or q.get("net_change", 0) or 0)
-                return cur, chg
-        return 0.0, 0.0
+        for symbols in [[f"NSE:{INDIA_VIX_TOKEN}"], ["NSE:INDIA VIX"]]:
+            try:
+                quote = kite.quote(symbols)
+            except Exception:
+                continue
+            for key in [symbols[0], str(INDIA_VIX_TOKEN)]:
+                if key in quote:
+                    q       = quote[key]
+                    cur     = float(q.get("last_price", 0) or 0)
+                    prev    = float((q.get("ohlc") or {}).get("close", 0) or 0)
+                    net_chg = float(q.get("net_change", 0) or 0)
+                    # Use ohlc.close for pts/pct; fall back to net_change for pts
+                    if prev > 0:
+                        pts = cur - prev
+                        pct = (pts / prev) * 100
+                    else:
+                        pts = net_chg
+                        pct = (net_chg / cur * 100) if cur > 0 else 0.0
+                    return cur, round(pts, 3), round(pct, 2)
+        return 0.0, 0.0, 0.0
     except Exception as e:
-        log.error("VIX detail fetch: %s", e); return 0.0, 0.0
+        log.error("VIX detail fetch: %s", e); return 0.0, 0.0, 0.0
 
 
 @st.cache_data(ttl=TTL_DAILY, show_spinner=False)
