@@ -732,7 +732,7 @@ else:
             f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
             f"border:1px solid #1e293b;margin-bottom:10px;'>"
             f"<div style='font-size:12px;font-weight:700;color:#94a3b8;"
-            f"letter-spacing:1.5px;margin-bottom:8px;'>CYCLE HISTORY · {tue_anchor_date}</div>"
+            f"letter-spacing:1.5px;margin-bottom:8px;'>CYCLE HISTORY · cycle started {_rp_history[0].get('date','') if _rp_history else tue_anchor_date}</div>"
             + _hist_rows + "</div>",
             unsafe_allow_html=True)
     def _side_card(side_tag, palette, book_loss, book_profit, adverse, favor,
