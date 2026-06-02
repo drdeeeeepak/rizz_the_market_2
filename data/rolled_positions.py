@@ -21,8 +21,11 @@ Rules:
 """
 
 import json
+import logging
 import datetime
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _PATH    = Path(__file__).parent / "rolled_positions.json"
 _DEF_THR = 2.5   # % adverse → BOOK LOSS
@@ -153,3 +156,98 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
     })
     save_rolled(rolled)
     return rolled
+
+
+# ── Bootstrap from historical daily data ──────────────────────────────────────
+
+def bootstrap_from_history(daily_df) -> dict:
+    """
+    Compute anchor and full cycle history from historical daily OHLCV.
+
+    Walks back to find the most recent Tuesday close, sets that as
+    EXPIRY_ANCHOR, then replays each subsequent day's close through
+    check_roll_event() to rebuild the cycle history up to today.
+
+    Writes and returns the resulting rolled dict.
+    Only runs if rolled_positions.json is missing or has no valid anchor.
+    """
+    import pandas as pd
+
+    rolled = load_rolled()
+    if rolled.get("anchor"):
+        return rolled  # already have data — don't overwrite
+
+    if daily_df is None or (hasattr(daily_df, "empty") and daily_df.empty):
+        log.warning("bootstrap_from_history: no daily data available")
+        return rolled
+
+    df = daily_df.copy()
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if "date" in df.columns:
+            df = df.set_index(pd.to_datetime(df["date"]))
+        else:
+            df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+
+    # Find the most recent Tuesday (weekday == 1) in the historical data
+    tue_rows = df[df.index.weekday == 1]
+    if tue_rows.empty:
+        log.warning("bootstrap_from_history: no Tuesday found in daily data")
+        return rolled
+
+    tue_row   = tue_rows.iloc[-1]
+    tue_date  = tue_row.name.strftime("%Y-%m-%d")
+    tue_close = float(tue_row["close"])
+
+    # Start fresh cycle from that Tuesday
+    ce, pe = rolled_strikes(tue_close)
+    result = {
+        "anchor":      round(tue_close, 2),
+        "anchor_date": tue_date,
+        "ce_strike":   ce,
+        "pe_strike":   pe,
+        "history": [{
+            "date":       tue_date,
+            "event":      "EXPIRY_ANCHOR",
+            "eod_close":  round(tue_close, 2),
+            "old_anchor": None,
+            "new_anchor": round(tue_close, 2),
+            "old_ce":     None,
+            "new_ce":     ce,
+            "old_pe":     None,
+            "new_pe":     pe,
+        }],
+    }
+
+    # Replay each day after Tuesday through roll logic
+    post_tue = df[df.index > tue_rows.index[-1]]
+    for ts, row in post_tue.iterrows():
+        day_str   = ts.strftime("%Y-%m-%d")
+        eod_close = float(row["close"])
+        anchor    = float(result["anchor"])
+        event     = check_roll_event(eod_close, anchor)
+        if event:
+            new_anc        = round(eod_close, 2)
+            new_ce, new_pe = rolled_strikes(new_anc)
+            result["history"].append({
+                "date":       day_str,
+                "event":      event,
+                "eod_close":  new_anc,
+                "old_anchor": anchor,
+                "new_anchor": new_anc,
+                "old_ce":     result["ce_strike"],
+                "new_ce":     new_ce,
+                "old_pe":     result["pe_strike"],
+                "new_pe":     new_pe,
+            })
+            result["anchor"]      = new_anc
+            result["anchor_date"] = day_str
+            result["ce_strike"]   = new_ce
+            result["pe_strike"]   = new_pe
+
+    log.info("bootstrap_from_history: anchor %.0f (%s)  CE %d  PE %d  events: %d",
+             result["anchor"], result["anchor_date"],
+             result["ce_strike"], result["pe_strike"],
+             len(result["history"]))
+    save_rolled(result)
+    return result

@@ -174,8 +174,17 @@ import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
-from data.rolled_positions import load_rolled
+from data.rolled_positions import load_rolled, bootstrap_from_history
 _rolled = load_rolled()
+# Bootstrap from Kite historical data if anchor missing
+if not _rolled.get("anchor"):
+    try:
+        from data.live_fetcher import get_nifty_daily as _get_daily_boot
+        _boot_df = _get_daily_boot()
+        if not _boot_df.empty:
+            _rolled = bootstrap_from_history(_boot_df)
+    except Exception:
+        pass
 _anchor_val = _rolled.get("anchor")
 if _anchor_val and float(_anchor_val) > 0:
     tue_close            = float(_anchor_val)
