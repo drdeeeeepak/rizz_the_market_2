@@ -173,12 +173,16 @@ def bootstrap_from_history(daily_df) -> dict:
     """
     import pandas as pd
 
+    import pytz as _pytz
+    _today_ist = datetime.datetime.now(_pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+
     rolled = load_rolled()
-    # Re-bootstrap if anchor is missing OR if history has no EXPIRY_ANCHOR entry
-    _hist = rolled.get("history", [])
-    _has_anchor_event = any(h.get("event") == "EXPIRY_ANCHOR" for h in _hist)
-    if rolled.get("anchor") and _has_anchor_event:
-        return rolled  # already have valid data — don't overwrite
+    _hist  = rolled.get("history", [])
+    _anchor_date = str(rolled.get("anchor_date", ""))
+    _has_expiry_anchor = any(h.get("event") == "EXPIRY_ANCHOR" for h in _hist)
+    # Skip re-bootstrap only if: anchor exists, has EXPIRY_ANCHOR, and anchor is NOT today's partial candle
+    if rolled.get("anchor") and _has_expiry_anchor and _anchor_date != _today_ist:
+        return rolled
 
     if daily_df is None or (hasattr(daily_df, "empty") and daily_df.empty):
         log.warning("bootstrap_from_history: no daily data available")
@@ -193,8 +197,6 @@ def bootstrap_from_history(daily_df) -> dict:
     df = df.sort_index()
 
     # Find the most recent COMPLETED Tuesday — exclude today (IST) to avoid partial candle
-    import pytz as _pytz
-    _today_ist = datetime.datetime.now(_pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
     _idx_dates = df.index.strftime("%Y-%m-%d")
     tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
     if tue_rows.empty:
