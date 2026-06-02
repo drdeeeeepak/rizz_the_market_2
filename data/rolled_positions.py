@@ -192,14 +192,13 @@ def bootstrap_from_history(daily_df) -> dict:
             df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # Find the most recent COMPLETED Tuesday — exclude today to avoid partial candle
-    today = datetime.date.today()
-    tue_rows = df[(df.index.weekday == 1) & (df.index.date < today)]
+    # Find the most recent COMPLETED Tuesday — exclude today (IST) to avoid partial candle
+    import pytz as _pytz
+    _today_ist = datetime.datetime.now(_pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+    _idx_dates = df.index.strftime("%Y-%m-%d")
+    tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
     if tue_rows.empty:
-        # Fallback: include today only if it's not Tuesday (shouldn't happen)
-        tue_rows = df[df.index.weekday == 1]
-    if tue_rows.empty:
-        log.warning("bootstrap_from_history: no Tuesday found in daily data")
+        log.warning("bootstrap_from_history: no completed Tuesday found in daily data")
         return rolled
 
     tue_row   = tue_rows.iloc[-1]
