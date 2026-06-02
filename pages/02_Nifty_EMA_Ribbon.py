@@ -175,9 +175,15 @@ tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
 from data.rolled_positions import load_rolled, bootstrap_from_history
+import pytz as _pytz
+_today_ist_str = _dt.datetime.now(_pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
 _rolled = load_rolled()
-# Bootstrap from Kite historical data if anchor missing
-if not _rolled.get("anchor"):
+# Bootstrap if: no anchor, OR anchor was set from today's partial candle
+_needs_bootstrap = (
+    not _rolled.get("anchor") or
+    str(_rolled.get("anchor_date", "")) == _today_ist_str
+)
+if _needs_bootstrap:
     try:
         from data.live_fetcher import get_nifty_daily as _get_daily_boot
         _boot_df = _get_daily_boot()
