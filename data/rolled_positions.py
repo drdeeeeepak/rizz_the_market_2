@@ -174,8 +174,11 @@ def bootstrap_from_history(daily_df) -> dict:
     import pandas as pd
 
     rolled = load_rolled()
-    if rolled.get("anchor"):
-        return rolled  # already have data — don't overwrite
+    # Re-bootstrap if anchor is missing OR if history has no EXPIRY_ANCHOR entry
+    _hist = rolled.get("history", [])
+    _has_anchor_event = any(h.get("event") == "EXPIRY_ANCHOR" for h in _hist)
+    if rolled.get("anchor") and _has_anchor_event:
+        return rolled  # already have valid data — don't overwrite
 
     if daily_df is None or (hasattr(daily_df, "empty") and daily_df.empty):
         log.warning("bootstrap_from_history: no daily data available")
@@ -189,8 +192,12 @@ def bootstrap_from_history(daily_df) -> dict:
             df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # Find the most recent Tuesday (weekday == 1) in the historical data
-    tue_rows = df[df.index.weekday == 1]
+    # Find the most recent COMPLETED Tuesday — exclude today to avoid partial candle
+    today = datetime.date.today()
+    tue_rows = df[(df.index.weekday == 1) & (df.index.date < today)]
+    if tue_rows.empty:
+        # Fallback: include today only if it's not Tuesday (shouldn't happen)
+        tue_rows = df[df.index.weekday == 1]
     if tue_rows.empty:
         log.warning("bootstrap_from_history: no Tuesday found in daily data")
         return rolled

@@ -706,7 +706,7 @@ else:
             "PE_PROFIT":     ("🟢 PE BOOK PROFIT","#0f766e"),
         }
         _hist_rows = ""
-        for _he in reversed(_rp_history):
+        for _he in _rp_history:
             _el, _ec = _EV_LABEL.get(_he.get("event",""), ("?", "#334155"))
             _old_a   = _he.get("old_anchor")
             _anc_str = (f"{_old_a:,.0f} → {_he.get('new_anchor',0):,.0f}"
