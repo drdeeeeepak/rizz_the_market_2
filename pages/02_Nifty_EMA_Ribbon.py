@@ -660,7 +660,7 @@ with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=Fa
                 _move = max(abs(_r["close"] - _r["open"]), _expected_daily_move_pts)
                 _display_rows.append({
                     "Date":      _idx.strftime("%d %b"),
-                    "Ret %":     f"{_r['ret_pct']:+.2f}%",
+                    "Chng%":     f"{_r['ret_pct']:+.2f}%",
                     "Rel Rng":   f"{_r['rel_range']:.2f}×",
                     "CE Threat": f"{float(_r['ce_thr']):.2f}  ({max(float(_r['ret_pct']), 0):.2f}% × {_r['rel_range']:.2f})",
                     "PE Threat": f"{float(_r['pe_thr']):.2f}  ({max(float(-_r['ret_pct']), 0):.2f}% × {_r['rel_range']:.2f})",
@@ -679,7 +679,7 @@ with st.expander("Threat & DTB — Daily History (VIX & RTR Proxy)", expanded=Fa
             
             _display_rows.append({
                 "Date":      _row_label,
-                "Ret %":     f"{daily_ret_pct:+.2f}%",
+                "Chng%":     f"{daily_ret_pct:+.2f}%",
                 "Rel Rng":   f"{rel_range:.2f}×",
                 "CE Threat": f"{ce_threat_mult:.2f}  ({max(daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
                 "PE Threat": f"{pe_threat_mult:.2f}  ({max(-daily_ret_pct, 0):.2f}% × {rel_range:.2f})",
