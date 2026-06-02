@@ -444,6 +444,52 @@ ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_book_profit)
 # ══════════════════════════════════════════════════════════════════════════════
 show_page_header(spot, signals_ts)
 
+with st.expander("📖 Page Guide — What this page does & how to read it", expanded=False):
+    st.markdown(f"""
+### What this page is for
+You sell a Call (CE) and a Put (PE) each week. This page tracks whether to **hold** those positions or **roll** them, based purely on where Nifty closes each day.
+
+---
+
+### The Anchor
+Every **Tuesday EOD** (3:35 PM IST), Nifty's closing price is locked as the **anchor** for the week. Both strikes are set from this single reference:
+- **CE sold** = anchor + 3.5% (nearest 50pt) — market must rise this much to hurt you
+- **PE sold** = anchor − 4.0% (nearest 50pt) — market must fall this much to hurt you
+
+---
+
+### The Only Rule — checked at EOD every day
+| Signal | Condition | Action |
+|---|---|---|
+| 🔴 BOOK LOSS | EOD close drifts ≥ 2.5% adverse | Exit position. New anchor = today's close. Both strikes reset. |
+| 🟢 BOOK PROFIT | EOD close drifts ≥ 1.8% favorable | Lock in gains. New anchor = today's close. Both strikes reset. |
+| ✅ HOLD | Neither threshold reached | Do nothing. |
+
+No intraday action. No filter gates. Pure closing price check.
+
+---
+
+### Threat Multiplier
+A danger score combining DTE (days left), DTB (days to breach), and VIX. CE 0.00 = call side totally safe. A score above 1.0 = real danger, reduce size.
+
+### Days to Breach (DTB)
+How many "average movement days" it would take for Nifty to reach your sold strike at the current pace. DTB = 1 is red alert. DTB ≥ 5 means relax.
+
+### Corridors
+Visual map showing where your strikes are, where spot is, and where the book profit/loss trigger prices fall — all stacked in one view. EMAs in between act as resistance (CE side) and support (PE side).
+
+### Cycle History
+Paper trail of the current week: when anchor was set on Tuesday, and any mid-week rolls with old → new anchor and old → new strikes.
+
+### Everything else (EMA Moat, Canary, Momentum, Cluster)
+Context — not rules. These tell you *how threatening the market structure is* and help you decide **size** (e.g. 2CE:1PE at 63%). They do not change the 2.5% / 1.8% hold/roll rule.
+
+---
+
+### Book Profit / Loss — both sides always reset together
+When either side triggers, **both CE and PE are rolled** to new strikes from the new anchor. One unified anchor, always.
+""")
+
 ui.section_header("Roll Matrix",
                   "EOD price-based · Unified anchor · Book Loss ≥2.5% · Book Profit ≥1.8%")
 
@@ -735,6 +781,88 @@ else:
             f"letter-spacing:1.5px;margin-bottom:8px;'>CYCLE HISTORY · cycle started {_rp_history[0].get('date','') if _rp_history else tue_anchor_date}</div>"
             + _hist_rows + "</div>",
             unsafe_allow_html=True)
+
+    # ── Data Summary expander ─────────────────────────────────────────────────
+    with st.expander("📊 Current Data — Plain English Summary", expanded=False):
+        if tue_anchor_available:
+            _cycle_start   = _rp_history[0].get("date", tue_anchor_date) if _rp_history else tue_anchor_date
+            _orig_ce       = _rp_history[0].get("new_ce", ce_sold) if _rp_history else ce_sold
+            _orig_pe       = _rp_history[0].get("new_pe", pe_sold) if _rp_history else pe_sold
+            _rolled_mid    = len(_rp_history) > 1
+            _last_ev       = _rp_history[-1] if _rp_history else {}
+            _drift_dir     = "above" if drift_pct >= 0 else "below"
+            _drift_abs     = abs(drift_pct)
+
+            _lines = []
+
+            # Cycle setup
+            if _rolled_mid:
+                _l = _last_ev
+                _lines.append(f"**Cycle** — started {_cycle_start} with anchor {_rp_history[0].get('new_anchor',0):,.0f}; mid-week {_l.get('event','').replace('_',' ')} on {_l.get('date','')} reset anchor to {_l.get('new_anchor',0):,.0f}.")
+            else:
+                _lines.append(f"**Cycle** — started {_cycle_start}, anchor set at {tue_close:,.0f}; no mid-week roll yet.")
+
+            # Strikes
+            if _rolled_mid:
+                _lines.append(f"**Strikes** — originally CE {_orig_ce:,} / PE {_orig_pe:,}; after roll now CE **{ce_sold:,}** / PE **{pe_sold:,}**.")
+            else:
+                _lines.append(f"**Strikes** — CE sold at **{ce_sold:,}** ({ce_sold/tue_close-1:+.1%} from anchor) · PE sold at **{pe_sold:,}** ({pe_sold/tue_close-1:+.1%} from anchor).")
+
+            # Position
+            _lines.append(f"**Position** — spot {spot_now:,.0f} is {_drift_abs:.2f}% {_drift_dir} anchor {tue_close:,.0f}; both sides on **{'BOOK LOSS' if (ce_book_loss or pe_book_loss) else 'BOOK PROFIT' if (ce_book_profit or pe_book_profit) else 'HOLD'}**.")
+
+            # Threat
+            _lines.append(f"**Threat** — CE mult {ce_threat_mult:.2f} ({'mild' if ce_threat_mult < 0.5 else 'elevated' if ce_threat_mult < 1 else 'HIGH'}) · PE mult {pe_threat_mult:.2f} ({'mild' if pe_threat_mult < 0.5 else 'elevated' if pe_threat_mult < 1 else 'HIGH'}).")
+
+            # DTB
+            if tue_anchor_available and ce_def_trig_spot > 0 and "ce_days_s" in dir():
+                _lines.append(f"**Days to Breach** — CE: {_ce_days_s} (spot needs {max(0, ce_def_trig_spot - spot_now):.0f} pts up) · PE: {_pe_days_s} (spot needs {max(0, spot_now - pe_def_trig_spot):.0f} pts down).")
+
+            # Book triggers
+            _lines.append(f"**Book triggers** — CE books loss above {ce_def_trig_spot:,.0f} / profit below {ce_off_trig_spot:,.0f} · PE books loss below {pe_def_trig_spot:,.0f} / profit above {pe_off_trig_spot:,.0f}.")
+
+            # EMA resistances / supports
+            try:
+                _ema_vals = [(n, v) for n, v in [
+                    ("EMA8",  sig.get("ema8_daily",  0)),
+                    ("EMA16", sig.get("ema16_daily", 0)),
+                    ("EMA30", sig.get("ema30_daily", 0)),
+                    ("EMA0",  sig.get("ema0_daily",  sig.get("ema200_daily", 0))),
+                ] if v and float(v) > spot_now]
+                _ema_sup  = [(n, v) for n, v in [
+                    ("EMA8",  sig.get("ema8_daily",  0)),
+                    ("EMA16", sig.get("ema16_daily", 0)),
+                    ("EMA30", sig.get("ema30_daily", 0)),
+                ] if v and float(v) < spot_now]
+                if _ema_vals:
+                    _lines.append("**Resistances above** (CE side) — " + " → ".join(f"{n} {float(v):,.0f}" for n,v in sorted(_ema_vals, key=lambda x: x[1])) + f" → CE sold {ce_sold:,}.")
+                if _ema_sup:
+                    _lines.append("**Supports below** (PE side) — " + " → ".join(f"{n} {float(v):,.0f}" for n,v in sorted(_ema_sup, key=lambda x: -x[1])) + f" → PE sold {pe_sold:,}.")
+            except Exception:
+                pass
+
+            # VIX
+            _lines.append(f"**VIX** — {vix_current:.2f}, {sig.get('vix_zone','—')} zone · {sig.get('vix_regime_note', 'no note')}.")
+
+            # Canary
+            _can_lvl = sig.get("canary_level", 0)
+            _can_dir = sig.get("canary_direction", "")
+            if _can_lvl:
+                _lines.append(f"**Canary** — {_can_dir} Day {_can_lvl} (active warning, {_can_lvl} day{'s' if _can_lvl>1 else ''} running); verdict: act on sizing.")
+            else:
+                _lines.append("**Canary** — no active canary signal; market structure normal.")
+
+            # IC shape / size
+            _skew  = sig.get("p1_ratio", "1:1")
+            _sz    = sig.get("size_multiplier", 1.0)
+            _reg   = sig.get("p2_regime", "—")
+            _lines.append(f"**Sizing** — regime {_reg} · sell ratio {_skew} at {_sz:.0%} of normal size.")
+
+            for _ln in _lines:
+                st.markdown(_ln)
+        else:
+            st.info("Anchor not available — summary will appear once the EOD job sets Tuesday's anchor.")
+
     def _side_card(side_tag, palette, book_loss, book_profit, adverse, favor,
                    def_trig_spot, off_trig_spot, is_ce):
         if book_loss:
