@@ -899,8 +899,13 @@ else:
                       f"Profit trig {off_trig_spot:,} ({_OFF_THR - favor:.2f}% away)")
 
         txt_col  = "#1e293b" if bg in _LIGHT_COLS else "white"
-        adv_str  = f"{adverse:.2f}% {'above' if is_ce else 'below'} anchor"
-        fav_str  = f"{favor:.2f}%  {'below' if is_ce else 'above'} anchor"
+        _adv_parts = []
+        _fav_parts = []
+        if adverse > 0:
+            _adv_parts.append(f"Adverse {adverse:.2f}% {'above' if is_ce else 'below'} anchor")
+        if favor > 0:
+            _fav_parts.append(f"Favorable {favor:.2f}% {'below' if is_ce else 'above'} anchor")
+        _drift_line = " · ".join(_adv_parts + _fav_parts) or "No drift from anchor"
         vix_line = ""
         if vix_available and vix_rising:
             if is_ce:
@@ -919,7 +924,7 @@ else:
             f"<div style='color:{txt_col};font-size:12px;opacity:0.9;margin-bottom:8px;'>{action}</div>"
             f"<div style='background:rgba(0,0,0,0.18);border-radius:6px;padding:8px 10px;"
             f"font-size:13px;color:{txt_col};'>"
-            f"Adverse {adv_str} · Favorable {fav_str}"
+            f"{_drift_line}"
             f"</div>" + vix_line + f"</div>",
             unsafe_allow_html=True)
 
