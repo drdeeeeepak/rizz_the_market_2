@@ -369,10 +369,10 @@ if not vix_available:
 
 # book states already computed in roll matrix pre-compute above
 
-PE_GREEN = {0:"#14532d", 1:"#15803d", 2:"#16a34a", 3:"#bbf7d0", 4:"#dcfce7"}
-CE_RED   = {0:"#b91c1c", 1:"#dc2626", 2:"#ef4444", 3:"#fca5a5", 4:"#fee2e2"}
+PE_GREEN = {0:"#064e3b", 1:"#065f46", 2:"#00b894", 3:"#55efc4", 4:"#d1fae5"}
+CE_RED   = {0:"#7f1d1d", 1:"#be123c", 2:"#ff4757", 3:"#ff8fa3", 4:"#ffe0e6"}
 def _txt(lvl): return "#1e293b" if lvl >= 3 else "white"
-BOTH_AMBER = "#d97706"
+BOTH_AMBER = "#f59e0b"
 
 def _driver(s1, s2, s3):
     if s1 >= s2 and s1 >= s3 and s1 > 0:
@@ -386,12 +386,12 @@ CANARY_LABEL  = {0: "SINGING", 1: "Canary Day 1", 2: "Canary Day 2",
                  3: "Canary Day 3", 4: "Canary Day 4"}
 CANARY_ACTION = {0: "HOLD", 1: "WATCH", 2: "WATCH", 3: "PREPARE", 4: "ACT"}
 CANARY_ICON   = {0: "✅", 1: "🟡", 2: "⚠️", 3: "🔴", 4: "🔴"}
-CANARY_HEADER_COLOUR = {0: "#d97706", 1: "#d97706", 2: "#d97706", 3: "#ea580c", 4: "#dc2626"}
+CANARY_HEADER_COLOUR = {0: "#10b981", 1: "#f59e0b", 2: "#f97316", 3: "#ef4444", 4: "#dc2626"}
 overall_action = CANARY_ACTION.get(overall_canary, "WATCH")
 overall_label  = CANARY_LABEL.get(overall_canary, "Canary Day 4")
 
 _both_singing = (pe_canary == 0 and ce_canary == 0)
-_LIGHT_COLS = {"#bbf7d0", "#dcfce7", "#fca5a5", "#fecaca", "#fee2e2"}
+_LIGHT_COLS = {"#55efc4", "#d1fae5", "#ff8fa3", "#fecaca", "#ffe0e6"}
 
 def _action_from_table(moats: float, canary_day: int) -> tuple:
     if moats >= 3:
@@ -415,7 +415,7 @@ action_pe, level_pe = _action_from_table(put_moats,  pe_canary)
 action_ce, level_ce = _action_from_table(call_moats, ce_canary)
 
 _severity = {"success": 0, "info": 1, "warning": 2, "danger": 3}
-_lvl_col  = {"success":"#16a34a","info":"#0369a1","warning":"#d97706","danger":"#dc2626"}
+_lvl_col  = {"success":"#10b981","info":"#38bdf8","warning":"#f59e0b","danger":"#ff4757"}
 if _severity.get(level_pe, 0) >= _severity.get(level_ce, 0):
     page_action, page_level, page_driver = action_pe, level_pe, "PE"
 else:
@@ -432,9 +432,9 @@ def _chip(lvl, palette):
             f"padding:2px 6px;font-size:14px;font-weight:700;line-height:1.4;'>D{lvl}</span>")
 
 def _roll_state(bl, bp):
-    if bl: return "🔴 BOOK LOSS",   "#b91c1c"
-    if bp: return "🟢 BOOK PROFIT", "#0f766e"
-    return         "✅ HOLD",        "#1e3a5f"
+    if bl: return "🔴 BOOK LOSS",   "#be123c"
+    if bp: return "🟢 BOOK PROFIT", "#00b894"
+    return         "✅ HOLD",        "#0ea5e9"
 
 pe_rs_txt, pe_rs_col = _roll_state(pe_book_loss, pe_book_profit)
 ce_rs_txt, ce_rs_col = _roll_state(ce_book_loss, ce_book_profit)
@@ -755,24 +755,24 @@ else:
                    if _is_rolled else "")
 
     st.markdown(
-        f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
-        f"border:1px solid #1e293b;margin-bottom:10px;'>"
-        f"<div style='font-size:13px;font-weight:700;color:#94a3b8;"
+        f"<div style='background:linear-gradient(135deg,#0d1b2a 0%,#1a2744 100%);border-radius:12px;padding:14px 18px;"
+        f"border:1px solid #2563eb;box-shadow:0 4px 20px rgba(37,99,235,0.25);margin-bottom:10px;'>"
+        f"<div style='font-size:13px;font-weight:700;color:#93c5fd;"
         f"letter-spacing:1.5px;margin-bottom:8px;'>{_card_title}</div>"
         + (f"<div style='font-size:12px;color:#fbbf24;margin-bottom:8px;'>{_roll_note}</div>"
            if _roll_note else "")
         + f"<div style='display:flex;gap:16px;flex-wrap:wrap;'>"
         f"<div>"
-        f"<span style='font-size:14px;color:#94a3b8;'>PE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#16a34a'};'>"
+        f"<span style='font-size:14px;color:#93c5fd;font-weight:600;'>PE SOLD </span>"
+        f"<span style='font-size:22px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#00b894'};text-shadow:0 0 8px rgba(0,184,148,0.5);'>"
         f"{pe_sold:,}</span>"
-        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>"
+        f"<div style='font-size:13px;color:#7dd3fc;margin-top:2px;'>"
         f"anchor {tue_close:,.0f} − 4.0%</div></div>"
         f"<div>"
-        f"<span style='font-size:14px;color:#94a3b8;'>CE SOLD </span>"
-        f"<span style='font-size:20px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#dc2626'};'>"
+        f"<span style='font-size:14px;color:#93c5fd;font-weight:600;'>CE SOLD </span>"
+        f"<span style='font-size:22px;font-weight:900;color:{'#fbbf24' if _is_rolled else '#ff4757'};text-shadow:0 0 8px rgba(255,71,87,0.5);'>"
         f"{ce_sold:,}</span>"
-        f"<div style='font-size:13px;color:#94a3b8;margin-top:2px;'>"
+        f"<div style='font-size:13px;color:#7dd3fc;margin-top:2px;'>"
         f"anchor {tue_close:,.0f} + 3.5%</div></div>"
         f"</div></div>",
         unsafe_allow_html=True)
@@ -780,11 +780,11 @@ else:
     # ── Cycle history card ────────────────────────────────────────────────────
     if _rp_history:
         _EV_LABEL = {
-            "EXPIRY_ANCHOR": ("📅 EXPIRY ANCHOR", "#1e3a5f"),
-            "CE_LOSS":       ("🔴 CE BOOK LOSS",  "#7f1d1d"),
-            "PE_LOSS":       ("🔴 PE BOOK LOSS",  "#7f1d1d"),
-            "CE_PROFIT":     ("🟢 CE BOOK PROFIT","#0f766e"),
-            "PE_PROFIT":     ("🟢 PE BOOK PROFIT","#0f766e"),
+            "EXPIRY_ANCHOR": ("📅 EXPIRY ANCHOR", "#4f46e5"),
+            "CE_LOSS":       ("🔴 CE BOOK LOSS",  "#be123c"),
+            "PE_LOSS":       ("🔴 PE BOOK LOSS",  "#be123c"),
+            "CE_PROFIT":     ("🟢 CE BOOK PROFIT","#059669"),
+            "PE_PROFIT":     ("🟢 PE BOOK PROFIT","#059669"),
         }
         _hist_rows = ""
         for _he in _rp_history:
@@ -795,19 +795,19 @@ else:
             _hist_rows += (
                 f"<div style='display:flex;gap:10px;align-items:center;padding:7px 10px;"
                 f"border-radius:6px;background:{_ec}22;margin:3px 0;border-left:3px solid {_ec};'>"
-                f"<span style='font-size:13px;font-weight:700;color:#e2e8f0;min-width:90px;'>"
+                f"<span style='font-size:13px;font-weight:700;color:#f1f5f9;min-width:90px;'>"
                 f"{_he.get('date','?')}</span>"
                 f"<span style='font-size:13px;font-weight:700;color:{_ec};min-width:150px;'>{_el}</span>"
-                f"<span style='font-size:13px;color:#94a3b8;'>Anchor {_anc_str}</span>"
-                f"<span style='font-size:13px;color:#64748b;margin-left:auto;'>"
+                f"<span style='font-size:13px;color:#cbd5e1;'>Anchor {_anc_str}</span>"
+                f"<span style='font-size:13px;color:#94a3b8;margin-left:auto;'>"
                 f"CE {_he.get('new_ce',0):,} · PE {_he.get('new_pe',0):,}</span>"
                 f"</div>"
             )
         st.markdown(
-            f"<div style='background:#0f172a;border-radius:10px;padding:12px 16px;"
-            f"border:1px solid #1e293b;margin-bottom:10px;'>"
-            f"<div style='font-size:12px;font-weight:700;color:#94a3b8;"
-            f"letter-spacing:1.5px;margin-bottom:8px;'>CYCLE HISTORY · cycle started {_rp_history[0].get('date','') if _rp_history else tue_anchor_date}</div>"
+            f"<div style='background:linear-gradient(135deg,#0d1b2a 0%,#1a2744 100%);border-radius:12px;padding:14px 18px;"
+            f"border:1px solid #6366f1;box-shadow:0 4px 20px rgba(99,102,241,0.2);margin-bottom:10px;'>"
+            f"<div style='font-size:12px;font-weight:800;color:#a5b4fc;"
+            f"letter-spacing:2px;margin-bottom:10px;'>CYCLE HISTORY · cycle started {_rp_history[0].get('date','') if _rp_history else tue_anchor_date}</div>"
             + _hist_rows + "</div>",
             unsafe_allow_html=True)
 
@@ -903,7 +903,7 @@ else:
             state  = "🟢 BOOK PROFIT"
             action = f"EOD close crossed {_OFF_THR}% favorable · Roll BOTH strikes from new anchor"
         else:
-            bg     = palette[4] if adverse < 0.5 and favor < 0.5 else palette[3]
+            bg     = palette[3] if adverse < 0.5 and favor < 0.5 else palette[2]
             state  = "✅ HOLD"
             action = (f"Loss trig {def_trig_spot:,} ({_DEF_THR - adverse:.2f}% away) · "
                       f"Profit trig {off_trig_spot:,} ({_OFF_THR - favor:.2f}% away)")
@@ -985,27 +985,27 @@ else:
             _pe_moat_count, _pe_note = 0, ""
 
         _KIND_BG = {
-            "neutral":     ("#334155", "white"),
-            "cmp":         ("#3b82f6", "white"),
-            "above":       ("#fbcfe8", "#831843"),
-            "below":       ("#bbf7d0", "#14532d"),
-            "sold_ce":     ("#1e293b", "white"),
-            "sold_pe":     ("#1e293b", "white"),
-            "book_loss":   ("#7f1d1d", "white"),
-            "book_profit": ("#0f766e", "white"),
+            "neutral":     ("#1e3a5f", "#93c5fd"),
+            "cmp":         ("#0ea5e9", "white"),
+            "above":       ("#4c0519", "#ff8fa3"),
+            "below":       ("#022c22", "#6ee7b7"),
+            "sold_ce":     ("#be123c", "white"),
+            "sold_pe":     ("#065f46", "white"),
+            "book_loss":   ("#7f1d1d", "#fecaca"),
+            "book_profit": ("#064e3b", "#6ee7b7"),
         }
 
         def _render_vc(title, items):
             items_desc = sorted(items, key=lambda x: x[1], reverse=True)
-            html = (f"<div style='background:#0f172a;border-radius:10px;padding:16px;"
-                    f"border:1px solid #1e293b;'>")
-            html += (f"<div style='font-size:15px;font-weight:700;color:#94a3b8;"
-                     f"margin-bottom:16px;letter-spacing:1px;'>{title}</div>")
+            html = (f"<div style='background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-radius:12px;padding:16px;"
+                    f"border:1px solid #334155;box-shadow:0 4px 24px rgba(0,0,0,0.4);'>")
+            html += (f"<div style='font-size:15px;font-weight:800;color:#e2e8f0;"
+                     f"margin-bottom:16px;letter-spacing:2px;text-transform:uppercase;'>{title}</div>")
             for lbl, val, kind in items_desc:
                 bg, txt = _KIND_BG.get(kind, ("#334155", "white"))
                 is_spot = kind == "cmp"
-                border = "border:2px solid #60a5fa;" if is_spot else "border:1px solid rgba(255,255,255,0.1);"
-                margin = "margin:12px 0;" if is_spot else "margin:4px 0;"
+                border = "border:2px solid #38bdf8;box-shadow:0 0 10px rgba(56,189,248,0.4);" if is_spot else "border:1px solid rgba(255,255,255,0.08);"
+                margin = "margin:10px 0;" if is_spot else "margin:3px 0;"
                 pct = _pct_anc(val)
                 pct_str = f"{pct:+.2f}% anchor" if kind != "cmp" else "—"
                 html += (f"<div style='background:{bg};color:{txt};padding:10px 14px;"
