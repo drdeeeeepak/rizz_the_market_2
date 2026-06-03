@@ -1383,6 +1383,88 @@ if e3 and e8 and e16 and e30 and spot > 0:
         f"</div>",
         unsafe_allow_html=True)
 
+    # ── Plain English summary of live values ──────────────────────────────────
+    _pe_spot_desc = (
+        f"Nifty spot ({_spot_v:,.0f}) is **above both clusters** — price is in clear air above the short-term band."
+        if _spot_v > _fast_hi else
+        f"Nifty spot ({_spot_v:,.0f}) is **inside the fast cluster** ({_fast_lo:,.0f}–{_fast_hi:,.0f}) — price is churning within the short-term momentum range."
+        if _spot_v >= _fast_lo else
+        f"Nifty spot ({_spot_v:,.0f}) is **between the two clusters** — above the slow band ({_slow_hi:,.0f}) but below the fast band ({_fast_lo:,.0f})."
+        if _spot_v > _slow_hi else
+        f"Nifty spot ({_spot_v:,.0f}) is **inside the slow cluster** ({_slow_lo:,.0f}–{_slow_hi:,.0f}) — price is grinding through the intermediate trend zone."
+        if _spot_v >= _slow_lo else
+        f"Nifty spot ({_spot_v:,.0f}) is **below both clusters** — under the slow band ({_slow_lo:,.0f}), in bearish territory."
+    )
+
+    _pe_fast_desc = (
+        f"The short-term band (EMA3–EMA8) is at **{_fast_lo:,.0f}–{_fast_hi:,.0f}** ({_fast_hi - _fast_lo:.0f} pts wide), "
+        + (f"rising at **{abs(_fast_slope):.0f} pts/day** — bullish short-term pressure."
+           if _fast_slope > 5 else
+           f"falling at **{abs(_fast_slope):.0f} pts/day** — bearish short-term pressure."
+           if _fast_slope < -5 else
+           f"essentially flat ({abs(_fast_slope):.0f} pts/day) — no directional conviction yet.")
+    )
+
+    _pe_slow_desc = (
+        f"The intermediate trend band (EMA16–EMA30) is at **{_slow_lo:,.0f}–{_slow_hi:,.0f}** ({_slow_hi - _slow_lo:.0f} pts wide). "
+        + ("Fast cluster is **above** it — bullish structure intact."
+           if _fast_above_slow else
+           "Fast cluster is **below** it — bearish structure in play."
+           if _fast_below_slow else
+           "Fast and slow clusters are **overlapping** — no clear trend separation.")
+    )
+
+    _pe_gap_desc = (
+        f"Gap between clusters: **{_gap:+.0f} pts** ({_gap_lbl}, {_gap_cmp_pct:.2f}% of spot, {_gap_atr_pct:.0f}% of ATR). "
+        + ("Clusters are well separated — the current trend is firmly established and unlikely to flip soon."
+           if _gap > 150 else
+           "Clusters are closing in — watch for a crossover that would signal a trend change."
+           if _gap > 30 else
+           "Clusters are nearly touching — an inflection point is imminent."
+           if _gap >= 0 else
+           f"Clusters are overlapping by {abs(_gap):.0f} pts — no clear trend, choppy market.")
+    )
+
+    if _converging and abs(_fast_slope) > 1 and _gap > 0:
+        _days_to_cross = int(_gap / abs(_fast_slope))
+        _pe_cross_desc = (
+            f"At current pace the clusters touch in **~{_days_to_cross} day{'s' if _days_to_cross != 1 else ''}** — "
+            + ("**imminent**, be alert for a regime change." if _days_to_cross <= 2 else
+               "**near-term**, keep a close eye on the next few sessions." if _days_to_cross <= 5 else
+               "still some distance away, no immediate action needed.")
+        )
+    elif not _converging and _gap > 0:
+        _pe_cross_desc = "The fast cluster is moving **away** from the slow cluster — gap is widening, trend strengthening."
+    else:
+        _pe_cross_desc = ""
+
+    _regime_meaning = {
+        "STRONG_BULL":      "Both clusters stacked bullishly, spot well above — full bull setup. Deploy maximum size, skew toward calls.",
+        "BULL_COMPRESSED":  "Bullish but clusters are squeezing — momentum slowing. Stay bullish but trim size slightly.",
+        "INSIDE_BULL":      "Spot pulled back into the cluster zone — trend is bullish but price consolidating. Balanced CE/PE sizing.",
+        "RECOVERING":       "Spot bouncing above fast but slow cluster is overhead resistance. Cautious, balanced positioning.",
+        "INSIDE_BEAR":      "Structure deteriorating, spot inside bearish cluster zone. Reduce size, skew toward puts.",
+        "BEAR_COMPRESSED":  "Downside pressure but clusters squeezing — downside may be fading. Smaller size, put-heavy.",
+        "STRONG_BEAR":      "Full bearish stack, spot well below both clusters. Minimal size, heavy put skew.",
+    }.get(regime, "Transitional — no clear edge.")
+
+    _pe_regime_desc = (
+        f"**Regime: {regime}** — {_regime_meaning}  "
+        f"Suggested sizing: **{_reg_ic.split(':')[0]} CE : {_reg_ic.split(':')[1]} PE**, position at **{_reg_sz}** of normal."
+        + (f"\n\n⚠️ **Regime changed since entry** (was {_entry_regime}, now {regime}) — "
+           f"your position was sized for a different market structure. Review strikes and delta exposure."
+           if _regime_changed else "")
+    )
+
+    with st.expander("Live Cluster State — What This Means", expanded=False):
+        st.markdown(
+            f"{_pe_spot_desc}\n\n"
+            f"{_pe_fast_desc}\n\n"
+            f"{_pe_slow_desc}\n\n"
+            f"{_pe_gap_desc} {_pe_cross_desc}\n\n"
+            f"{_pe_regime_desc}"
+        )
+
     with st.expander("Live Cluster State — Reference", expanded=False):
         st.markdown(
             "**Clusters**\n\n"
