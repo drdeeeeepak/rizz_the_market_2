@@ -63,8 +63,18 @@ def main():
 
         from data.rolled_positions import set_expiry_anchor, eod_update
         if _is_tue:
-            set_expiry_anchor(spot, _today_str)
-            log.info("Tuesday EOD: expiry anchor set to %.0f", spot)
+            # Use official EOD close from daily OHLCV (3:30 PM NSE close), not live spot
+            _eod_close = spot
+            if not nifty_df.empty:
+                try:
+                    _last_dt = nifty_df.index[-1]
+                    _last_d  = _last_dt.date() if hasattr(_last_dt, "date") else _last_dt.to_pydatetime().date()
+                    if _last_d.strftime("%Y-%m-%d") == _today_str:
+                        _eod_close = float(nifty_df["close"].iloc[-1])
+                except Exception:
+                    pass
+            set_expiry_anchor(_eod_close, _today_str)
+            log.info("Tuesday EOD: expiry anchor set to %.0f (daily close)", _eod_close)
         else:
             _roll_result = eod_update(spot, _today_str)
             _hist = _roll_result.get("history", [])

@@ -452,7 +452,7 @@ You sell a Call (CE) and a Put (PE) each week. This page tracks whether to **hol
 ---
 
 ### The Anchor
-Every **Tuesday EOD** (3:35 PM IST), Nifty's closing price is locked as the **anchor** for the week. Both strikes are set from this single reference:
+Every **Tuesday**, Nifty's official **EOD close** (3:30 PM IST) is locked as the **anchor** for the new week. Both strikes are set from this single reference:
 - **CE sold** = anchor + 3.5% (nearest 50pt) — market must rise this much to hurt you
 - **PE sold** = anchor − 4.0% (nearest 50pt) — market must fall this much to hurt you
 
@@ -495,7 +495,7 @@ ui.section_header("Roll Matrix",
 
 with st.expander("Roll Matrix — Reference", expanded=False):
     st.markdown("""
-**Anchor** — Tuesday's EOD close, set by the EOD job at 3:35 PM. Both CE and PE always share the same anchor.
+**Anchor** — Tuesday's official EOD close (3:30 PM NSE close), set by the EOD job. Both CE and PE always share the same anchor.
 
 **Entry strikes** (from anchor):
 - CE sold at anchor + 3.5% (nearest 50pt)

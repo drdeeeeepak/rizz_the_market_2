@@ -180,8 +180,13 @@ def bootstrap_from_history(daily_df) -> dict:
     _hist  = rolled.get("history", [])
     _anchor_date = str(rolled.get("anchor_date", ""))
     _has_expiry_anchor = any(h.get("event") == "EXPIRY_ANCHOR" for h in _hist)
-    # Skip re-bootstrap only if: anchor exists, has EXPIRY_ANCHOR, and anchor is NOT today's partial candle
-    if rolled.get("anchor") and _has_expiry_anchor and _anchor_date != _today_ist:
+    _today_is_tue = datetime.datetime.strptime(_today_ist, "%Y-%m-%d").weekday() == 1
+    # Skip re-bootstrap if anchor exists and has EXPIRY_ANCHOR event, UNLESS anchor was set
+    # from today's partial candle on a non-Tuesday day.
+    # On Tuesday, anchor_date==today means EOD job just set the official close — keep it.
+    if rolled.get("anchor") and _has_expiry_anchor and (
+        _anchor_date != _today_ist or _today_is_tue
+    ):
         return rolled
 
     if daily_df is None or (hasattr(daily_df, "empty") and daily_df.empty):
