@@ -461,8 +461,8 @@ Every **Tuesday**, Nifty's official **EOD close** (3:30 PM IST) is locked as the
 ### The Only Rule — checked at EOD every day
 | Signal | Condition | Action |
 |---|---|---|
-| 🔴 BOOK LOSS | EOD close drifts ≥ 2.5% adverse | Exit position. New anchor = today's close. Both strikes reset. |
-| 🟢 BOOK PROFIT | EOD close drifts ≥ 1.8% favorable | Lock in gains. New anchor = today's close. Both strikes reset. |
+| 🔴 BOOK LOSS | EOD close drifts ≥ 2.5% adverse | New anchor = today's close. **Both CE and PE reset.** |
+| 🟢 BOOK PROFIT | EOD close drifts ≥ 1.8% favorable | New anchor = today's close. **Triggered side only reset. Other leg held.** |
 | ✅ HOLD | Neither threshold reached | Do nothing. |
 
 No intraday action. No filter gates. Pure closing price check.
@@ -486,8 +486,10 @@ Context — not rules. These tell you *how threatening the market structure is* 
 
 ---
 
-### Book Profit / Loss — both sides always reset together
-When either side triggers, **both CE and PE are rolled** to new strikes from the new anchor. One unified anchor, always.
+### Book Loss vs Book Profit — different roll behaviour
+**Book Loss** (≥2.5% adverse): both CE and PE are rolled to new strikes from the new anchor.
+
+**Book Profit** (≥1.8% favorable): only the triggered side is rolled to a new strike from the new anchor. The other leg stays at its current strike — its protection is preserved.
 """)
 
 ui.section_header("Roll Matrix",
@@ -510,18 +512,18 @@ with st.expander("Roll Matrix — Reference", expanded=False):
 | CE LOSS | EOD close ≥ anchor + 2.5% (market moved up) |
 | PE LOSS | EOD close ≤ anchor − 2.5% (market moved down) |
 
-Action: New anchor = that day's EOD close. Both CE and PE strikes recalculated.
+Action: New anchor = that day's EOD close. **Both CE and PE strikes recalculated.**
 
 ---
 
 **BOOK PROFIT — drift ≥ 1.8% favorable (EOD closing basis)**
 
-| Direction | Trigger |
-|---|---|
-| PE PROFIT | EOD close ≥ anchor + 1.8% (PE premium dead, CE still fine) |
-| CE PROFIT | EOD close ≤ anchor − 1.8% (CE premium dead, PE still fine) |
+| Direction | Trigger | What rolls |
+|---|---|---|
+| PE PROFIT | EOD close ≥ anchor + 1.8% (PE premium dead, CE still fine) | PE only → new PE = anchor × 0.960. CE held. |
+| CE PROFIT | EOD close ≤ anchor − 1.8% (CE premium dead, PE still fine) | CE only → new CE = anchor × 1.035. PE held. |
 
-Action: Same as loss — new anchor = EOD close, both strikes reset.
+Action: New anchor = EOD close. **Triggered side reset to standard distance. Other leg unchanged.**
 
 ---
 

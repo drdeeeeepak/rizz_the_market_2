@@ -14,9 +14,10 @@ Format:
 Rules:
 - EOD job on Tuesday: calls set_expiry_anchor(eod_close, date) → starts new cycle
 - EOD job Mon/Wed/Thu/Fri: calls eod_update(eod_close, date) → checks book levels
-- Book loss:   EOD close drifts ≥ 2.5% adverse from anchor → roll both strikes
-- Book profit: EOD close drifts ≥ 1.8% favorable from anchor → roll both strikes
-- Both sides always reset together from unified anchor = that day's EOD close
+- Book loss:   EOD close drifts ≥ 2.5% adverse  → roll BOTH strikes from new anchor
+- Book profit: EOD close drifts ≥ 1.8% favorable → roll TRIGGERED SIDE ONLY from new anchor
+  - CE_PROFIT: new CE = anchor × 1.035; PE stays unchanged
+  - PE_PROFIT: new PE = anchor × 0.960; CE stays unchanged
 - No intraday triggers. No filter gates. Pure price, EOD only.
 """
 
@@ -137,7 +138,8 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
     """
     Called by EOD job on non-Tuesday days.
     Checks if book profit or book loss was reached on closing basis.
-    If so, rolls both strikes to new anchor = today's EOD close.
+    Loss: rolls both CE and PE to new anchor.
+    Profit: rolls only the triggered side; other strike stays unchanged.
     Idempotent: skips if already updated today.
     """
     rolled = load_rolled()
