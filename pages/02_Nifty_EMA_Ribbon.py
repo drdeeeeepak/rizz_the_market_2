@@ -780,27 +780,43 @@ else:
     # ── Cycle history card ────────────────────────────────────────────────────
     if _rp_history:
         _EV_LABEL = {
-            "EXPIRY_ANCHOR": ("📅 EXPIRY ANCHOR", "#4f46e5"),
-            "CE_LOSS":       ("🔴 CE BOOK LOSS",  "#be123c"),
-            "PE_LOSS":       ("🔴 PE BOOK LOSS",  "#be123c"),
-            "CE_PROFIT":     ("🟢 CE BOOK PROFIT","#059669"),
-            "PE_PROFIT":     ("🟢 PE BOOK PROFIT","#059669"),
+            "EXPIRY_ANCHOR": ("📅 EXPIRY ANCHOR",        "#4f46e5"),
+            "CE_LOSS":       ("🔴 CE BOOK LOSS — BOTH",  "#be123c"),
+            "PE_LOSS":       ("🔴 PE BOOK LOSS — BOTH",  "#be123c"),
+            "CE_PROFIT":     ("🟢 CE PROFIT — CE ONLY",  "#059669"),
+            "PE_PROFIT":     ("🟢 PE PROFIT — PE ONLY",  "#059669"),
         }
         _hist_rows = ""
         for _he in _rp_history:
-            _el, _ec = _EV_LABEL.get(_he.get("event",""), ("?", "#334155"))
+            _ev      = _he.get("event", "")
+            _el, _ec = _EV_LABEL.get(_ev, ("?", "#334155"))
             _old_a   = _he.get("old_anchor")
             _anc_str = (f"{_old_a:,.0f} → {_he.get('new_anchor',0):,.0f}"
                         if _old_a else f"{_he.get('new_anchor',0):,.0f} (new cycle)")
+            _rs      = _he.get("rolled_side", "BOTH")
+            _old_ce  = _he.get("old_ce") or 0
+            _old_pe  = _he.get("old_pe") or 0
+            _new_ce  = _he.get("new_ce") or 0
+            _new_pe  = _he.get("new_pe") or 0
+            # Strike display: show → arrow for rolled side, show "held" for frozen side
+            if _rs == "CE":
+                _ce_str = f"CE {_old_ce:,} → <b>{_new_ce:,}</b>"
+                _pe_str = f"PE {_new_pe:,} (held)"
+            elif _rs == "PE":
+                _ce_str = f"CE {_new_ce:,} (held)"
+                _pe_str = f"PE {_old_pe:,} → <b>{_new_pe:,}</b>"
+            else:
+                _ce_str = f"CE {_old_ce:,} → <b>{_new_ce:,}</b>" if _old_ce else f"CE <b>{_new_ce:,}</b>"
+                _pe_str = f"PE {_old_pe:,} → <b>{_new_pe:,}</b>" if _old_pe else f"PE <b>{_new_pe:,}</b>"
             _hist_rows += (
                 f"<div style='display:flex;gap:10px;align-items:center;padding:7px 10px;"
                 f"border-radius:6px;background:{_ec}22;margin:3px 0;border-left:3px solid {_ec};'>"
                 f"<span style='font-size:13px;font-weight:700;color:#f1f5f9;min-width:90px;'>"
                 f"{_he.get('date','?')}</span>"
-                f"<span style='font-size:13px;font-weight:700;color:{_ec};min-width:150px;'>{_el}</span>"
+                f"<span style='font-size:13px;font-weight:700;color:{_ec};min-width:170px;'>{_el}</span>"
                 f"<span style='font-size:13px;color:#cbd5e1;'>Anchor {_anc_str}</span>"
                 f"<span style='font-size:13px;color:#94a3b8;margin-left:auto;'>"
-                f"CE {_he.get('new_ce',0):,} · PE {_he.get('new_pe',0):,}</span>"
+                f"{_ce_str} · {_pe_str}</span>"
                 f"</div>"
             )
         st.markdown(

@@ -64,6 +64,25 @@ def rolled_strikes(anchor: float) -> tuple:
     return ce, pe
 
 
+def _apply_roll(event: str, new_anc: float, old_ce, old_pe) -> tuple:
+    """
+    Compute new (ce_strike, pe_strike, rolled_side) for a roll event.
+    Loss events reset both sides. Profit events reset only the booked side —
+    the other leg stays at its current strike to preserve its protection.
+    """
+    if event in ("CE_LOSS", "PE_LOSS"):
+        ce, pe = rolled_strikes(new_anc)
+        return ce, pe, "BOTH"
+    if event == "CE_PROFIT":
+        ce = int(round(new_anc * 1.035 / 50) * 50)
+        return ce, old_pe, "CE"
+    if event == "PE_PROFIT":
+        pe = int(round(new_anc * 0.960 / 50) * 50)
+        return old_ce, pe, "PE"
+    ce, pe = rolled_strikes(new_anc)
+    return ce, pe, "BOTH"
+
+
 # ── Roll event check ─────────────────────────────────────────────────────────
 
 def check_roll_event(eod_close: float, anchor: float) -> str | None:
@@ -137,22 +156,23 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
 
     old_ce, old_pe = rolled.get("ce_strike"), rolled.get("pe_strike")
     new_anc        = round(eod_close, 2)
-    new_ce, new_pe = rolled_strikes(new_anc)
+    new_ce, new_pe, rolled_side = _apply_roll(event, new_anc, old_ce, old_pe)
 
     rolled["anchor"]      = new_anc
     rolled["anchor_date"] = eod_date
     rolled["ce_strike"]   = new_ce
     rolled["pe_strike"]   = new_pe
     rolled.setdefault("history", []).append({
-        "date":       eod_date,
-        "event":      event,
-        "eod_close":  new_anc,
-        "old_anchor": anchor,
-        "new_anchor": new_anc,
-        "old_ce":     old_ce,
-        "new_ce":     new_ce,
-        "old_pe":     old_pe,
-        "new_pe":     new_pe,
+        "date":        eod_date,
+        "event":       event,
+        "eod_close":   new_anc,
+        "old_anchor":  anchor,
+        "new_anchor":  new_anc,
+        "old_ce":      old_ce,
+        "new_ce":      new_ce,
+        "old_pe":      old_pe,
+        "new_pe":      new_pe,
+        "rolled_side": rolled_side,
     })
     save_rolled(rolled)
     return rolled
@@ -240,18 +260,21 @@ def bootstrap_from_history(daily_df) -> dict:
         anchor    = float(result["anchor"])
         event     = check_roll_event(eod_close, anchor)
         if event:
-            new_anc        = round(eod_close, 2)
-            new_ce, new_pe = rolled_strikes(new_anc)
+            new_anc                  = round(eod_close, 2)
+            new_ce, new_pe, rs_side  = _apply_roll(event, new_anc,
+                                                   result["ce_strike"],
+                                                   result["pe_strike"])
             result["history"].append({
-                "date":       day_str,
-                "event":      event,
-                "eod_close":  new_anc,
-                "old_anchor": anchor,
-                "new_anchor": new_anc,
-                "old_ce":     result["ce_strike"],
-                "new_ce":     new_ce,
-                "old_pe":     result["pe_strike"],
-                "new_pe":     new_pe,
+                "date":        day_str,
+                "event":       event,
+                "eod_close":   new_anc,
+                "old_anchor":  anchor,
+                "new_anchor":  new_anc,
+                "old_ce":      result["ce_strike"],
+                "new_ce":      new_ce,
+                "old_pe":      result["pe_strike"],
+                "new_pe":      new_pe,
+                "rolled_side": rs_side,
             })
             result["anchor"]      = new_anc
             result["anchor_date"] = day_str
