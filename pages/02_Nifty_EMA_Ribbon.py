@@ -1342,7 +1342,15 @@ if e3 and e8 and e16 and e30 and spot > 0:
         f"<div style='font-size:13px;color:#94a3b8;margin-bottom:3px;'>SHORT-TERM MOMENTUM · EMA3 – EMA8</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_fast_lo:,.0f} – {_fast_hi:,.0f}</div>"
         f"<div style='font-size:13px;color:{_slope_col};margin-top:2px;'>"
-        f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div></div>"
+        f"Slope {_slope_lbl} · width {_fast_hi-_fast_lo:.0f} pts</div>"
+        + (f"<div style='font-size:13px;font-weight:700;color:#f87171;margin-top:3px;'>"
+           f"Spot {_fast_lo - _spot_v:.0f} pts below fast band</div>"
+           if _spot_v < _fast_lo else
+           f"<div style='font-size:13px;color:#94a3b8;margin-top:3px;'>"
+           f"Spot {_spot_v - _fast_lo:.0f} pts above fast band</div>"
+           if _spot_v > _fast_hi else
+           f"<div style='font-size:13px;color:#fbbf24;margin-top:3px;'>Spot inside fast band</div>")
+        + f"</div>"
         f"<div style='background:#1e293b;border-radius:6px;padding:8px 10px;'>"
         f"<div style='font-size:13px;color:#94a3b8;margin-bottom:3px;'>INTERMEDIATE TREND · EMA16 – EMA30</div>"
         f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;'>{_slow_lo:,.0f} – {_slow_hi:,.0f}</div>"
