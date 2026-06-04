@@ -2,6 +2,8 @@
 # TF hierarchy: 2H=PRIMARY | 4H=SECONDARY | 1D=BG | 1W=MACRO
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
 
@@ -13,6 +15,177 @@ st.caption("2H=PRIMARY · 4H=SECONDARY · 1D=BG · 1W=MACRO | Asymmetric IC: CE 
 from page_utils import bootstrap_signals, show_page_header
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2H PHASES CHART — rendered early, independent of sig / st.stop()
+# ─────────────────────────────────────────────────────────────────────────────
+_PHASE_COLOR = {
+    "EXTREME_SQUEEZE": "#ef4444",
+    "SQUEEZE":         "#f97316",
+    "CALM":            "#22c55e",
+    "MOMENTUM":        "#eab308",
+    "HIGH_VOL":        "#a855f7",
+    "MEAN_REVERT":     "#ec4899",
+}
+_PHASE_FILL = {
+    "EXTREME_SQUEEZE": "rgba(239,68,68,0.15)",
+    "SQUEEZE":         "rgba(249,115,22,0.12)",
+    "CALM":            "rgba(34,197,94,0.12)",
+    "MOMENTUM":        "rgba(234,179,8,0.12)",
+    "HIGH_VOL":        "rgba(168,85,247,0.15)",
+    "MEAN_REVERT":     "rgba(236,72,153,0.15)",
+}
+_BW_LEVELS = [
+    (2.0, "EXTREME_SQ", "#ef4444"),
+    (3.5, "SQUEEZE",    "#f97316"),
+    (4.5, "CALM",       "#22c55e"),
+    (5.6, "MOMENTUM",   "#eab308"),
+    (6.5, "HIGH_VOL",   "#a855f7"),
+]
+
+def _classify_bw(bw):
+    for thr, name in [(2.0,"EXTREME_SQUEEZE"),(3.5,"SQUEEZE"),(4.5,"CALM"),
+                      (5.6,"MOMENTUM"),(6.5,"HIGH_VOL"),(None,"MEAN_REVERT")]:
+        if thr is None or bw < thr:
+            return name
+    return "MEAN_REVERT"
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_2h_phases():
+    """Fetch 1H data, resample to 2H, compute BB. Returns (df, err_str)."""
+    try:
+        from data.live_fetcher import get_nifty_1h_phase
+        from analytics.supertrend import resample_ohlcv
+        from analytics.bollinger import BollingerOptionsEngine
+        raw = get_nifty_1h_phase(days=33)
+        if raw.empty:
+            return pd.DataFrame(), "1H data empty — Kite login may be needed"
+        df = resample_ohlcv(raw, "2h")
+        if df.empty:
+            return pd.DataFrame(), "2H resample produced empty DataFrame"
+        df = BollingerOptionsEngine().compute(df.copy())
+        if "bb_bw" not in df.columns:
+            return pd.DataFrame(), "BB compute returned no bb_bw column"
+        # strip timezone for plotly
+        if hasattr(df.index, "tz") and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df["phase"] = df["bb_bw"].apply(_classify_bw)
+        df = df.dropna(subset=["bb_bw"]).copy()
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), str(e)
+
+ui.section_header("2H Phases — Squeeze · Momentum · Vol  (1-month window)")
+
+_df2h, _load_err = _load_2h_phases()
+
+if _df2h.empty:
+    st.warning(f"⚠️ 2H phase chart — {_load_err or 'no data'}")
+else:
+    n     = len(_df2h)
+    xp    = list(range(n))
+    tsi   = _df2h.index.tolist()
+    htxt  = [t.strftime("%d %b %H:%M") for t in tsi]
+    phs   = _df2h["phase"].tolist()
+    bw    = _df2h["bb_bw"].tolist()
+
+    # date tick labels
+    seen: dict = {}
+    for i, t in enumerate(tsi):
+        if t.date() not in seen:
+            seen[t.date()] = i
+    tv = list(seen.values())
+    tl = [tsi[i].strftime("%d %b") for i in tv]
+
+    # phase segments for ribbon
+    segs, s0, s_ph = [], 0, phs[0]
+    for i in range(1, n):
+        if phs[i] != s_ph:
+            segs.append((s0, i - 1, s_ph))
+            s0, s_ph = i, phs[i]
+    segs.append((s0, n - 1, s_ph))
+
+    fig2h = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        row_heights=[0.65, 0.35], vertical_spacing=0.03,
+        subplot_titles=["2H Price + Bollinger Bands", "BW% by Phase"],
+    )
+
+    # phase ribbon on price panel
+    for p0, p1, ph in segs:
+        fig2h.add_shape(
+            type="rect",
+            x0=p0 - 0.5, x1=p1 + 0.5, y0=0, y1=1,
+            xref="x", yref="y domain",
+            fillcolor=_PHASE_FILL.get(ph, "rgba(128,128,128,0.1)"),
+            line_width=0, layer="below",
+            row=1, col=1,
+        )
+
+    # candlestick
+    fig2h.add_trace(go.Candlestick(
+        x=xp,
+        open=_df2h["open"], high=_df2h["high"],
+        low=_df2h["low"],   close=_df2h["close"],
+        text=htxt,
+        increasing=dict(line=dict(color="#26a69a", width=1), fillcolor="#26a69a"),
+        decreasing=dict(line=dict(color="#ef5350", width=1), fillcolor="#ef5350"),
+        name="2H", showlegend=False,
+    ), row=1, col=1)
+
+    # BB bands
+    fig2h.add_trace(go.Scatter(
+        x=xp, y=_df2h["bb_upper"].tolist(), name="Upper",
+        line=dict(color="rgba(100,149,237,0.7)", width=1, dash="dot"),
+        showlegend=False,
+    ), row=1, col=1)
+    fig2h.add_trace(go.Scatter(
+        x=xp, y=_df2h["bb_lower"].tolist(), name="Lower",
+        line=dict(color="rgba(100,149,237,0.7)", width=1, dash="dot"),
+        fill="tonexty", fillcolor="rgba(100,149,237,0.06)",
+        showlegend=False,
+    ), row=1, col=1)
+    fig2h.add_trace(go.Scatter(
+        x=xp, y=_df2h["bb_basis"].tolist(), name="Basis",
+        line=dict(color="rgba(100,149,237,0.9)", width=1),
+        showlegend=False,
+    ), row=1, col=1)
+
+    # BW% bars coloured by phase
+    for ph, col in _PHASE_COLOR.items():
+        mask = [i for i, p in enumerate(phs) if p == ph]
+        if mask:
+            fig2h.add_trace(go.Bar(
+                x=[xp[i] for i in mask],
+                y=[bw[i] for i in mask],
+                name=ph, marker_color=col, opacity=0.85,
+                showlegend=True,
+            ), row=2, col=1)
+
+    # BW% threshold lines on row 2
+    for thr, lbl, col in _BW_LEVELS:
+        fig2h.add_shape(
+            type="line",
+            x0=0, x1=n - 1, y0=thr, y1=thr,
+            xref="x2", yref="y2",
+            line=dict(color=col, width=1, dash="dot"),
+        )
+
+    fig2h.update_layout(
+        height=520,
+        margin=dict(l=0, r=80, t=40, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+        xaxis_rangeslider_visible=False,
+        barmode="overlay",
+        xaxis=dict(tickvals=tv, ticktext=tl, showgrid=True),
+        xaxis2=dict(tickvals=tv, ticktext=tl, showgrid=True),
+    )
+    fig2h.update_yaxes(showgrid=True)
+
+    st.plotly_chart(fig2h, use_container_width=True)
+
+st.divider()
+
 if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
     st.stop()
@@ -383,199 +556,6 @@ You always enter — the stress score just tells you how big to be.
 | DEEP SQUEEZE (either TF < 2%) | **max 50%** | Can't know direction — enter small, add to winning side after breakout |
 | EXTREME_SQUEEZE alone | **50%** | Coil is tight but 4H not confirming yet |
 """)
-
-st.divider()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 2b — 2H PHASES CHART (1 month, squeeze / momentum / vol)
-# ─────────────────────────────────────────────────────────────────────────────
-ui.section_header("2H Phases — Squeeze · Momentum · Vol  (1-month window)")
-
-def _build_2h_phases_chart():
-    """Return a plotly Figure with 2H price + BB bands (top) and BW% phase bars (bottom)."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    _PHASE_COLOR = {
-        "EXTREME_SQUEEZE": "#ef4444",  # red
-        "SQUEEZE":         "#f97316",  # orange
-        "CALM":            "#22c55e",  # green
-        "MOMENTUM":        "#eab308",  # yellow
-        "HIGH_VOL":        "#a855f7",  # purple
-        "MEAN_REVERT":     "#ec4899",  # pink
-    }
-    _PHASE_BG = {
-        "EXTREME_SQUEEZE": "rgba(239,68,68,0.12)",
-        "SQUEEZE":         "rgba(249,115,22,0.10)",
-        "CALM":            "rgba(34,197,94,0.10)",
-        "MOMENTUM":        "rgba(234,179,8,0.10)",
-        "HIGH_VOL":        "rgba(168,85,247,0.12)",
-        "MEAN_REVERT":     "rgba(236,72,153,0.12)",
-    }
-
-    def _classify(bw_val):
-        for thr, name in [(2.0,"EXTREME_SQUEEZE"),(3.5,"SQUEEZE"),(4.5,"CALM"),
-                          (5.6,"MOMENTUM"),(6.5,"HIGH_VOL"),(None,"MEAN_REVERT")]:
-            if thr is None or bw_val < thr:
-                return name
-        return "MEAN_REVERT"
-
-    # ── fetch 1H data and resample to 2H ──
-    _df2h = pd.DataFrame()
-    _fetch_err = None
-    try:
-        from data.live_fetcher import get_nifty_1h_phase
-        from analytics.supertrend import resample_ohlcv
-        _raw1h = get_nifty_1h_phase(days=33)          # ~1 calendar month
-        if not _raw1h.empty:
-            _df2h = resample_ohlcv(_raw1h, "2h")
-        else:
-            _fetch_err = "1H data returned empty — Kite session may have expired (re-login needed)"
-    except Exception as _e:
-        _fetch_err = str(_e)
-
-    if _df2h.empty:
-        return None, _fetch_err or "2H DataFrame is empty after resampling"
-
-    # ── compute Bollinger ──
-    try:
-        from analytics.bollinger import BollingerOptionsEngine
-        _eng = BollingerOptionsEngine()
-        _df2h = _eng.compute(_df2h.copy())
-    except Exception as _e:
-        return None, f"BB compute failed: {_e}"
-
-    if "bb_bw" not in _df2h.columns or _df2h.empty:
-        return None, "BB compute produced no bb_bw column"
-
-    _df2h["phase"] = _df2h["bb_bw"].apply(_classify)
-    _df2h = _df2h.dropna(subset=["bb_bw"])
-
-    # Strip timezone so plotly renders cleanly
-    if hasattr(_df2h.index, "tz") and _df2h.index.tz is not None:
-        _df2h.index = _df2h.index.tz_localize(None)
-
-    _ts  = _df2h.index
-    _cls = _df2h["close"]
-    _bw  = _df2h["bb_bw"]
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        row_heights=[0.65, 0.35],
-        vertical_spacing=0.04,
-        subplot_titles=("2H Price + Bollinger Bands", "BW% — Phase"),
-    )
-
-    # ── candlestick ──
-    fig.add_trace(go.Candlestick(
-        x=_ts,
-        open=_df2h["open"], high=_df2h["high"],
-        low=_df2h["low"],  close=_df2h["close"],
-        name="2H",
-        increasing_line_color="#22c55e",
-        decreasing_line_color="#ef4444",
-        showlegend=False,
-    ), row=1, col=1)
-
-    # BB bands
-    fig.add_trace(go.Scatter(x=_ts, y=_df2h["bb_upper"], name="BB Upper",
-        line=dict(color="rgba(148,163,184,0.6)", width=1, dash="dot"), showlegend=False), row=1, col=1)
-    fig.add_trace(go.Scatter(x=_ts, y=_df2h["bb_lower"], name="BB Lower",
-        line=dict(color="rgba(148,163,184,0.6)", width=1, dash="dot"),
-        fill="tonexty", fillcolor="rgba(148,163,184,0.06)", showlegend=False), row=1, col=1)
-    fig.add_trace(go.Scatter(x=_ts, y=_df2h["bb_basis"], name="BB Basis",
-        line=dict(color="rgba(148,163,184,0.9)", width=1), showlegend=False), row=1, col=1)
-
-    # ── BW% colored bars ──
-    for _phase, _color in _PHASE_COLOR.items():
-        _mask = _df2h["phase"] == _phase
-        if _mask.any():
-            fig.add_trace(go.Bar(
-                x=_df2h.index[_mask],
-                y=_df2h["bb_bw"][_mask],
-                name=_phase,
-                marker_color=_color,
-                marker_opacity=0.85,
-                showlegend=True,
-            ), row=2, col=1)
-
-    # BW% threshold lines — use add_shape (works across all plotly 5.x)
-    for _thr, _lbl, _col in [
-        (2.0, "EXTREME_SQ", "#ef4444"),
-        (3.5, "SQUEEZE",    "#f97316"),
-        (4.5, "CALM",       "#22c55e"),
-        (5.6, "MOMENTUM",   "#eab308"),
-        (6.5, "HIGH_VOL",   "#a855f7"),
-    ]:
-        fig.add_shape(type="line", xref="paper", yref="y2",
-                      x0=0, x1=1, y0=_thr, y1=_thr,
-                      line=dict(color=_col, width=1, dash="dot"))
-        fig.add_annotation(xref="paper", yref="y2", x=1.01, y=_thr,
-                           text=_lbl, showarrow=False, font=dict(color=_col, size=9),
-                           xanchor="left")
-
-    # ── background shading on price panel by phase ──
-    _prev_phase = None
-    _seg_start  = None
-    _shapes = []
-    for _t, _row in _df2h.iterrows():
-        _ph = _row["phase"]
-        if _ph != _prev_phase:
-            if _prev_phase is not None and _seg_start is not None:
-                _shapes.append(dict(
-                    type="rect", xref="x", yref="paper",
-                    x0=_seg_start, x1=_t,
-                    y0=0.35, y1=1.0,
-                    fillcolor=_PHASE_BG.get(_prev_phase, "rgba(0,0,0,0)"),
-                    line_width=0, layer="below",
-                ))
-            _seg_start = _t
-            _prev_phase = _ph
-    if _prev_phase and _seg_start is not None:
-        _shapes.append(dict(
-            type="rect", xref="x", yref="paper",
-            x0=_seg_start, x1=_ts[-1],
-            y0=0.35, y1=1.0,
-            fillcolor=_PHASE_BG.get(_prev_phase, "rgba(0,0,0,0)"),
-            line_width=0, layer="below",
-        ))
-
-    fig.update_layout(
-        shapes=_shapes,
-        height=520,
-        margin=dict(l=0, r=60, t=40, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(17,24,39,1)",
-        font=dict(color="#e2e8f0", size=11),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    font=dict(size=10)),
-        xaxis_rangeslider_visible=False,
-        barmode="overlay",
-    )
-    fig.update_xaxes(
-        showgrid=True, gridcolor="rgba(255,255,255,0.07)",
-        zeroline=False,
-    )
-    fig.update_yaxes(
-        showgrid=True, gridcolor="rgba(255,255,255,0.07)",
-        zeroline=False,
-    )
-    fig.update_yaxes(title_text="Price", row=1, col=1)
-    fig.update_yaxes(title_text="BW%",   row=2, col=1)
-
-    return fig, None
-
-
-try:
-    _phases_result = _build_2h_phases_chart()
-    _phases_fig, _phases_err = _phases_result if isinstance(_phases_result, tuple) else (_phases_result, None)
-    if _phases_fig is not None:
-        st.plotly_chart(_phases_fig, use_container_width=True)
-    else:
-        st.warning(f"⚠️ 2H phase chart unavailable — {_phases_err or 'unknown'}")
-except Exception as _chart_exc:
-    st.error(f"🔴 Phase chart crashed: {type(_chart_exc).__name__}: {_chart_exc}")
 
 st.divider()
 
