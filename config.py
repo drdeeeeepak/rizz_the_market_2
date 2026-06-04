@@ -370,5 +370,5 @@ EMA_SLOPE_EMA_PERIOD    = 20    # EMA window for slope calculation
 EMA_SLOPE_ATR_PERIOD    = 14    # ATR window for dynamic thresholds
 EMA_SLOPE_M1            = 0.03  # K1 = m1 × ATR_14  (significance threshold)
 EMA_SLOPE_M2            = 0.10  # K2 = m2 × ATR_14  (acceleration threshold)
-EMA_SLOPE_FETCH_DAYS    = 30    # Trading days to fetch (warm-up buffer)
+EMA_SLOPE_FETCH_DAYS    = 60    # Trading days to fetch (warm-up for 1H + 4H resampling)
 EMA_SLOPE_DISPLAY_BARS  = 120   # Bars shown in history chart (≈ 20 sessions)
