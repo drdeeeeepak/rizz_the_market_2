@@ -354,3 +354,21 @@ HOME_SCORE_MAX_VIX = 9
 HOME_SCORE_MAX_DOW = 5
 HOME_SCORE_MAX_EMA = 5
 HOME_SCORE_MAX_ST  = 9
+
+# ─── Page 17: EMA Slope Phase Engine — 60-Min 5-Phase Trend Classification ─────
+#
+# Classifies the 20-EMA slope on 60-min Nifty candles into 5 phases using
+# dynamic, ATR-14-scaled thresholds.  Used to guide weekly IC deployment:
+#   Phase 3 (Flat)      → non-directional balanced IC
+#   Phase 1/5 (Strong)  → skewed defense / standby
+#
+# Tuning levers:
+#   m1: lower to 0.02 if Phase 3 is over-classifying mild trends as flat
+#   m2: lower to 0.08 if Phase 1/5 transitions feel too slow on explosive moves
+#
+EMA_SLOPE_EMA_PERIOD    = 20    # EMA window for slope calculation
+EMA_SLOPE_ATR_PERIOD    = 14    # ATR window for dynamic thresholds
+EMA_SLOPE_M1            = 0.03  # K1 = m1 × ATR_14  (significance threshold)
+EMA_SLOPE_M2            = 0.10  # K2 = m2 × ATR_14  (acceleration threshold)
+EMA_SLOPE_FETCH_DAYS    = 30    # Trading days to fetch (warm-up buffer)
+EMA_SLOPE_DISPLAY_BARS  = 120   # Bars shown in history chart (≈ 20 sessions)
