@@ -144,11 +144,21 @@ fig = make_subplots(
     subplot_titles=["Nifty 60-Min  ·  EMA-20  ·  Phase Bands", "EMA Slope  ·  K1 / K2 Thresholds"],
 )
 
-# ── Colour-coded phase background bands (both rows) ──────────────────────────
+# ── Colour-coded phase ribbon — Row 1 only, fully gapless ────────────────────
+# add_shape with yref="y domain" draws from the literal bottom (0) to the
+# literal top (1) of the subplot area in screen-space, so there are no
+# pixel gaps between adjacent segments regardless of bar boundaries.
 for p0, p1, ph in segments:
-    fill = _PHASE_FILL.get(ph, "rgba(128,128,128,0.1)")
-    fig.add_vrect(x0=p0 - 0.5, x1=p1 + 0.5, fillcolor=fill, line_width=0, row=1, col=1)
-    fig.add_vrect(x0=p0 - 0.5, x1=p1 + 0.5, fillcolor=fill, line_width=0, row=2, col=1)
+    fig.add_shape(
+        type="rect",
+        x0=p0 - 0.5, x1=p1 + 0.5,
+        y0=0, y1=1,
+        xref="x", yref="y domain",
+        fillcolor=_PHASE_FILL.get(ph, "rgba(128,128,128,0.1)"),
+        line_width=0,
+        layer="below",
+        row=1, col=1,
+    )
 
 # ── Candlestick (Row 1) ───────────────────────────────────────────────────────
 fig.add_trace(
@@ -180,11 +190,11 @@ fig.add_trace(
     row=1, col=1,
 )
 
-# ── Phase label pills — Row 1 (price) and Row 2 (slope) ──────────────────────
+# ── Phase label pills — Row 1 only ───────────────────────────────────────────
 _SHORT_LABEL = {1: "P1 ▲▲", 2: "P2 ▲", 3: "P3 —", 4: "P4 ▼", 5: "P5 ▼▼"}
 for p0, p1, ph in segments:
-    mid  = (p0 + p1) / 2
-    pill = dict(
+    mid = (p0 + p1) / 2
+    fig.add_annotation(
         x=mid, y=1.0,
         yref="y domain", xref="x",
         text=f"<b>{_SHORT_LABEL.get(ph,'')}</b>",
@@ -192,9 +202,8 @@ for p0, p1, ph in segments:
         font=dict(color="#ffffff", size=10),
         bgcolor=PHASE_COLORS.get(ph, "#888"),
         borderpad=3,
+        row=1, col=1,
     )
-    fig.add_annotation(**pill, row=1, col=1)
-    fig.add_annotation(**pill, row=2, col=1)
 
 # ── K1/K2 band fills (Row 2) ─────────────────────────────────────────────────
 x_fwd = x_pos
@@ -265,7 +274,10 @@ for row_n in [1, 2]:
     fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=row_n, col=1)
     fig.update_xaxes(
         tickvals=tick_vals, ticktext=tick_labels,
-        gridcolor="#eeeeee", row=row_n, col=1,
+        gridcolor="#eeeeee",
+        # Pin x-range so ribbon shapes fill right to the chart edges
+        range=[-0.5, n_bars - 0.5],
+        row=row_n, col=1,
     )
 
 # Zoom slope panel: fix y-range to K2 scale so thresholds fill ~45% of height
