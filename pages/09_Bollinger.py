@@ -57,7 +57,7 @@ def _load_2h_phases():
         from data.live_fetcher import get_nifty_1h_phase
         from analytics.supertrend import resample_ohlcv
         from analytics.bollinger import BollingerOptionsEngine
-        raw = get_nifty_1h_phase(days=33)
+        raw = get_nifty_1h_phase()          # default days=DOW_PHASE_DAYS — same cache as live block
         if raw.empty:
             return pd.DataFrame(), "1H data empty — Kite login may be needed"
         df = resample_ohlcv(raw, "2h")
@@ -166,8 +166,8 @@ else:
     for thr, lbl, col in _BW_LEVELS:
         fig2h.add_shape(
             type="line",
-            x0=0, x1=n - 1, y0=thr, y1=thr,
-            xref="x2", yref="y2",
+            x0=0, x1=1, y0=thr, y1=thr,
+            xref="paper", yref="y2",
             line=dict(color=col, width=1, dash="dot"),
         )
 
