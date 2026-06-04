@@ -451,6 +451,10 @@ def _build_2h_phases_chart():
     _df2h["phase"] = _df2h["bb_bw"].apply(_classify)
     _df2h = _df2h.dropna(subset=["bb_bw"])
 
+    # Strip timezone so plotly renders cleanly
+    if hasattr(_df2h.index, "tz") and _df2h.index.tz is not None:
+        _df2h.index = _df2h.index.tz_localize(None)
+
     _ts  = _df2h.index
     _cls = _df2h["close"]
     _bw  = _df2h["bb_bw"]
@@ -496,7 +500,7 @@ def _build_2h_phases_chart():
                 showlegend=True,
             ), row=2, col=1)
 
-    # BW% threshold lines
+    # BW% threshold lines — use add_shape (works across all plotly 5.x)
     for _thr, _lbl, _col in [
         (2.0, "EXTREME_SQ", "#ef4444"),
         (3.5, "SQUEEZE",    "#f97316"),
@@ -504,16 +508,18 @@ def _build_2h_phases_chart():
         (5.6, "MOMENTUM",   "#eab308"),
         (6.5, "HIGH_VOL",   "#a855f7"),
     ]:
-        fig.add_hline(y=_thr, line_dash="dot", line_color=_col,
-                      line_width=1, opacity=0.6,
-                      annotation_text=_lbl, annotation_position="right",
-                      row=2, col=1)
+        fig.add_shape(type="line", xref="paper", yref="y2",
+                      x0=0, x1=1, y0=_thr, y1=_thr,
+                      line=dict(color=_col, width=1, dash="dot"))
+        fig.add_annotation(xref="paper", yref="y2", x=1.01, y=_thr,
+                           text=_lbl, showarrow=False, font=dict(color=_col, size=9),
+                           xanchor="left")
 
     # ── background shading on price panel by phase ──
     _prev_phase = None
     _seg_start  = None
     _shapes = []
-    for _idx, (_t, _row) in enumerate(_df2h.iterrows()):
+    for _t, _row in _df2h.iterrows():
         _ph = _row["phase"]
         if _ph != _prev_phase:
             if _prev_phase is not None and _seg_start is not None:
@@ -561,13 +567,15 @@ def _build_2h_phases_chart():
     return fig, None
 
 
-_phases_result = _build_2h_phases_chart()
-_phases_fig, _phases_err = _phases_result if isinstance(_phases_result, tuple) else (_phases_result, None)
-if _phases_fig is not None:
-    st.plotly_chart(_phases_fig, use_container_width=True)
-else:
-    _err_msg = _phases_err or "unknown error"
-    st.warning(f"⚠️ 2H phase chart unavailable — {_err_msg}")
+try:
+    _phases_result = _build_2h_phases_chart()
+    _phases_fig, _phases_err = _phases_result if isinstance(_phases_result, tuple) else (_phases_result, None)
+    if _phases_fig is not None:
+        st.plotly_chart(_phases_fig, use_container_width=True)
+    else:
+        st.warning(f"⚠️ 2H phase chart unavailable — {_phases_err or 'unknown'}")
+except Exception as _chart_exc:
+    st.error(f"🔴 Phase chart crashed: {type(_chart_exc).__name__}: {_chart_exc}")
 
 st.divider()
 
