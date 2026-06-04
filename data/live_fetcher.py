@@ -30,6 +30,7 @@ from config import (
     DOW_PHASE_DAYS,
     TTL_15M, TTL_30M, TTL_5M,
     ST_15M_DAYS, ST_30M_DAYS, ST_5M_DAYS,
+    EMA_SLOPE_FETCH_DAYS,
 )
 
 log = logging.getLogger(__name__)
@@ -488,6 +489,49 @@ def get_vix_history(days: int = 365) -> pd.DataFrame:
         return df.set_index("date").sort_index()
     except Exception as e:
         log.error("VIX history: %s", e); return pd.DataFrame()
+
+
+# ─── Nifty 1H OHLCV — EMA Slope Phase Engine (Page 17) ─────────────────────
+
+@st.cache_data(ttl=TTL_1H, show_spinner=False)
+def _get_nifty_1h_ema_slope_cached(days: int) -> pd.DataFrame:
+    """Inner fetch — raises on failure so Streamlit never caches an empty result."""
+    kite      = _get_kite_safe()
+    to_date   = date.today()
+    from_date = to_date - timedelta(days=days + 14)  # +14 calendar-day buffer
+    log.info("Fetching 1H EMA slope: %s → %s (%d trading days)", from_date, to_date, days)
+    data = kite.historical_data(
+        NIFTY_INDEX_TOKEN,
+        from_date.strftime("%Y-%m-%d"),
+        to_date.strftime("%Y-%m-%d"),
+        "60minute",
+    )
+    if not data:
+        raise RuntimeError("1H EMA slope fetch returned empty — will retry on next call")
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    df = df[["open", "high", "low", "close", "volume"]]
+    target = days * 6
+    if len(df) > target:
+        df = df.tail(target)
+    if len(df) < int(days * 6 * 0.6):
+        log.warning("1H EMA slope: only %d candles (expected ~%d)", len(df), target)
+    log.info("1H EMA slope ready: %d candles", len(df))
+    return df
+
+
+def get_nifty_1h_ema_slope(days: int = EMA_SLOPE_FETCH_DAYS) -> pd.DataFrame:
+    """
+    Fetch 60-min candles for the EMA Slope Phase Engine (Page 17).
+    Default: 30 trading days = ~180 candles (ample warm-up for EMA-20 + ATR-14).
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    try:
+        return _get_nifty_1h_ema_slope_cached(days)
+    except Exception as e:
+        log.error("1H EMA slope fetch failed: %s", e)
+        return pd.DataFrame()
 
 
 # ─── Nifty 500 breadth ────────────────────────────────────────────────────────
