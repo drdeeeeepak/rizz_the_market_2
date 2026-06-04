@@ -158,7 +158,7 @@ fig.add_trace(
         y=plot_df["ema_20"],
         mode="lines",
         name="EMA-20",
-        line=dict(color="#FFD600", width=2.5),
+        line=dict(color="#1565C0", width=2.5),
     ),
     row=1, col=1,
 )
@@ -180,9 +180,9 @@ for x0, x1, ph in segments:
         xref="x",
         text=f"<b>{_SHORT_LABEL.get(ph,'')}</b>",
         showarrow=False,
-        font=dict(color=PHASE_COLORS.get(ph, "#fff"), size=10),
-        bgcolor="rgba(0,0,0,0.45)",
-        borderpad=2,
+        font=dict(color="#ffffff", size=10),
+        bgcolor=PHASE_COLORS.get(ph, "#888"),
+        borderpad=3,
         row=1, col=1,
     )
 
@@ -193,7 +193,7 @@ fig.add_trace(
         x=list(plot_df.index) + list(plot_df.index[::-1]),
         y=list(plot_df["k1"]) + list((-plot_df["k1"])[::-1]),
         fill="toself",
-        fillcolor="rgba(255,214,0,0.08)",
+        fillcolor="rgba(255,214,0,0.20)",
         line=dict(width=0),
         name="Neutral zone (±K1)",
         showlegend=True,
@@ -208,7 +208,7 @@ fig.add_trace(
         x=list(plot_df.index) + list(plot_df.index[::-1]),
         y=list(plot_df["k2"]) + list(plot_df["k1"][::-1]),
         fill="toself",
-        fillcolor="rgba(0,200,83,0.07)",
+        fillcolor="rgba(0,200,83,0.14)",
         line=dict(width=0),
         name="Mild bull zone (K1–K2)",
         showlegend=False,
@@ -223,7 +223,7 @@ fig.add_trace(
         x=list(plot_df.index) + list(plot_df.index[::-1]),
         y=list(-plot_df["k1"]) + list((-plot_df["k2"])[::-1]),
         fill="toself",
-        fillcolor="rgba(213,0,0,0.07)",
+        fillcolor="rgba(213,0,0,0.14)",
         line=dict(width=0),
         name="Mild bear zone (−K1 to −K2)",
         showlegend=False,
@@ -234,8 +234,8 @@ fig.add_trace(
 
 # Threshold lines
 for col_name, col_color, dash, lbl in [
-    ("k2",  "#00C853", "dot",  "+K2"),
-    ("k1",  "#69F0AE", "dash", "+K1"),
+    ("k2",  "#2E7D32", "dot",  "+K2"),
+    ("k1",  "#43A047", "dash", "+K1"),
 ]:
     fig.add_trace(
         go.Scatter(
@@ -270,26 +270,30 @@ fig.add_trace(
     ),
     row=2, col=1,
 )
-fig.add_hline(y=0, line_width=1, line_color="#444", row=2, col=1)
+fig.add_hline(y=0, line_width=1, line_color="#bbb", row=2, col=1)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 fig.update_layout(
     height=620,
     margin=dict(l=10, r=10, t=50, b=10),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(18,18,18,0.6)",
-    font=dict(color="#ddd", size=12),
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+    font=dict(color="#222", size=12),
     legend=dict(
         orientation="h", x=0, y=-0.06,
-        bgcolor="rgba(0,0,0,0)", font=dict(size=11),
+        bgcolor="rgba(255,255,255,0.9)", font=dict(size=11),
     ),
     xaxis_rangeslider_visible=False,
     hovermode="x unified",
 )
 
 for row_n in [1, 2]:
-    fig.update_yaxes(gridcolor="#2a2a2a", zeroline=False, row=row_n, col=1)
-    fig.update_xaxes(gridcolor="#2a2a2a", row=row_n, col=1)
+    fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=row_n, col=1)
+    fig.update_xaxes(gridcolor="#eeeeee", row=row_n, col=1)
+
+# Zoom slope panel so K1/K2 threshold lines are clearly visible
+_k2_max = float(plot_df["k2"].max()) if not plot_df["k2"].empty else 1.0
+fig.update_yaxes(range=[-_k2_max * 2.2, _k2_max * 2.2], row=2, col=1)
 
 fig.update_xaxes(
     rangebreaks=[
