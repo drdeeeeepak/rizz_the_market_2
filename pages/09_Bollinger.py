@@ -420,30 +420,33 @@ def _build_2h_phases_chart():
                 return name
         return "MEAN_REVERT"
 
-    # ── try to get 2H df from already-computed data first ──
+    # ── fetch 1H data and resample to 2H ──
     _df2h = pd.DataFrame()
+    _fetch_err = None
     try:
         from data.live_fetcher import get_nifty_1h_phase
         from analytics.supertrend import resample_ohlcv
         _raw1h = get_nifty_1h_phase(days=33)          # ~1 calendar month
         if not _raw1h.empty:
             _df2h = resample_ohlcv(_raw1h, "2h")
-    except Exception:
-        pass
+        else:
+            _fetch_err = "1H data returned empty — Kite session may have expired (re-login needed)"
+    except Exception as _e:
+        _fetch_err = str(_e)
 
     if _df2h.empty:
-        return None
+        return None, _fetch_err or "2H DataFrame is empty after resampling"
 
     # ── compute Bollinger ──
     try:
         from analytics.bollinger import BollingerOptionsEngine
         _eng = BollingerOptionsEngine()
         _df2h = _eng.compute(_df2h.copy())
-    except Exception:
-        return None
+    except Exception as _e:
+        return None, f"BB compute failed: {_e}"
 
     if "bb_bw" not in _df2h.columns or _df2h.empty:
-        return None
+        return None, "BB compute produced no bb_bw column"
 
     _df2h["phase"] = _df2h["bb_bw"].apply(_classify)
     _df2h = _df2h.dropna(subset=["bb_bw"])
@@ -555,14 +558,16 @@ def _build_2h_phases_chart():
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=2, col=1)
 
-    return fig
+    return fig, None
 
 
-_phases_fig = _build_2h_phases_chart()
+_phases_result = _build_2h_phases_chart()
+_phases_fig, _phases_err = _phases_result if isinstance(_phases_result, tuple) else (_phases_result, None)
 if _phases_fig is not None:
     st.plotly_chart(_phases_fig, use_container_width=True)
 else:
-    st.info("2H phase chart unavailable outside market hours or data not loaded yet.")
+    _err_msg = _phases_err or "unknown error"
+    st.warning(f"⚠️ 2H phase chart unavailable — {_err_msg}")
 
 st.divider()
 
