@@ -104,6 +104,37 @@ st.caption(
     f"Latest: **{last_ts.strftime('%d %b %Y  %H:%M')} IST**"
 )
 
+# ── Sequential integer x-axis — eliminates holiday/weekend gaps ───────────────
+# Each bar gets a consecutive integer (0, 1, 2, …). The x-axis ticks are then
+# relabelled with the actual trading date so the chart reads normally, but
+# there is no blank space for missing calendar days.
+n_bars   = len(plot_df)
+x_pos    = list(range(n_bars))
+phases   = plot_df["phase_int"].tolist()
+ts_index = plot_df.index.tolist()
+
+# One tick per trading day (first bar of each date)
+seen_dates: dict = {}
+for i, ts in enumerate(ts_index):
+    if ts.date() not in seen_dates:
+        seen_dates[ts.date()] = i
+tick_vals   = list(seen_dates.values())
+tick_labels = [ts_index[i].strftime("%d %b") for i in tick_vals]
+
+# Hover text: show actual timestamp for every bar
+hover_text = [ts.strftime("%d %b %H:%M") for ts in ts_index]
+
+# ── Build phase segments (using integer positions) ────────────────────────────
+segments = []
+seg_start_p = 0
+seg_phase   = phases[0]
+for i in range(1, n_bars):
+    if phases[i] != seg_phase:
+        segments.append((seg_start_p, i - 1, seg_phase))
+        seg_start_p = i
+        seg_phase   = phases[i]
+segments.append((seg_start_p, n_bars - 1, seg_phase))
+
 # ── Build 2-row subplot ───────────────────────────────────────────────────────
 fig = make_subplots(
     rows=2, cols=1,
@@ -114,35 +145,20 @@ fig = make_subplots(
 )
 
 # ── Colour-coded phase background bands (both rows) ──────────────────────────
-x_idx      = plot_df.index.tolist()
-phases     = plot_df["phase_int"].tolist()
-seg_start  = x_idx[0]
-seg_phase  = phases[0]
-
-# Collect segments
-segments = []
-for i in range(1, len(x_idx)):
-    if phases[i] != seg_phase:
-        segments.append((seg_start, x_idx[i], seg_phase))
-        seg_start = x_idx[i]
-        seg_phase = phases[i]
-segments.append((seg_start, x_idx[-1], seg_phase))
-
-for x0, x1, ph in segments:
+for p0, p1, ph in segments:
     fill = _PHASE_FILL.get(ph, "rgba(128,128,128,0.1)")
-    # Row 1 (price chart)
-    fig.add_vrect(x0=x0, x1=x1, fillcolor=fill, line_width=0, row=1, col=1)
-    # Row 2 (slope chart)
-    fig.add_vrect(x0=x0, x1=x1, fillcolor=fill, line_width=0, row=2, col=1)
+    fig.add_vrect(x0=p0 - 0.5, x1=p1 + 0.5, fillcolor=fill, line_width=0, row=1, col=1)
+    fig.add_vrect(x0=p0 - 0.5, x1=p1 + 0.5, fillcolor=fill, line_width=0, row=2, col=1)
 
 # ── Candlestick (Row 1) ───────────────────────────────────────────────────────
 fig.add_trace(
     go.Candlestick(
-        x=plot_df.index,
+        x=x_pos,
         open=plot_df["open"],
         high=plot_df["high"],
         low=plot_df["low"],
         close=plot_df["close"],
+        text=hover_text,
         name="Nifty",
         increasing=dict(line=dict(color="#26a69a", width=1), fillcolor="#26a69a"),
         decreasing=dict(line=dict(color="#ef5350", width=1), fillcolor="#ef5350"),
@@ -154,30 +170,23 @@ fig.add_trace(
 # ── EMA-20 line (Row 1) ───────────────────────────────────────────────────────
 fig.add_trace(
     go.Scatter(
-        x=plot_df.index,
+        x=x_pos,
         y=plot_df["ema_20"],
         mode="lines",
         name="EMA-20",
+        text=hover_text,
         line=dict(color="#1565C0", width=2.5),
     ),
     row=1, col=1,
 )
 
-# ── Phase label annotations at top of each segment (Row 1) ───────────────────
+# ── Phase label pills at top of each segment ─────────────────────────────────
 _SHORT_LABEL = {1: "P1 ▲▲", 2: "P2 ▲", 3: "P3 —", 4: "P4 ▼", 5: "P5 ▼▼"}
-_yref_domain_map = {1: "y domain", 2: "y2 domain"}  # subplot y domains
-
-for x0, x1, ph in segments:
-    mid_idx = x0 + (x1 - x0) / 2 if hasattr(x0, '__sub__') else x0
-    try:
-        mid_idx = pd.Timestamp(x0) + (pd.Timestamp(x1) - pd.Timestamp(x0)) / 2
-    except Exception:
-        mid_idx = x0
+for p0, p1, ph in segments:
+    mid = (p0 + p1) / 2
     fig.add_annotation(
-        x=mid_idx,
-        y=1.0,
-        yref="y domain",
-        xref="x",
+        x=mid, y=1.0,
+        yref="y domain", xref="x",
         text=f"<b>{_SHORT_LABEL.get(ph,'')}</b>",
         showarrow=False,
         font=dict(color="#ffffff", size=10),
@@ -186,90 +195,54 @@ for x0, x1, ph in segments:
         row=1, col=1,
     )
 
-# ── Zero line + K1/K2 bands fill (Row 2) ─────────────────────────────────────
-# Filled band between -K1 and +K1 (neutral zone)
-fig.add_trace(
-    go.Scatter(
-        x=list(plot_df.index) + list(plot_df.index[::-1]),
-        y=list(plot_df["k1"]) + list((-plot_df["k1"])[::-1]),
-        fill="toself",
-        fillcolor="rgba(255,214,0,0.20)",
-        line=dict(width=0),
-        name="Neutral zone (±K1)",
-        showlegend=True,
-        hoverinfo="skip",
-    ),
-    row=2, col=1,
-)
+# ── K1/K2 band fills (Row 2) ─────────────────────────────────────────────────
+x_fwd = x_pos
+x_rev = x_pos[::-1]
+k1_fwd = list(plot_df["k1"]);  k1_rev = list(plot_df["k1"][::-1])
+k2_fwd = list(plot_df["k2"]);  k2_rev = list(plot_df["k2"][::-1])
 
-# K2 upper band fill (between K1 and K2)
-fig.add_trace(
-    go.Scatter(
-        x=list(plot_df.index) + list(plot_df.index[::-1]),
-        y=list(plot_df["k2"]) + list(plot_df["k1"][::-1]),
-        fill="toself",
-        fillcolor="rgba(0,200,83,0.14)",
-        line=dict(width=0),
-        name="Mild bull zone (K1–K2)",
-        showlegend=False,
-        hoverinfo="skip",
-    ),
-    row=2, col=1,
-)
+fig.add_trace(go.Scatter(
+    x=x_fwd + x_rev, y=k1_fwd + [-v for v in k1_rev],
+    fill="toself", fillcolor="rgba(255,214,0,0.20)",
+    line=dict(width=0), name="Neutral zone (±K1)",
+    showlegend=True, hoverinfo="skip",
+), row=2, col=1)
 
-# K2 lower band fill (between -K1 and -K2)
-fig.add_trace(
-    go.Scatter(
-        x=list(plot_df.index) + list(plot_df.index[::-1]),
-        y=list(-plot_df["k1"]) + list((-plot_df["k2"])[::-1]),
-        fill="toself",
-        fillcolor="rgba(213,0,0,0.14)",
-        line=dict(width=0),
-        name="Mild bear zone (−K1 to −K2)",
-        showlegend=False,
-        hoverinfo="skip",
-    ),
-    row=2, col=1,
-)
+fig.add_trace(go.Scatter(
+    x=x_fwd + x_rev, y=k2_fwd + k1_rev,
+    fill="toself", fillcolor="rgba(0,200,83,0.14)",
+    line=dict(width=0), name="Mild bull (K1–K2)",
+    showlegend=False, hoverinfo="skip",
+), row=2, col=1)
+
+fig.add_trace(go.Scatter(
+    x=x_fwd + x_rev, y=[-v for v in k1_fwd] + [-v for v in k2_rev],
+    fill="toself", fillcolor="rgba(213,0,0,0.14)",
+    line=dict(width=0), name="Mild bear (−K1 to −K2)",
+    showlegend=False, hoverinfo="skip",
+), row=2, col=1)
 
 # Threshold lines
-for col_name, col_color, dash, lbl in [
-    ("k2",  "#2E7D32", "dot",  "+K2"),
-    ("k1",  "#43A047", "dash", "+K1"),
+for col_name, col_color, dash, lbl, sign in [
+    ("k2", "#2E7D32", "dot",  "+K2",  1),
+    ("k1", "#43A047", "dash", "+K1",  1),
+    ("k1", "#FF6D00", "dash", "−K1", -1),
+    ("k2", "#D50000", "dot",  "−K2", -1),
 ]:
-    fig.add_trace(
-        go.Scatter(
-            x=plot_df.index, y=plot_df[col_name],
-            mode="lines", name=lbl,
-            line=dict(color=col_color, width=1, dash=dash),
-        ),
-        row=2, col=1,
-    )
-for col_name, col_color, dash, lbl in [
-    ("k1",  "#FF6D00", "dash", "−K1"),
-    ("k2",  "#D50000", "dot",  "−K2"),
-]:
-    fig.add_trace(
-        go.Scatter(
-            x=plot_df.index, y=-plot_df[col_name],
-            mode="lines", name=lbl,
-            line=dict(color=col_color, width=1, dash=dash),
-        ),
-        row=2, col=1,
-    )
+    fig.add_trace(go.Scatter(
+        x=x_pos, y=sign * plot_df[col_name],
+        mode="lines", name=lbl,
+        line=dict(color=col_color, width=1.5, dash=dash),
+    ), row=2, col=1)
 
 # Slope bars coloured by phase
-slope_bar_colors = [PHASE_COLORS.get(ph, "#888") for ph in plot_df["phase_int"]]
-fig.add_trace(
-    go.Bar(
-        x=plot_df.index,
-        y=plot_df["ema_slope"],
-        marker_color=slope_bar_colors,
-        name="EMA Slope",
-        opacity=0.85,
-    ),
-    row=2, col=1,
-)
+slope_bar_colors = [PHASE_COLORS.get(ph, "#888") for ph in phases]
+fig.add_trace(go.Bar(
+    x=x_pos, y=plot_df["ema_slope"],
+    marker_color=slope_bar_colors,
+    text=hover_text,
+    name="EMA Slope", opacity=0.85,
+), row=2, col=1)
 fig.add_hline(y=0, line_width=1, line_color="#bbb", row=2, col=1)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
@@ -289,19 +262,14 @@ fig.update_layout(
 
 for row_n in [1, 2]:
     fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=row_n, col=1)
-    fig.update_xaxes(gridcolor="#eeeeee", row=row_n, col=1)
+    fig.update_xaxes(
+        tickvals=tick_vals, ticktext=tick_labels,
+        gridcolor="#eeeeee", row=row_n, col=1,
+    )
 
-# Zoom slope panel so K1/K2 threshold lines are clearly visible
+# Zoom slope panel: fix y-range to K2 scale so thresholds fill ~45% of height
 _k2_max = float(plot_df["k2"].max()) if not plot_df["k2"].empty else 1.0
 fig.update_yaxes(range=[-_k2_max * 2.2, _k2_max * 2.2], row=2, col=1)
-
-fig.update_xaxes(
-    rangebreaks=[
-        dict(bounds=["sat", "mon"]),               # skip weekends
-        dict(bounds=[15.5, 9.25], pattern="hour"), # skip overnight gap
-    ],
-    row=2, col=1,
-)
 
 st.plotly_chart(fig, use_container_width=True)
 
