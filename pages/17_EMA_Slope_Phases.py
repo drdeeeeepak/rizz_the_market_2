@@ -140,7 +140,7 @@ fig = make_subplots(
     rows=2, cols=1,
     shared_xaxes=True,
     row_heights=[0.72, 0.28],
-    vertical_spacing=0.03,
+    vertical_spacing=0.01,
     subplot_titles=["Nifty 60-Min  ·  EMA-20  ·  Phase Bands", "EMA Slope  ·  K1 / K2 Thresholds"],
 )
 
@@ -180,11 +180,11 @@ fig.add_trace(
     row=1, col=1,
 )
 
-# ── Phase label pills at top of each segment ─────────────────────────────────
+# ── Phase label pills — Row 1 (price) and Row 2 (slope) ──────────────────────
 _SHORT_LABEL = {1: "P1 ▲▲", 2: "P2 ▲", 3: "P3 —", 4: "P4 ▼", 5: "P5 ▼▼"}
 for p0, p1, ph in segments:
-    mid = (p0 + p1) / 2
-    fig.add_annotation(
+    mid  = (p0 + p1) / 2
+    pill = dict(
         x=mid, y=1.0,
         yref="y domain", xref="x",
         text=f"<b>{_SHORT_LABEL.get(ph,'')}</b>",
@@ -192,8 +192,9 @@ for p0, p1, ph in segments:
         font=dict(color="#ffffff", size=10),
         bgcolor=PHASE_COLORS.get(ph, "#888"),
         borderpad=3,
-        row=1, col=1,
     )
+    fig.add_annotation(**pill, row=1, col=1)
+    fig.add_annotation(**pill, row=2, col=1)
 
 # ── K1/K2 band fills (Row 2) ─────────────────────────────────────────────────
 x_fwd = x_pos
