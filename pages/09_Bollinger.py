@@ -2,6 +2,7 @@
 # TF hierarchy: 2H=PRIMARY | 4H=SECONDARY | 1D=BG | 1W=MACRO
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
@@ -42,6 +43,13 @@ _BW_LEVELS = [
     (5.6, "MOMENTUM",   "#eab308"),
     (6.5, "HIGH_VOL",   "#a855f7"),
 ]
+_EMA_PHASE_COLORS = {1: "#00C853", 2: "#69F0AE", 3: "#FFD600", 4: "#FF6D00", 5: "#D50000"}
+_MPR_BULL_STRONG  = "#1565C0"   # mpr_shift < -0.30
+_MPR_BULL_MILD    = "#90CAF9"   # -0.30 to -0.10
+_MPR_NEUTRAL      = "#BDBDBD"
+_MPR_BEAR_MILD    = "#EF9A9A"   # 0.10 to 0.30
+_MPR_BEAR_STRONG  = "#B71C1C"   # > 0.30
+
 
 def _classify_bw(bw):
     for thr, name in [(2.0,"EXTREME_SQUEEZE"),(3.5,"SQUEEZE"),(4.5,"CALM"),
@@ -50,39 +58,65 @@ def _classify_bw(bw):
             return name
     return "MEAN_REVERT"
 
+
+def _add_mpr(df: pd.DataFrame, long_win: int, short_win: int) -> pd.DataFrame:
+    if "bb_basis" not in df.columns or len(df) < long_win:
+        df["mpr_shift"] = np.nan
+        return df
+    above = (df["close"] > df["bb_basis"]).astype(float)
+    df["mpr_long"]  = above.rolling(long_win, min_periods=max(1, long_win // 2)).mean()
+    df["mpr_short"] = above.rolling(short_win, min_periods=1).mean()
+    df["mpr_shift"] = df["mpr_short"] - df["mpr_long"]
+    return df
+
+
+def _mpr_bar_color(v):
+    if pd.isna(v):   return _MPR_NEUTRAL
+    if v >  0.30:    return _MPR_BEAR_STRONG
+    if v >  0.10:    return _MPR_BEAR_MILD
+    if v < -0.30:    return _MPR_BULL_STRONG
+    if v < -0.10:    return _MPR_BULL_MILD
+    return _MPR_NEUTRAL
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_bb_all_tf():
-    """Load 1H raw, compute BB on 1H / 2H / 4H. Returns (df_1h, df_2h, df_4h, err)."""
+    """Load 1H raw, compute BB + MPR + EMA phases on 1H / 2H / 4H."""
     try:
         from data.live_fetcher import get_nifty_1h_phase
         from analytics.supertrend import resample_ohlcv
         from analytics.bollinger import BollingerOptionsEngine
+        from analytics.ema_slope_phases import calculate_hourly_ema_slope_phases
         eng = BollingerOptionsEngine()
         raw = get_nifty_1h_phase()
         if raw.empty:
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "1H data empty — Kite login needed"
 
-        def _prep(df):
+        def _prep(df, long_win, short_win):
             df = eng.compute(df.copy())
             if "bb_bw" not in df.columns:
                 return pd.DataFrame()
             if hasattr(df.index, "tz") and df.index.tz is not None:
                 df.index = df.index.tz_localize(None)
             df["phase"] = df["bb_bw"].apply(_classify_bw)
+            df = _add_mpr(df, long_win, short_win)
+            df = calculate_hourly_ema_slope_phases(df)
             return df.dropna(subset=["bb_bw"]).copy()
 
-        df_1h = _prep(raw)
-        df_2h = _prep(resample_ohlcv(raw, "2h"))
-        df_4h = _prep(resample_ohlcv(raw, "4h"))
+        df_1h = _prep(raw, long_win=35, short_win=3)
+        df_2h = _prep(resample_ohlcv(raw, "2h"), long_win=20, short_win=2)
+        df_4h = _prep(resample_ohlcv(raw, "4h"), long_win=10, short_win=2)
         return df_1h, df_2h, df_4h, None
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e)
 
 
 def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
-    """Build a 2-panel BB phase figure from a computed df. Returns fig or None."""
+    """4-panel chart: price+BB | MPR ribbon | EMA ribbon | BW%+MPR line."""
     if df.empty or len(df) < 5:
         return None
+
+    from analytics.ema_slope_phases import PHASE_LABELS as _EMA_LABELS
 
     plot = df.dropna(subset=["phase"]).copy()
     n    = len(plot)
@@ -91,8 +125,10 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     htxt = [t.strftime("%d %b %H:%M") for t in tsi]
     phs  = plot["phase"].tolist()
     bw   = plot["bb_bw"].tolist()
+    has_mpr = "mpr_shift" in plot.columns
+    has_ema = "Slope_Phase" in plot.columns
 
-    # date tick — first bar of each day
+    # date ticks — first bar of each calendar day
     seen: dict = {}
     for i, t in enumerate(tsi):
         if t.date() not in seen:
@@ -100,7 +136,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     tv = list(seen.values())
     tl = [tsi[i].strftime("%d %b") for i in tv]
 
-    # phase segments
+    # BB phase segments for background fill
     segs, s0, s_ph = [], 0, phs[0]
     for i in range(1, n):
         if phs[i] != s_ph:
@@ -109,34 +145,74 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     segs.append((s0, n - 1, s_ph))
 
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        row_heights=[0.68, 0.32], vertical_spacing=0.01,
-        subplot_titles=[f"Nifty {title} · Bollinger Bands · Phase Ribbon", "BW% by Phase"],
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.55, 0.06, 0.06, 0.33],
+        vertical_spacing=0.01,
+        specs=[
+            [{"secondary_y": False}],
+            [{"secondary_y": False}],
+            [{"secondary_y": False}],
+            [{"secondary_y": True}],
+        ],
+        subplot_titles=[
+            f"Nifty {title} · BB Phases + EMA Slope",
+            "MPR Shift  (blue=bullish pressure · red=bearish)",
+            "EMA Slope Phase  (green→red = bullish→bearish)",
+            "BW% by Phase  ·  MPR Shift line (right axis)",
+        ],
     )
 
-    # phase ribbon
+    # ── Panel 1: BB phase background ─────────────────────────────────────────
     for p0, p1, ph in segs:
         fig.add_shape(
-            type="rect",
-            x0=p0 - 0.5, x1=p1 + 0.5, y0=0, y1=1,
+            type="rect", x0=p0 - 0.5, x1=p1 + 0.5, y0=0, y1=1,
             xref="x", yref="y domain",
             fillcolor=_PHASE_FILL.get(ph, "rgba(128,128,128,0.1)"),
             line_width=0, layer="below", row=1, col=1,
         )
-
-    # phase label pills
     for p0, p1, ph in segs:
         fig.add_annotation(
-            x=(p0 + p1) / 2, y=1.0,
-            xref="x", yref="y domain",
-            text=f"<b>{ph.replace('_',' ')}</b>",
-            showarrow=False,
+            x=(p0 + p1) / 2, y=1.0, xref="x", yref="y domain",
+            text=f"<b>{ph.replace('_',' ')}</b>", showarrow=False,
             font=dict(color="#ffffff", size=9),
-            bgcolor=_PHASE_COLOR.get(ph, "#888"),
-            borderpad=2, row=1, col=1,
+            bgcolor=_PHASE_COLOR.get(ph, "#888"), borderpad=2,
+            row=1, col=1,
         )
 
-    # candlestick
+    # vertical event lines: BB change (grey dot), EMA change (blue dash), MPR ±0.30 cross (solid)
+    for i in range(1, n):
+        if phs[i] != phs[i - 1]:
+            fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
+                          xref="x", yref="y domain",
+                          line=dict(color="rgba(100,100,100,0.35)", width=1, dash="dot"),
+                          row=1, col=1)
+    if has_ema:
+        eph_list = plot["Slope_Phase"].tolist()
+        for i in range(1, n):
+            a, b_ = eph_list[i-1], eph_list[i]
+            if not (pd.isna(a) or pd.isna(b_)) and a != b_:
+                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
+                              xref="x", yref="y domain",
+                              line=dict(color="rgba(21,101,192,0.50)", width=1, dash="dash"),
+                              row=1, col=1)
+    if has_mpr:
+        mpr_raw = plot["mpr_shift"].tolist()
+        for i in range(1, n):
+            vp, vc = mpr_raw[i-1], mpr_raw[i]
+            if pd.isna(vp) or pd.isna(vc):
+                continue
+            if (vp <= 0.30 < vc) or (vp >= 0.30 > vc):
+                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
+                              xref="x", yref="y domain",
+                              line=dict(color="rgba(183,28,28,0.70)", width=1.5),
+                              row=1, col=1)
+            elif (vp >= -0.30 > vc) or (vp <= -0.30 < vc):
+                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
+                              xref="x", yref="y domain",
+                              line=dict(color="rgba(21,101,192,0.70)", width=1.5),
+                              row=1, col=1)
+
+    # Candlesticks
     fig.add_trace(go.Candlestick(
         x=xp, open=plot["open"], high=plot["high"],
         low=plot["low"], close=plot["close"],
@@ -145,6 +221,19 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         decreasing=dict(line=dict(color="#ef5350", width=1), fillcolor="#ef5350"),
         whiskerwidth=0.3, showlegend=False,
     ), row=1, col=1)
+
+    # EMA phase colored dots at candle highs (phase indicator per bar)
+    if has_ema:
+        eph_f = [int(v) if not pd.isna(v) else 3 for v in plot["Slope_Phase"].tolist()]
+        dot_colors = [_EMA_PHASE_COLORS.get(ep, "#888") for ep in eph_f]
+        highs = plot["high"].tolist()
+        dot_y = [h * 1.0005 for h in highs]
+        fig.add_trace(go.Scatter(
+            x=xp, y=dot_y, mode="markers",
+            marker=dict(size=4, color=dot_colors, symbol="circle"),
+            name="EMA Phase (dot)", showlegend=False,
+            hovertext=[_EMA_LABELS.get(ep, "?") for ep in eph_f], hoverinfo="text",
+        ), row=1, col=1)
 
     # BB bands
     fig.add_trace(go.Scatter(
@@ -161,7 +250,29 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         line=dict(color="#1565C0", width=1.5), showlegend=True,
     ), row=1, col=1)
 
-    # BW% bars
+    # ── Panel 2: MPR shift ribbon ─────────────────────────────────────────────
+    if has_mpr:
+        mpr_vals = plot["mpr_shift"].fillna(0).tolist()
+        mpr_clrs = [_mpr_bar_color(v) for v in mpr_vals]
+        fig.add_trace(go.Bar(
+            x=xp, y=[1] * n, marker_color=mpr_clrs, marker_line_width=0,
+            name="MPR Shift ribbon", showlegend=True,
+            hovertext=[f"MPR shift: {v:.3f}" for v in mpr_vals], hoverinfo="text",
+        ), row=2, col=1)
+    fig.update_yaxes(visible=False, row=2, col=1)
+
+    # ── Panel 3: EMA slope phase ribbon ──────────────────────────────────────
+    if has_ema:
+        eph_f2 = [int(v) if not pd.isna(v) else 3 for v in plot["Slope_Phase"].tolist()]
+        ema_clrs = [_EMA_PHASE_COLORS.get(ep, "#FFD600") for ep in eph_f2]
+        fig.add_trace(go.Bar(
+            x=xp, y=[1] * n, marker_color=ema_clrs, marker_line_width=0,
+            name="EMA Phase ribbon", showlegend=True,
+            hovertext=[_EMA_LABELS.get(ep, "?") for ep in eph_f2], hoverinfo="text",
+        ), row=3, col=1)
+    fig.update_yaxes(visible=False, row=3, col=1)
+
+    # ── Panel 4: BW% bars (left) + MPR shift line (right) ────────────────────
     for ph, col in _PHASE_COLOR.items():
         mask = [i for i, p in enumerate(phs) if p == ph]
         if mask:
@@ -169,30 +280,46 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                 x=[xp[i] for i in mask], y=[bw[i] for i in mask],
                 name=ph.replace("_", " "), marker_color=col, opacity=0.85,
                 showlegend=True,
-            ), row=2, col=1)
-
-    # BW% threshold lines
+            ), row=4, col=1)
     for thr, lbl, col in _BW_LEVELS:
         fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
                       annotation_text=lbl, annotation_position="right",
-                      row=2, col=1)
+                      row=4, col=1)
+
+    if has_mpr:
+        mpr_vals2 = plot["mpr_shift"].tolist()
+        # threshold reference lines on secondary y (as scatter to avoid add_hline secondary_y issues)
+        for thr_v, thr_c in [(0.30, _MPR_BEAR_STRONG), (-0.30, _MPR_BULL_STRONG), (0.0, "#757575")]:
+            fig.add_trace(go.Scatter(
+                x=[xp[0], xp[-1]], y=[thr_v, thr_v],
+                mode="lines", line=dict(color=thr_c, width=1, dash="dot"),
+                showlegend=False, hoverinfo="skip",
+            ), row=4, col=1, secondary_y=True)
+        fig.add_trace(go.Scatter(
+            x=xp, y=mpr_vals2, mode="lines", name="MPR Shift",
+            line=dict(color="#7B1FA2", width=1.5), showlegend=True,
+        ), row=4, col=1, secondary_y=True)
+        fig.update_yaxes(title_text="MPR", range=[-1.1, 1.1],
+                         row=4, col=1, secondary_y=True,
+                         gridcolor="#eeeeee", zeroline=False)
 
     fig.update_layout(
-        height=600,
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=850,
+        margin=dict(l=10, r=65, t=50, b=10),
         paper_bgcolor="white", plot_bgcolor="white",
         font=dict(color="#222", size=12),
-        legend=dict(orientation="h", x=0, y=-0.06,
-                    bgcolor="rgba(255,255,255,0.9)", font=dict(size=11)),
+        legend=dict(orientation="h", x=0, y=-0.04,
+                    bgcolor="rgba(255,255,255,0.9)", font=dict(size=10)),
         xaxis_rangeslider_visible=False,
         hovermode="x unified", barmode="overlay",
     )
-    for r in [1, 2]:
-        fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1)
+    for r in [1, 2, 3, 4]:
+        fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1,
+                         secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
                          range=[-0.5, n - 0.5], row=r, col=1)
     fig.update_yaxes(title_text="Price", row=1, col=1)
-    fig.update_yaxes(title_text="BW%",   row=2, col=1)
+    fig.update_yaxes(title_text="BW%",   row=4, col=1, secondary_y=False)
     return fig
 
 
