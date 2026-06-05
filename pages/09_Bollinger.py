@@ -17,7 +17,7 @@ sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2H PHASES CHART — rendered early, independent of sig / st.stop()
+# BB PHASE CHARTS — 1H / 2H / 4H  (rendered before sig / st.stop())
 # ─────────────────────────────────────────────────────────────────────────────
 _PHASE_COLOR = {
     "EXTREME_SQUEEZE": "#ef4444",
@@ -51,49 +51,48 @@ def _classify_bw(bw):
     return "MEAN_REVERT"
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_2h_phases():
-    """Fetch 1H data, resample to 2H, compute BB. Returns (df, err_str)."""
+def _load_bb_all_tf():
+    """Load 1H raw, compute BB on 1H / 2H / 4H. Returns (df_1h, df_2h, df_4h, err)."""
     try:
         from data.live_fetcher import get_nifty_1h_phase
         from analytics.supertrend import resample_ohlcv
         from analytics.bollinger import BollingerOptionsEngine
-        raw = get_nifty_1h_phase()          # default days=DOW_PHASE_DAYS — same cache as live block
+        eng = BollingerOptionsEngine()
+        raw = get_nifty_1h_phase()
         if raw.empty:
-            return pd.DataFrame(), "1H data empty — Kite login may be needed"
-        df = resample_ohlcv(raw, "2h")
-        if df.empty:
-            return pd.DataFrame(), "2H resample produced empty DataFrame"
-        df = BollingerOptionsEngine().compute(df.copy())
-        if "bb_bw" not in df.columns:
-            return pd.DataFrame(), "BB compute returned no bb_bw column"
-        # strip timezone — page 17 pattern
-        if hasattr(df.index, "tz") and df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-        df["phase"] = df["bb_bw"].apply(_classify_bw)
-        df = df.dropna(subset=["bb_bw"]).copy()
-        return df, None
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "1H data empty — Kite login needed"
+
+        def _prep(df):
+            df = eng.compute(df.copy())
+            if "bb_bw" not in df.columns:
+                return pd.DataFrame()
+            if hasattr(df.index, "tz") and df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            df["phase"] = df["bb_bw"].apply(_classify_bw)
+            return df.dropna(subset=["bb_bw"]).copy()
+
+        df_1h = _prep(raw)
+        df_2h = _prep(resample_ohlcv(raw, "2h"))
+        df_4h = _prep(resample_ohlcv(raw, "4h"))
+        return df_1h, df_2h, df_4h, None
     except Exception as e:
-        return pd.DataFrame(), str(e)
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e)
 
 
-ui.section_header("2H Phases — Squeeze · Momentum · Vol  (1-month window)")
+def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
+    """Build a 2-panel BB phase figure from a computed df. Returns fig or None."""
+    if df.empty or len(df) < 5:
+        return None
 
-with st.spinner("Loading 2H Bollinger data…"):
-    _df2h, _load_err = _load_2h_phases()
-
-if _df2h.empty:
-    st.warning(f"⚠️ 2H phase chart — {_load_err or 'no data'}")
-else:
-    # ── prep arrays — exactly as page 17 ─────────────────────────────────────
-    _plot = _df2h.dropna(subset=["phase"]).copy()
-    n    = len(_plot)
+    plot = df.dropna(subset=["phase"]).copy()
+    n    = len(plot)
     xp   = list(range(n))
-    tsi  = _plot.index.tolist()
+    tsi  = plot.index.tolist()
     htxt = [t.strftime("%d %b %H:%M") for t in tsi]
-    phs  = _plot["phase"].tolist()
-    bw   = _plot["bb_bw"].tolist()
+    phs  = plot["phase"].tolist()
+    bw   = plot["bb_bw"].tolist()
 
-    # date tick labels — first bar of each trading day
+    # date tick — first bar of each day
     seen: dict = {}
     for i, t in enumerate(tsi):
         if t.date() not in seen:
@@ -109,93 +108,76 @@ else:
             s0, s_ph = i, phs[i]
     segs.append((s0, n - 1, s_ph))
 
-    # ── figure — same structure as page 17 ───────────────────────────────────
-    fig2h = make_subplots(
+    fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
         row_heights=[0.68, 0.32], vertical_spacing=0.01,
-        subplot_titles=["2H Nifty · Bollinger Bands · Phase Ribbon", "BW% by Phase"],
+        subplot_titles=[f"Nifty {title} · Bollinger Bands · Phase Ribbon", "BW% by Phase"],
     )
 
-    # phase ribbon on price panel — xref="x", yref="y domain", row=1, col=1
+    # phase ribbon
     for p0, p1, ph in segs:
-        fig2h.add_shape(
+        fig.add_shape(
             type="rect",
             x0=p0 - 0.5, x1=p1 + 0.5, y0=0, y1=1,
             xref="x", yref="y domain",
             fillcolor=_PHASE_FILL.get(ph, "rgba(128,128,128,0.1)"),
-            line_width=0, layer="below",
-            row=1, col=1,
+            line_width=0, layer="below", row=1, col=1,
         )
 
-    # phase label pills — same as page 17
+    # phase label pills
     for p0, p1, ph in segs:
-        fig2h.add_annotation(
+        fig.add_annotation(
             x=(p0 + p1) / 2, y=1.0,
             xref="x", yref="y domain",
             text=f"<b>{ph.replace('_',' ')}</b>",
             showarrow=False,
             font=dict(color="#ffffff", size=9),
             bgcolor=_PHASE_COLOR.get(ph, "#888"),
-            borderpad=2,
-            row=1, col=1,
+            borderpad=2, row=1, col=1,
         )
 
     # candlestick
-    fig2h.add_trace(go.Candlestick(
-        x=xp,
-        open=_plot["open"], high=_plot["high"],
-        low=_plot["low"],   close=_plot["close"],
-        text=htxt, name="Nifty 2H",
+    fig.add_trace(go.Candlestick(
+        x=xp, open=plot["open"], high=plot["high"],
+        low=plot["low"], close=plot["close"],
+        text=htxt, name=f"Nifty {title}",
         increasing=dict(line=dict(color="#26a69a", width=1), fillcolor="#26a69a"),
         decreasing=dict(line=dict(color="#ef5350", width=1), fillcolor="#ef5350"),
         whiskerwidth=0.3, showlegend=False,
     ), row=1, col=1)
 
-    # BB upper band
-    fig2h.add_trace(go.Scatter(
-        x=xp, y=_plot["bb_upper"].tolist(),
-        mode="lines", name="BB Upper",
-        line=dict(color="#1565C0", width=1, dash="dot"),
-        showlegend=True,
+    # BB bands
+    fig.add_trace(go.Scatter(
+        x=xp, y=plot["bb_upper"].tolist(), mode="lines", name="BB Upper",
+        line=dict(color="#1565C0", width=1, dash="dot"), showlegend=True,
     ), row=1, col=1)
-    # BB lower band — fill to upper
-    fig2h.add_trace(go.Scatter(
-        x=xp, y=_plot["bb_lower"].tolist(),
-        mode="lines", name="BB Lower",
+    fig.add_trace(go.Scatter(
+        x=xp, y=plot["bb_lower"].tolist(), mode="lines", name="BB Lower",
         line=dict(color="#1565C0", width=1, dash="dot"),
-        fill="tonexty", fillcolor="rgba(21,101,192,0.07)",
-        showlegend=False,
+        fill="tonexty", fillcolor="rgba(21,101,192,0.07)", showlegend=False,
     ), row=1, col=1)
-    # BB basis (SMA-20)
-    fig2h.add_trace(go.Scatter(
-        x=xp, y=_plot["bb_basis"].tolist(),
-        mode="lines", name="BB Basis",
-        line=dict(color="#1565C0", width=1.5),
-        showlegend=True,
+    fig.add_trace(go.Scatter(
+        x=xp, y=plot["bb_basis"].tolist(), mode="lines", name="BB Basis",
+        line=dict(color="#1565C0", width=1.5), showlegend=True,
     ), row=1, col=1)
 
-    # BW% bars coloured by phase — row 2
+    # BW% bars
     for ph, col in _PHASE_COLOR.items():
         mask = [i for i, p in enumerate(phs) if p == ph]
         if mask:
-            fig2h.add_trace(go.Bar(
-                x=[xp[i] for i in mask],
-                y=[bw[i] for i in mask],
-                name=ph.replace("_", " "),
-                marker_color=col, opacity=0.85,
+            fig.add_trace(go.Bar(
+                x=[xp[i] for i in mask], y=[bw[i] for i in mask],
+                name=ph.replace("_", " "), marker_color=col, opacity=0.85,
                 showlegend=True,
             ), row=2, col=1)
 
-    # BW% threshold lines — add_hline exactly as page 17 uses it
+    # BW% threshold lines
     for thr, lbl, col in _BW_LEVELS:
-        fig2h.add_hline(
-            y=thr, line_width=1, line_dash="dot", line_color=col,
-            annotation_text=lbl, annotation_position="right",
-            row=2, col=1,
-        )
+        fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
+                      annotation_text=lbl, annotation_position="right",
+                      row=2, col=1)
 
-    # ── layout — white theme matching page 17 ────────────────────────────────
-    fig2h.update_layout(
+    fig.update_layout(
         height=600,
         margin=dict(l=10, r=10, t=50, b=10),
         paper_bgcolor="white", plot_bgcolor="white",
@@ -203,18 +185,54 @@ else:
         legend=dict(orientation="h", x=0, y=-0.06,
                     bgcolor="rgba(255,255,255,0.9)", font=dict(size=11)),
         xaxis_rangeslider_visible=False,
-        hovermode="x unified",
-        barmode="overlay",
+        hovermode="x unified", barmode="overlay",
     )
-    for _r in [1, 2]:
-        fig2h.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=_r, col=1)
-        fig2h.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
-                           range=[-0.5, n - 0.5], row=_r, col=1)
-    fig2h.update_yaxes(title_text="Price", row=1, col=1)
-    fig2h.update_yaxes(title_text="BW%",   row=2, col=1)
+    for r in [1, 2]:
+        fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1)
+        fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
+                         range=[-0.5, n - 0.5], row=r, col=1)
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="BW%",   row=2, col=1)
+    return fig
 
-    st.caption(f"Latest 2H bar: **{tsi[-1].strftime('%d %b %Y  %H:%M')} IST** · {n} candles")
-    st.plotly_chart(fig2h, use_container_width=True)
+
+# ── load all three TFs once ───────────────────────────────────────────────────
+with st.spinner("Loading Bollinger data (1H · 2H · 4H)…"):
+    _df1h, _df2h, _df4h, _bb_err = _load_bb_all_tf()
+
+# ── 1H chart ─────────────────────────────────────────────────────────────────
+ui.section_header("1H — Bollinger Phases  (1-month window)")
+if _df1h.empty:
+    st.warning(f"⚠️ 1H chart — {_bb_err or 'no data'}")
+else:
+    _fig1h = _build_bb_chart(_df1h, "1H")
+    if _fig1h:
+        st.caption(f"Latest 1H bar: **{_df1h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df1h)} candles")
+        st.plotly_chart(_fig1h, use_container_width=True)
+
+st.divider()
+
+# ── 2H chart ─────────────────────────────────────────────────────────────────
+ui.section_header("2H — Bollinger Phases  (PRIMARY · 1-month window)")
+if _df2h.empty:
+    st.warning(f"⚠️ 2H chart — {_bb_err or 'no data'}")
+else:
+    _fig2h = _build_bb_chart(_df2h, "2H")
+    if _fig2h:
+        st.caption(f"Latest 2H bar: **{_df2h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df2h)} candles")
+        st.plotly_chart(_fig2h, use_container_width=True)
+
+st.divider()
+
+# ── 4H chart ─────────────────────────────────────────────────────────────────
+ui.section_header("4H — Bollinger Phases  (SECONDARY · 1-month window)")
+if _df4h.empty:
+    st.warning(f"⚠️ 4H chart — {_bb_err or 'no data'}")
+else:
+    _fig4h = _build_bb_chart(_df4h, "4H")
+    if _fig4h:
+        st.caption(f"Latest 4H bar: **{_df4h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df4h)} candles")
+        st.plotly_chart(_fig4h, use_container_width=True)
 
 st.divider()
 
