@@ -144,16 +144,30 @@ class GeometricEdgeScanner(BaseStrategy):
         reward_rupees = r["close"] * r["adr_20"] / 100 * 3
         rr_ok = (reward_rupees / risk_rupees) >= GEO_MIN_RR if risk_rupees > 0 else False
 
+        # ── Actionable trade levels (for next-day entry) ──────────────────────
+        # Entry: 0.1% above today's high — avoids false breakouts, confirms momentum
+        entry   = round(r["high"] * 1.001, 2)
+        sl      = round(r["low"], 2)
+        risk_rs = round(entry - sl, 2)
+        tgt_3r  = round(entry + risk_rs * 3, 2)   # partial exit: book 50% here
+        tgt_6r  = round(entry + risk_rs * 6, 2)   # full target (India 6:1 rule)
+
         return {
             "symbol":        symbol,
             "segment":       seg,
             "price_str_pct": round(r["price_str"] * 100, 2),
-            "vol_mult":      round(r["vol_mult"] / scaler, 1),  # normalised rate
+            "vol_mult":      round(r["vol_mult"] / scaler, 1),
             "adr_20":        round(r["adr_20"], 2),
             "gap_pct":       round(gap_pct * 100, 2),
             "ep_pivot":      ep_pivot,
             "rr_ok":         rr_ok,
             "ltp":           round(r["close"], 2),
+            # ── Next-day trade levels ──
+            "entry":         entry,
+            "sl":            sl,
+            "risk_per_share":risk_rs,
+            "tgt_3r":        tgt_3r,
+            "tgt_6r":        tgt_6r,
             "scan_time":     datetime.now().strftime("%H:%M"),
         }
 
