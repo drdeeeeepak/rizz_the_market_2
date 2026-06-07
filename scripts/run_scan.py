@@ -29,20 +29,32 @@ def run_geometric_scan(label: str):
     from data.kite_client import get_kite_action
     from data.live_fetcher import get_nifty500_breadth
     from analytics.geometric_edge import GeometricEdgeScanner
-    from config import TOP_10_NIFTY, TOP_10_TOKENS, GEO_MARKET_HEALTH_BULL, GEO_MARKET_HEALTH_SELECT
+    from config import TOP_10_TOKENS, GEO_MARKET_HEALTH_BULL, GEO_MARKET_HEALTH_SELECT
 
     log.info("Starting Geometric Edge scan: %s", label)
     kite    = get_kite_action()
     scanner = GeometricEdgeScanner()
 
-    # ── Fetch universe (top 10 for now; extend to broader universe later) ──
+    # ── Load universe: Nifty 500 tokens if available, else fall back to Top 10 ──
+    import pandas as pd
     from datetime import timedelta
+
+    tokens_file = Path("data/nifty500_tokens.json")
+    if tokens_file.exists():
+        with open(tokens_file) as f:
+            scan_tokens = json.load(f)
+        log.info("Universe: %d stocks from nifty500_tokens.json", len(scan_tokens))
+    else:
+        scan_tokens = TOP_10_TOKENS
+        log.warning("nifty500_tokens.json not found — falling back to TOP_10_TOKENS (%d stocks). "
+                    "Run scripts/fetch_nifty500_tokens.py to build the full universe.",
+                    len(scan_tokens))
+
     to_date   = date.today()
-    from_date = to_date - timedelta(days=400)
+    from_date = to_date - timedelta(days=90)   # 90 calendar days ≈ 60 trading days (enough for SMA20+2)
 
     universe = {}
-    import pandas as pd
-    for sym, token in TOP_10_TOKENS.items():
+    for sym, token in scan_tokens.items():
         try:
             data = kite.historical_data(
                 token,
@@ -53,7 +65,7 @@ def run_geometric_scan(label: str):
             df = pd.DataFrame(data)
             df["date"] = pd.to_datetime(df["date"])
             df = df.set_index("date").sort_index()
-            universe[sym] = df[["open","high","low","close","volume"]]
+            universe[sym] = df[["open", "high", "low", "close", "volume"]]
         except Exception as e:
             log.warning("Failed fetch %s: %s", sym, e)
 

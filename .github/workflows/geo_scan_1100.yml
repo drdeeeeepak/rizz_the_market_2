@@ -1,18 +1,13 @@
-name: EOD Compute
+name: Geo Scan 11:00am IST
 
 on:
   schedule:
-    # 3:35 PM IST = 10:05 UTC, Mon-Fri
-    - cron: "5 10 * * 1-5"
+    # 11:00 AM IST = 05:30 UTC, Mon-Fri
+    - cron: "30 5 * * 1-5"
   workflow_dispatch:
-    inputs:
-      reason:
-        description: "Why are you triggering manually?"
-        required: false
-        default: "manual run"
 
 jobs:
-  compute:
+  scan:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -32,14 +27,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run EOD compute (options/signals)
-        env:
-          KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
-          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
-          TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT:   ${{ secrets.TELEGRAM_CHAT }}
-        run: python scripts/eod_compute.py
-
       - name: Build token map if missing
         env:
           KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
@@ -48,18 +35,17 @@ jobs:
           [ -f data/nifty500_tokens.json ] && echo "Token map exists, skipping fetch" || \
             python scripts/fetch_nifty500_tokens.py
 
-      - name: Run EOD geo scan + OI snapshot + market health breadth
+      - name: Run 11:00am scan
         env:
           KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
-        run: python scripts/run_scan.py --label eod --snapshot --health
+        run: python scripts/run_scan.py --label 1100
 
-      - name: Commit all outputs
+      - name: Commit results
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/signals.json data/breach_levels.json data/rolled_positions.json \
-                  data/watchlists/ data/parquet/ data/nifty500_tokens.json
-          git diff --cached --quiet && echo "No changes to commit" || \
-            git commit -m "chore: EOD compute + geo scan $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git add data/watchlists/ data/nifty500_tokens.json
+          git diff --cached --quiet && echo "No changes" || \
+            git commit -m "chore: geo scan 1100 $(date -u '+%Y-%m-%d')"
           git push origin main
