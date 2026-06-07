@@ -326,10 +326,27 @@ GEO_PRICE_STRENGTH = {
     "nifty50": 0.020, "nifty_next": 0.025,
     "midcap":  0.030, "smallcap":   0.035,
 }
-GEO_VOL_MULT=2.0; GEO_ADR=0.04; GEO_EP_GAP=0.005
-GEO_VOL_SMA_PERIOD=50; GEO_MAX_RESULTS=20; GEO_MIN_RR=2.0
-GEO_MARKET_HEALTH_BULL=300; GEO_MARKET_HEALTH_SELECT=200
-WATCHLIST_DIR="data/watchlists"; PARQUET_DIR="data/parquet"
+GEO_VOL_MULT = {
+    "nifty50": 1.5, "nifty_next": 2.0,
+    "midcap":  2.0, "smallcap":   2.5,
+}
+GEO_ADR = {
+    "nifty50": 1.5, "nifty_next": 2.2,
+    "midcap":  3.0, "smallcap":   4.0,
+}
+GEO_EP_GAP = {
+    "nifty50": 0.020, "nifty_next": 0.030,
+    "midcap":  0.040, "smallcap":   0.060,
+}
+# Pro-rata volume scalers: fraction of full-day volume by each scan time (NSE 9:15–3:30)
+GEO_TIME_SCALERS      = {"1100": 0.28, "1330": 0.68, "1515": 0.96, "eod": 1.0}
+GEO_VOL_SMA_PERIOD    = 20
+GEO_MAX_RESULTS       = 20
+GEO_MIN_RR            = 6.0
+GEO_MARKET_HEALTH_BULL   = 350
+GEO_MARKET_HEALTH_SELECT = 200
+WATCHLIST_DIR = "data/watchlists"
+PARQUET_DIR   = "data/parquet"
 
 # ─── Page 16: Gamma Provisioning & Defensive Roll (Biweekly) ─────────────────
 GAMMA_BIWEEKLY_ENTRY_DTE  = 14    # Target entry DTE for biweekly IC cycle

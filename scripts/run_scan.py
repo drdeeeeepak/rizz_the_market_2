@@ -29,7 +29,7 @@ def run_geometric_scan(label: str):
     from data.kite_client import get_kite_action
     from data.live_fetcher import get_nifty500_breadth
     from analytics.geometric_edge import GeometricEdgeScanner
-    from config import TOP_10_NIFTY, TOP_10_TOKENS
+    from config import TOP_10_NIFTY, TOP_10_TOKENS, GEO_MARKET_HEALTH_BULL, GEO_MARKET_HEALTH_SELECT
 
     log.info("Starting Geometric Edge scan: %s", label)
     kite    = get_kite_action()
@@ -59,21 +59,21 @@ def run_geometric_scan(label: str):
 
     # Market health
     breadth_count = get_nifty500_breadth()
-    if breadth_count > 350:
+    if breadth_count > GEO_MARKET_HEALTH_BULL:
         phase = "AGGR_BULL"
-    elif breadth_count > 200:
+    elif breadth_count > GEO_MARKET_HEALTH_SELECT:
         phase = "SELECTIVE"
     else:
         phase = "BEAR"
 
     health = {
-        "count": breadth_count,
-        "phase": phase,
-        "run_scans": phase != "BEAR",
+        "count":     breadth_count,
+        "phase":     phase,
+        "run_scans": True,   # always scan; bear results are watchlist-only
         "allocation": {},
     }
 
-    results = scanner.scan_universe(universe, health)
+    results = scanner.scan_universe(universe, health, scan_label=label)
     log.info("Scan found %d results", len(results))
 
     path = scanner.save_watchlist(results, label)
