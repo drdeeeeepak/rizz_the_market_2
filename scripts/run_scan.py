@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -22,6 +23,33 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger(__name__)
+
+# Kite historical data API: 3 requests/second hard limit.
+# 0.34s sleep keeps us safely under; 3 retries with backoff handle transient 429s.
+_KITE_RATE_DELAY  = 0.34   # seconds between each historical_data call
+_KITE_MAX_RETRIES = 3
+
+
+def _fetch_ohlcv(kite, token: int, from_date: str, to_date: str,
+                 interval: str = "day") -> list:
+    """
+    Rate-limited historical data fetch with exponential-backoff retry.
+    Sleeps _KITE_RATE_DELAY before every call regardless of success/failure.
+    """
+    for attempt in range(1, _KITE_MAX_RETRIES + 1):
+        time.sleep(_KITE_RATE_DELAY)
+        try:
+            return kite.historical_data(token, from_date, to_date, interval)
+        except Exception as e:
+            msg = str(e).lower()
+            is_rate_limit = "429" in msg or "too many" in msg or "rate" in msg
+            if attempt < _KITE_MAX_RETRIES:
+                wait = (2 ** attempt) if is_rate_limit else 1
+                log.warning("Fetch token %s attempt %d failed (%s) — retrying in %ds",
+                            token, attempt, e, wait)
+                time.sleep(wait)
+            else:
+                raise
 
 
 def run_geometric_scan(label: str):
@@ -54,13 +82,13 @@ def run_geometric_scan(label: str):
     from_date = to_date - timedelta(days=90)   # 90 calendar days ≈ 60 trading days (enough for SMA20+2)
 
     universe = {}
-    for sym, token in scan_tokens.items():
+    total = len(scan_tokens)
+    for i, (sym, token) in enumerate(scan_tokens.items(), 1):
         try:
-            data = kite.historical_data(
-                token,
+            data = _fetch_ohlcv(
+                kite, token,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
-                "day"
             )
             df = pd.DataFrame(data)
             df["date"] = pd.to_datetime(df["date"])
@@ -68,6 +96,8 @@ def run_geometric_scan(label: str):
             universe[sym] = df[["open", "high", "low", "close", "volume"]]
         except Exception as e:
             log.warning("Failed fetch %s: %s", sym, e)
+        if i % 50 == 0:
+            log.info("Universe fetch progress: %d / %d", i, total)
 
     # Market health
     breadth_count = get_nifty500_breadth()
@@ -223,11 +253,10 @@ def run_market_health():
 
     for i, (sym, token) in enumerate(tokens.items()):
         try:
-            data = kite.historical_data(
-                token,
+            data = _fetch_ohlcv(
+                kite, token,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
-                "day"
             )
             df = pd.DataFrame(data)
             if len(df) >= 200:
@@ -235,8 +264,8 @@ def run_market_health():
                 last   = float(df["close"].iloc[-1])
                 if last > sma200:
                     count_above_200 += 1
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Breadth fetch failed %s: %s", sym, e)
 
         if (i + 1) % 50 == 0:
             log.info("Breadth progress: %d/%d", i+1, total)
