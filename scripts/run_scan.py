@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -23,57 +24,98 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Kite historical data API: 3 requests/second hard limit.
+# 0.34s sleep keeps us safely under; 3 retries with backoff handle transient 429s.
+_KITE_RATE_DELAY  = 0.34   # seconds between each historical_data call
+_KITE_MAX_RETRIES = 3
+
+
+def _fetch_ohlcv(kite, token: int, from_date: str, to_date: str,
+                 interval: str = "day") -> list:
+    """
+    Rate-limited historical data fetch with exponential-backoff retry.
+    Sleeps _KITE_RATE_DELAY before every call regardless of success/failure.
+    """
+    for attempt in range(1, _KITE_MAX_RETRIES + 1):
+        time.sleep(_KITE_RATE_DELAY)
+        try:
+            return kite.historical_data(token, from_date, to_date, interval)
+        except Exception as e:
+            msg = str(e).lower()
+            is_rate_limit = "429" in msg or "too many" in msg or "rate" in msg
+            if attempt < _KITE_MAX_RETRIES:
+                wait = (2 ** attempt) if is_rate_limit else 1
+                log.warning("Fetch token %s attempt %d failed (%s) — retrying in %ds",
+                            token, attempt, e, wait)
+                time.sleep(wait)
+            else:
+                raise
+
 
 def run_geometric_scan(label: str):
     """Run Geometric Edge scan and save watchlist JSON."""
     from data.kite_client import get_kite_action
     from data.live_fetcher import get_nifty500_breadth
     from analytics.geometric_edge import GeometricEdgeScanner
-    from config import TOP_10_NIFTY, TOP_10_TOKENS
+    from config import TOP_10_TOKENS, GEO_MARKET_HEALTH_BULL, GEO_MARKET_HEALTH_SELECT
 
     log.info("Starting Geometric Edge scan: %s", label)
     kite    = get_kite_action()
     scanner = GeometricEdgeScanner()
 
-    # ── Fetch universe (top 10 for now; extend to broader universe later) ──
+    # ── Load universe: Nifty 500 tokens if available, else fall back to Top 10 ──
+    import pandas as pd
     from datetime import timedelta
+
+    tokens_file = Path("data/nifty500_tokens.json")
+    if tokens_file.exists():
+        with open(tokens_file) as f:
+            scan_tokens = json.load(f)
+        log.info("Universe: %d stocks from nifty500_tokens.json", len(scan_tokens))
+    else:
+        scan_tokens = TOP_10_TOKENS
+        log.warning("nifty500_tokens.json not found — falling back to TOP_10_TOKENS (%d stocks). "
+                    "Run scripts/fetch_nifty500_tokens.py to build the full universe.",
+                    len(scan_tokens))
+
     to_date   = date.today()
-    from_date = to_date - timedelta(days=400)
+    from_date = to_date - timedelta(days=90)   # 90 calendar days ≈ 60 trading days (enough for SMA20+2)
 
     universe = {}
-    import pandas as pd
-    for sym, token in TOP_10_TOKENS.items():
+    total = len(scan_tokens)
+    for i, (sym, token) in enumerate(scan_tokens.items(), 1):
         try:
-            data = kite.historical_data(
-                token,
+            data = _fetch_ohlcv(
+                kite, token,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
-                "day"
             )
             df = pd.DataFrame(data)
             df["date"] = pd.to_datetime(df["date"])
             df = df.set_index("date").sort_index()
-            universe[sym] = df[["open","high","low","close","volume"]]
+            universe[sym] = df[["open", "high", "low", "close", "volume"]]
         except Exception as e:
             log.warning("Failed fetch %s: %s", sym, e)
+        if i % 50 == 0:
+            log.info("Universe fetch progress: %d / %d", i, total)
 
     # Market health
     breadth_count = get_nifty500_breadth()
-    if breadth_count > 350:
+    if breadth_count > GEO_MARKET_HEALTH_BULL:
         phase = "AGGR_BULL"
-    elif breadth_count > 200:
+    elif breadth_count > GEO_MARKET_HEALTH_SELECT:
         phase = "SELECTIVE"
     else:
         phase = "BEAR"
 
     health = {
-        "count": breadth_count,
-        "phase": phase,
-        "run_scans": phase != "BEAR",
+        "count":     breadth_count,
+        "phase":     phase,
+        "run_scans": True,   # always scan; bear results are watchlist-only
         "allocation": {},
     }
 
-    results = scanner.scan_universe(universe, health)
+    results = scanner.scan_universe(universe, health, scan_label=label)
     log.info("Scan found %d results", len(results))
 
     path = scanner.save_watchlist(results, label)
@@ -211,11 +253,10 @@ def run_market_health():
 
     for i, (sym, token) in enumerate(tokens.items()):
         try:
-            data = kite.historical_data(
-                token,
+            data = _fetch_ohlcv(
+                kite, token,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
-                "day"
             )
             df = pd.DataFrame(data)
             if len(df) >= 200:
@@ -223,8 +264,8 @@ def run_market_health():
                 last   = float(df["close"].iloc[-1])
                 if last > sma200:
                     count_above_200 += 1
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Breadth fetch failed %s: %s", sym, e)
 
         if (i + 1) % 50 == 0:
             log.info("Breadth progress: %d/%d", i+1, total)
