@@ -196,9 +196,16 @@ def bootstrap_from_history(daily_df) -> dict:
             df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # Find the most recent COMPLETED Tuesday — exclude today (IST) to avoid partial candle
+    # Find the most recent COMPLETED Tuesday.
+    # After 15:30 IST today's candle is complete, so include today if it is Tuesday.
+    _now_ist   = datetime.datetime.now(_pytz.timezone("Asia/Kolkata"))
+    _mkt_closed = _now_ist.hour > 15 or (_now_ist.hour == 15 and _now_ist.minute >= 30)
+    _today_is_tue = _now_ist.weekday() == 1
     _idx_dates = df.index.strftime("%Y-%m-%d")
-    tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
+    if _today_is_tue and _mkt_closed:
+        tue_rows = df[(df.index.weekday == 1) & (_idx_dates <= _today_ist)]
+    else:
+        tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
     if tue_rows.empty:
         log.warning("bootstrap_from_history: no completed Tuesday found in daily data")
         return rolled
