@@ -158,3 +158,91 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
     return rolled
 
 
+def compute_anchor_live(daily_df) -> dict:
+    """
+    Compute anchor in-memory from historical daily OHLCV — no disk write.
+    Used as a live fallback when rolled_positions.json has no valid anchor,
+    the same way live EMA signals are computed from Kite daily data.
+
+    Returns a dict with anchor, anchor_date, ce_strike, pe_strike, history.
+    Returns {} if data is insufficient.
+    """
+    import pandas as pd
+    import pytz as _pytz
+
+    if daily_df is None or (hasattr(daily_df, "empty") and daily_df.empty):
+        return {}
+
+    df = daily_df.copy()
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if "date" in df.columns:
+            df = df.set_index(pd.to_datetime(df["date"]))
+        else:
+            df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+
+    # Include today's close if today is Tuesday and market is closed (>=15:30 IST)
+    _now_ist      = datetime.datetime.now(_pytz.timezone("Asia/Kolkata"))
+    _today_ist    = _now_ist.strftime("%Y-%m-%d")
+    _mkt_closed   = _now_ist.hour > 15 or (_now_ist.hour == 15 and _now_ist.minute >= 30)
+    _today_is_tue = _now_ist.weekday() == 1
+    _idx_dates    = df.index.strftime("%Y-%m-%d")
+
+    if _today_is_tue and _mkt_closed:
+        tue_rows = df[(df.index.weekday == 1) & (_idx_dates <= _today_ist)]
+    else:
+        tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
+
+    if tue_rows.empty:
+        return {}
+
+    tue_row   = tue_rows.iloc[-1]
+    tue_date  = tue_row.name.strftime("%Y-%m-%d")
+    tue_close = float(tue_row["close"])
+    ce, pe    = rolled_strikes(tue_close)
+
+    result = {
+        "anchor":      round(tue_close, 2),
+        "anchor_date": tue_date,
+        "ce_strike":   ce,
+        "pe_strike":   pe,
+        "history": [{
+            "date":       tue_date,
+            "event":      "EXPIRY_ANCHOR",
+            "eod_close":  round(tue_close, 2),
+            "old_anchor": None,
+            "new_anchor": round(tue_close, 2),
+            "old_ce":     None,
+            "new_ce":     ce,
+            "old_pe":     None,
+            "new_pe":     pe,
+        }],
+    }
+
+    for ts, row in df[df.index > tue_rows.index[-1]].iterrows():
+        day_str   = ts.strftime("%Y-%m-%d")
+        if day_str >= _today_ist and not (_today_is_tue and _mkt_closed):
+            break  # skip today's partial candle unless market is closed
+        eod_close = float(row["close"])
+        anchor    = float(result["anchor"])
+        event     = check_roll_event(eod_close, anchor)
+        if event:
+            new_anc        = round(eod_close, 2)
+            new_ce, new_pe = rolled_strikes(new_anc)
+            result["history"].append({
+                "date":       day_str,
+                "event":      event,
+                "eod_close":  new_anc,
+                "old_anchor": anchor,
+                "new_anchor": new_anc,
+                "old_ce":     result["ce_strike"],
+                "new_ce":     new_ce,
+                "old_pe":     result["pe_strike"],
+                "new_pe":     new_pe,
+            })
+            result["anchor"]      = new_anc
+            result["anchor_date"] = day_str
+            result["ce_strike"]   = new_ce
+            result["pe_strike"]   = new_pe
+
+    return result

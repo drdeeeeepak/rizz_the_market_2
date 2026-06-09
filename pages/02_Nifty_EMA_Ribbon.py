@@ -169,14 +169,27 @@ elif src1 == 3:
 elif src1 == 2:
     skew_label = "1:1 Forced"; skew_note = f"Gap D2 ({gap_pct:.0f}% ATR) — moderate trend, flatten skew"; skew_col = "#d97706"; skew_forced = True
 
-# Source 3 — Anchor from rolled_positions.json (set by EOD job each Tuesday)
+# Source 3 — Anchor: committed rolled_positions.json (EOD job) OR computed live from Kite daily data
 import datetime as _dt, numpy as _np
 tue_close = tue_atr = 0.0
 tue_anchor_available = False
 tue_anchor_date = ""
-from data.rolled_positions import load_rolled
+from data.rolled_positions import load_rolled, compute_anchor_live
 import pytz as _pytz
+
 _rolled = load_rolled()
+if not (_rolled.get("anchor") and float(_rolled.get("anchor") or 0) > 0):
+    # Committed file missing/empty — compute live from Kite daily data (same as EMA)
+    try:
+        from data.live_fetcher import get_nifty_daily as _get_daily_anchor
+        _daily_anchor_df = _get_daily_anchor()
+        if not _daily_anchor_df.empty:
+            _live_rolled = compute_anchor_live(_daily_anchor_df)
+            if _live_rolled.get("anchor"):
+                _rolled = _live_rolled
+    except Exception:
+        pass
+
 _anchor_val = _rolled.get("anchor")
 if _anchor_val and float(_anchor_val) > 0:
     tue_close            = float(_anchor_val)
