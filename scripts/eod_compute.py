@@ -37,11 +37,6 @@ def main():
     if spot == 0 and not nifty_df.empty:
         spot = float(nifty_df["close"].iloc[-1])
 
-    # Bootstrap anchor from history if rolled_positions.json is missing/empty
-    if not nifty_df.empty:
-        from data.rolled_positions import bootstrap_from_history
-        bootstrap_from_history(nifty_df)
-
     chains = get_dual_expiry_chains(spot)
     log.info("Spot: %.0f  VIX: %.2f  Far DTE: %d  1H rows: %d  30m rows: %d",
              spot, vix_live, chains.get("far_dte", 7), len(nifty_1h), len(nifty_30m))
