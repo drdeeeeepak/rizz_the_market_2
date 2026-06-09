@@ -2,8 +2,12 @@ name: EOD Compute
 
 on:
   schedule:
-    # 3:35 PM IST = 10:05 UTC, Mon-Fri
+    # 3:35 PM IST = 10:05 UTC  — first attempt (right after market close)
     - cron: "5 10 * * 1-5"
+    # 4:05 PM IST = 10:35 UTC  — retry if user hadn't logged in yet
+    - cron: "35 10 * * 1-5"
+    # 5:05 PM IST = 11:35 UTC  — final retry
+    - cron: "35 11 * * 1-5"
   workflow_dispatch:
     inputs:
       reason:
@@ -32,14 +36,35 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Kite auto-login (generates access_token.txt)
+      - name: Check Kite token validity
+        id: token_check
         env:
-          KITE_API_KEY:     ${{ secrets.KITE_API_KEY }}
-          KITE_API_SECRET:  ${{ secrets.KITE_API_SECRET }}
-          KITE_USER_ID:     ${{ secrets.KITE_USER_ID }}
-          KITE_PASSWORD:    ${{ secrets.KITE_PASSWORD }}
-          KITE_TOTP_SECRET: ${{ secrets.KITE_TOTP_SECRET }}
-        run: python scripts/kite_auto_login.py
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+        run: |
+          python - <<'EOF'
+          import json, os, sys
+          from pathlib import Path
+          from datetime import datetime
+          import pytz
+
+          today = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+          tf = Path("access_token.txt")
+          if not tf.exists():
+              print("NO_TOKEN: access_token.txt missing")
+              sys.exit(1)
+          try:
+              d = json.loads(tf.read_text())
+              if d.get("date") != today:
+                  print(f"STALE_TOKEN: token date {d.get('date')} != today {today}")
+                  sys.exit(1)
+          except Exception as e:
+              print(f"BAD_TOKEN: {e}")
+              sys.exit(1)
+          if not os.environ.get("KITE_API_KEY","").strip():
+              print("NO_API_KEY: KITE_API_KEY secret not set")
+              sys.exit(1)
+          print(f"TOKEN_OK: valid token for {today}")
+          EOF
 
       - name: Run EOD compute (options/signals)
         env:
@@ -70,8 +95,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/signals.json data/breach_levels.json data/rolled_positions.json \
-                  data/watchlists/ data/parquet/ data/nifty500_tokens.json \
-                  access_token.txt
+                  data/watchlists/ data/parquet/ data/nifty500_tokens.json
           git diff --cached --quiet && echo "No changes to commit" || \
             git commit -m "chore: EOD compute + geo scan $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push origin main
