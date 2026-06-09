@@ -32,6 +32,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Kite auto-login (generates access_token.txt)
+        env:
+          KITE_API_KEY:     ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET:  ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID:     ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD:    ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP_SECRET: ${{ secrets.KITE_TOTP_SECRET }}
+        run: python scripts/kite_auto_login.py
+
       - name: Run EOD compute (options/signals)
         env:
           KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
@@ -41,6 +50,7 @@ jobs:
         run: python scripts/eod_compute.py
 
       - name: Build token map if missing
+        continue-on-error: true
         env:
           KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
@@ -49,6 +59,7 @@ jobs:
             python scripts/fetch_nifty500_tokens.py
 
       - name: Run EOD geo scan + OI snapshot + market health breadth
+        continue-on-error: true
         env:
           KITE_API_KEY:    ${{ secrets.KITE_API_KEY }}
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
@@ -59,7 +70,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/signals.json data/breach_levels.json data/rolled_positions.json \
-                  data/watchlists/ data/parquet/ data/nifty500_tokens.json
+                  data/watchlists/ data/parquet/ data/nifty500_tokens.json \
+                  access_token.txt
           git diff --cached --quiet && echo "No changes to commit" || \
             git commit -m "chore: EOD compute + geo scan $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push origin main
