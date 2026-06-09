@@ -161,10 +161,17 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
 def compute_anchor_live(daily_df) -> dict:
     """
     Compute anchor in-memory from historical daily OHLCV — no disk write.
-    Used as a live fallback when rolled_positions.json has no valid anchor,
-    the same way live EMA signals are computed from Kite daily data.
+    Primary anchor source for pg02, same pattern as live EMA signals.
 
-    Returns a dict with anchor, anchor_date, ce_strike, pe_strike, history.
+    Logic:
+    - Finds the most recent Tuesday CALENDAR date (the anchor week start).
+    - If that Tuesday was a market holiday, uses the last trading day
+      BEFORE it (e.g. Monday or prior Friday) as the anchor — no data lost.
+    - Replays each subsequent completed EOD close through check_roll_event
+      to rebuild loss/profit roll history up to today.
+    - Today's candle is included only if market is closed (>=15:30 IST).
+
+    Returns dict with anchor, anchor_date, ce_strike, pe_strike, history.
     Returns {} if data is insufficient.
     """
     import pandas as pd
@@ -181,37 +188,41 @@ def compute_anchor_live(daily_df) -> dict:
             df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # Include today's close if today is Tuesday and market is closed (>=15:30 IST)
     _now_ist      = datetime.datetime.now(_pytz.timezone("Asia/Kolkata"))
     _today_ist    = _now_ist.strftime("%Y-%m-%d")
     _mkt_closed   = _now_ist.hour > 15 or (_now_ist.hour == 15 and _now_ist.minute >= 30)
     _today_is_tue = _now_ist.weekday() == 1
     _idx_dates    = df.index.strftime("%Y-%m-%d")
 
-    if _today_is_tue and _mkt_closed:
-        tue_rows = df[(df.index.weekday == 1) & (_idx_dates <= _today_ist)]
-    else:
-        tue_rows = df[(df.index.weekday == 1) & (_idx_dates < _today_ist)]
+    # ── Step 1: find the most recent anchor-Tuesday calendar date ─────────────
+    # If today is Tuesday and market not closed yet, anchor is last week's Tuesday.
+    days_since_tue = (_now_ist.weekday() - 1) % 7   # Mon=6,Tue=0,Wed=1,...,Fri=3
+    if _today_is_tue and not _mkt_closed:
+        days_since_tue = 7  # today's candle is partial — use previous Tuesday
+    anchor_tue_cal = (_now_ist - datetime.timedelta(days=days_since_tue)).strftime("%Y-%m-%d")
 
-    if tue_rows.empty:
+    # ── Step 2: last trading day ON OR BEFORE that calendar Tuesday ───────────
+    # Handles Tuesday holidays: e.g. if Tue Jun 3 is holiday, uses Mon Jun 2.
+    anchor_candidates = df[_idx_dates <= anchor_tue_cal]
+    if anchor_candidates.empty:
         return {}
 
-    tue_row   = tue_rows.iloc[-1]
-    tue_date  = tue_row.name.strftime("%Y-%m-%d")
-    tue_close = float(tue_row["close"])
-    ce, pe    = rolled_strikes(tue_close)
+    anchor_row   = anchor_candidates.iloc[-1]
+    anchor_date  = anchor_row.name.strftime("%Y-%m-%d")
+    anchor_close = float(anchor_row["close"])
+    ce, pe       = rolled_strikes(anchor_close)
 
     result = {
-        "anchor":      round(tue_close, 2),
-        "anchor_date": tue_date,
+        "anchor":      round(anchor_close, 2),
+        "anchor_date": anchor_date,
         "ce_strike":   ce,
         "pe_strike":   pe,
         "history": [{
-            "date":       tue_date,
+            "date":       anchor_date,
             "event":      "EXPIRY_ANCHOR",
-            "eod_close":  round(tue_close, 2),
+            "eod_close":  round(anchor_close, 2),
             "old_anchor": None,
-            "new_anchor": round(tue_close, 2),
+            "new_anchor": round(anchor_close, 2),
             "old_ce":     None,
             "new_ce":     ce,
             "old_pe":     None,
@@ -219,10 +230,12 @@ def compute_anchor_live(daily_df) -> dict:
         }],
     }
 
-    for ts, row in df[df.index > tue_rows.index[-1]].iterrows():
-        day_str   = ts.strftime("%Y-%m-%d")
-        if day_str >= _today_ist and not (_today_is_tue and _mkt_closed):
-            break  # skip today's partial candle unless market is closed
+    # ── Step 3: replay each day after anchor through roll logic ───────────────
+    for ts, row in df[df.index > anchor_row.name].iterrows():
+        day_str = ts.strftime("%Y-%m-%d")
+        # Skip today's candle if market is still open (partial data)
+        if day_str >= _today_ist and not _mkt_closed:
+            break
         eod_close = float(row["close"])
         anchor    = float(result["anchor"])
         event     = check_roll_event(eod_close, anchor)
