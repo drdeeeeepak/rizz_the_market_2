@@ -117,8 +117,9 @@ def set_expiry_anchor(eod_close: float, eod_date: str) -> dict:
 def eod_update(eod_close: float, eod_date: str) -> dict:
     """
     Called by EOD job on non-Tuesday days.
-    Checks if book profit or book loss was reached on closing basis.
-    If so, rolls both strikes to new anchor = today's EOD close.
+    Loss events (CE_LOSS / PE_LOSS): both strikes reset to new anchor.
+    Profit events (CE_PROFIT / PE_PROFIT): only the profitable leg re-sold
+    from new anchor; the other strike stays in place.
     Idempotent: skips if already updated today.
     """
     rolled = load_rolled()
@@ -135,9 +136,17 @@ def eod_update(eod_close: float, eod_date: str) -> dict:
     if event is None:
         return rolled
 
-    old_ce, old_pe = rolled.get("ce_strike"), rolled.get("pe_strike")
-    new_anc        = round(eod_close, 2)
-    new_ce, new_pe = rolled_strikes(new_anc)
+    old_ce  = rolled.get("ce_strike")
+    old_pe  = rolled.get("pe_strike")
+    new_anc = round(eod_close, 2)
+    calc_ce, calc_pe = rolled_strikes(new_anc)
+
+    if event in ("CE_LOSS", "PE_LOSS"):
+        new_ce, new_pe = calc_ce, calc_pe          # both sides reset
+    elif event == "CE_PROFIT":
+        new_ce, new_pe = calc_ce, old_pe           # only CE re-sold further OTM
+    else:  # PE_PROFIT
+        new_ce, new_pe = old_ce, calc_pe           # only PE re-sold further OTM
 
     rolled["anchor"]      = new_anc
     rolled["anchor_date"] = eod_date
@@ -240,17 +249,27 @@ def compute_anchor_live(daily_df) -> dict:
         anchor    = float(result["anchor"])
         event     = check_roll_event(eod_close, anchor)
         if event:
-            new_anc        = round(eod_close, 2)
-            new_ce, new_pe = rolled_strikes(new_anc)
+            new_anc          = round(eod_close, 2)
+            calc_ce, calc_pe = rolled_strikes(new_anc)
+            old_ce           = result["ce_strike"]
+            old_pe           = result["pe_strike"]
+
+            if event in ("CE_LOSS", "PE_LOSS"):
+                new_ce, new_pe = calc_ce, calc_pe   # both sides reset
+            elif event == "CE_PROFIT":
+                new_ce, new_pe = calc_ce, old_pe    # only CE re-sold further OTM
+            else:  # PE_PROFIT
+                new_ce, new_pe = old_ce, calc_pe    # only PE re-sold further OTM
+
             result["history"].append({
                 "date":       day_str,
                 "event":      event,
                 "eod_close":  new_anc,
                 "old_anchor": anchor,
                 "new_anchor": new_anc,
-                "old_ce":     result["ce_strike"],
+                "old_ce":     old_ce,
                 "new_ce":     new_ce,
-                "old_pe":     result["pe_strike"],
+                "old_pe":     old_pe,
                 "new_pe":     new_pe,
             })
             result["anchor"]      = new_anc
