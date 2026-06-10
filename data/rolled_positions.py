@@ -14,9 +14,9 @@ Format:
 Rules:
 - EOD job on Tuesday: calls set_expiry_anchor(eod_close, date) → starts new cycle
 - EOD job Mon/Wed/Thu/Fri: calls eod_update(eod_close, date) → checks book levels
-- Book loss:   EOD close drifts ≥ 2.5% adverse from anchor → roll both strikes
-- Book profit: EOD close drifts ≥ 1.8% favorable from anchor → roll both strikes
-- Both sides always reset together from unified anchor = that day's EOD close
+- Book loss:   EOD close drifts ≥ 2.5% adverse from anchor → roll BOTH strikes from new anchor
+- Book profit: EOD close drifts ≥ 1.8% favorable from anchor → roll ONLY the profitable leg; other stays
+- Loss events always reset both sides; profit events re-sell only the triggered leg
 - No intraday triggers. No filter gates. Pure price, EOD only.
 """
 

@@ -463,8 +463,8 @@ Every **Tuesday EOD** (3:35 PM IST), Nifty's closing price is locked as the **an
 ### The Only Rule — checked at EOD every day
 | Signal | Condition | Action |
 |---|---|---|
-| 🔴 BOOK LOSS | EOD close drifts ≥ 2.5% adverse | Exit position. New anchor = today's close. Both strikes reset. |
-| 🟢 BOOK PROFIT | EOD close drifts ≥ 1.8% favorable | Lock in gains. New anchor = today's close. Both strikes reset. |
+| 🔴 BOOK LOSS | EOD close drifts ≥ 2.5% adverse | Exit position. New anchor = today's close. **Both strikes reset.** |
+| 🟢 BOOK PROFIT | EOD close drifts ≥ 1.8% favorable | Lock in gains. New anchor = today's close. **Only the profitable leg re-sold** from new anchor; other strike stays. |
 | ✅ HOLD | Neither threshold reached | Do nothing. |
 
 No intraday action. No filter gates. Pure closing price check.
@@ -488,8 +488,11 @@ Context — not rules. These tell you *how threatening the market structure is* 
 
 ---
 
-### Book Profit / Loss — both sides always reset together
-When either side triggers, **both CE and PE are rolled** to new strikes from the new anchor. One unified anchor, always.
+### Book Loss — both sides reset
+When a **loss** triggers (≥ 2.5% adverse), both CE and PE are rolled from the new anchor.
+
+### Book Profit — only the triggered leg re-sold
+When a **profit** triggers (≥ 1.8% favorable), only the profitable leg is re-sold further OTM from the new anchor. The other leg stays in place.
 """)
 
 ui.section_header("Roll Matrix",
@@ -523,7 +526,7 @@ Action: New anchor = that day's EOD close. Both CE and PE strikes recalculated.
 | PE PROFIT | EOD close ≥ anchor + 1.8% (PE premium dead, CE still fine) |
 | CE PROFIT | EOD close ≤ anchor − 1.8% (CE premium dead, PE still fine) |
 
-Action: Same as loss — new anchor = EOD close, both strikes reset.
+Action: New anchor = EOD close. **Only the triggered leg re-sold** from new anchor. Other strike stays in place.
 
 ---
 
@@ -903,7 +906,7 @@ else:
         elif book_profit:
             bg     = "#0f766e"
             state  = "🟢 BOOK PROFIT"
-            action = f"EOD close crossed {_OFF_THR}% favorable · Roll BOTH strikes from new anchor"
+            action = f"EOD close crossed {_OFF_THR}% favorable · Re-sell this leg from new anchor · other side stays"
         else:
             bg     = palette[3] if adverse < 0.5 and favor < 0.5 else palette[2]
             state  = "✅ HOLD"
