@@ -119,9 +119,78 @@ def _load_bb_all_tf():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e)
 
 
+# ── Per-bar Confluence (historical) — mirrors the live Confluence scoreboard ──
+# Sign: + = bullish (CE leg threatened) · − = bearish (PE leg threatened)
+def _pct_b_zone(pb):
+    if pb > 1.0:   return "ABOVE_BAND"
+    if pb >= 0.75: return "UPPER"
+    if pb >= 0.55: return "UP_NEUTRAL"
+    if pb >= 0.45: return "MIDLINE"
+    if pb >= 0.25: return "LO_NEUTRAL"
+    if pb >= 0.0:  return "LOWER"
+    return "BELOW_BAND"
+
+_PCTB_VOTE = {"ABOVE_BAND": 1.0, "UPPER": 1.0, "UP_NEUTRAL": 0.5, "MIDLINE": 0.0,
+              "LO_NEUTRAL": -0.5, "LOWER": -1.0, "BELOW_BAND": -1.0}
+_EMA_VOTE  = {1: 1.0, 2: 0.5, 3: 0.0, 4: -0.5, 5: -1.0}
+
+def _walk_vote_hist(wu, wd):
+    days = max(wu, wd)
+    mag  = 1.0 if days >= 4 else 0.66 if days == 3 else 0.33 if days == 2 else 0.0
+    if mag == 0.0:
+        return 0.0
+    return mag if wu >= wd else -mag
+
+def _mpr_vote_hist(v):
+    if v is None or pd.isna(v): return 0.0
+    if v >  0.30: return 1.0
+    if v >  0.10: return 0.5
+    if v < -0.30: return -1.0
+    if v < -0.10: return -0.5
+    return 0.0
+
+# diverging colour scale: deep blue (strong bull) → grey → deep red (strong bear)
+def _confluence_color(s):
+    if s >=  2.5: return "#0d47a1"
+    if s >=  1.5: return "#1976d2"
+    if s >=  0.5: return "#90caf9"
+    if s >  -0.5: return "#cfd8dc"
+    if s >  -1.5: return "#ef9a9a"
+    if s >  -2.5: return "#e53935"
+    return "#b71c1c"
+
+def _confluence_series(plot):
+    """Per-bar net directional score (−4..+4) + hover text, from the chart df."""
+    n = len(plot)
+    pb  = plot["bb_pct_b"]        if "bb_pct_b"        in plot.columns else None
+    sph = plot["Slope_Phase"]     if "Slope_Phase"     in plot.columns else None
+    wuc = plot["walk_up_count"]   if "walk_up_count"   in plot.columns else None
+    wdc = plot["walk_down_count"] if "walk_down_count" in plot.columns else None
+    mpr = plot["mpr_shift"]       if "mpr_shift"       in plot.columns else None
+    scores, hovers = [], []
+    for i in range(n):
+        zone = _pct_b_zone(float(pb.iloc[i])) if pb is not None and not pd.isna(pb.iloc[i]) else "MIDLINE"
+        vp = _PCTB_VOTE.get(zone, 0.0)
+        ph = int(sph.iloc[i]) if sph is not None and not pd.isna(sph.iloc[i]) else 3
+        ve = _EMA_VOTE.get(ph, 0.0)
+        u  = int(wuc.iloc[i]) if wuc is not None and not pd.isna(wuc.iloc[i]) else 0
+        d  = int(wdc.iloc[i]) if wdc is not None and not pd.isna(wdc.iloc[i]) else 0
+        vw = _walk_vote_hist(u, d)
+        mv = float(mpr.iloc[i]) if mpr is not None and not pd.isna(mpr.iloc[i]) else None
+        vm = _mpr_vote_hist(mv)
+        s  = vp + ve + vw + vm
+        scores.append(s)
+        hovers.append(
+            f"Confluence {s:+.1f} / ±4<br>"
+            f"%B {zone} {vp:+.1f} · EMA P{ph} {ve:+.1f}<br>"
+            f"Walk ↑{u}↓{d} {vw:+.1f} · MPR {vm:+.1f}"
+        )
+    return scores, hovers
+
+
 def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
-    """5-panel chart (last ~1 month):
-    price+BB | MPR ribbon | EMA ribbon | EMA slope + K1/K2 bands | BW% + MPR line."""
+    """6-panel chart (last ~6 weeks):
+    price+BB | Confluence ribbon | MPR ribbon | EMA ribbon | EMA slope + K1/K2 | BW% + MPR line."""
     if df.empty or len(df) < 5:
         return None
 
@@ -165,11 +234,15 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             s0, s_ph = i, phs[i]
     segs.append((s0, n - 1, s_ph))
 
+    # per-bar confluence (used by the ribbon + strong-conviction price markers)
+    conf_scores, conf_hov = _confluence_series(plot)
+
     fig = make_subplots(
-        rows=5, cols=1, shared_xaxes=True,
-        row_heights=[0.40, 0.05, 0.05, 0.25, 0.25],
-        vertical_spacing=0.032,
+        rows=6, cols=1, shared_xaxes=True,
+        row_heights=[0.40, 0.05, 0.05, 0.05, 0.22, 0.23],
+        vertical_spacing=0.028,
         specs=[
+            [{"secondary_y": False}],
             [{"secondary_y": False}],
             [{"secondary_y": False}],
             [{"secondary_y": False}],
@@ -178,7 +251,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         ],
         subplot_titles=[
             f"Nifty {title} · BB Phases + EMA Slope  (last ~6 weeks)",
-            "", "", "", "",
+            "", "", "", "", "",
         ],
     )
 
@@ -209,6 +282,32 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         whiskerwidth=0.3, showlegend=False,
     ), row=1, col=1)
 
+    # Strong-conviction onset markers (confluence crossing ±2) — backtest cues
+    _bx, _by, _rx, _ry = [], [], [], []
+    for i in range(n):
+        s  = conf_scores[i]
+        sp = conf_scores[i - 1] if i > 0 else 0.0
+        if s >= 2 and sp < 2:
+            _bx.append(i); _by.append(plot["low"].iloc[i] * 0.9985)
+        elif s <= -2 and sp > -2:
+            _rx.append(i); _ry.append(plot["high"].iloc[i] * 1.0015)
+    if _bx:
+        fig.add_trace(go.Scatter(
+            x=_bx, y=_by, mode="markers", name="Strong bull onset (≥+2)",
+            marker=dict(symbol="triangle-up", size=12, color="#0d47a1",
+                        line=dict(width=1, color="#fff")),
+            hovertext=["Confluence ≥ +2 — strong BULLISH onset"] * len(_bx),
+            hoverinfo="text", showlegend=False,
+        ), row=1, col=1)
+    if _rx:
+        fig.add_trace(go.Scatter(
+            x=_rx, y=_ry, mode="markers", name="Strong bear onset (≤−2)",
+            marker=dict(symbol="triangle-down", size=12, color="#b71c1c",
+                        line=dict(width=1, color="#fff")),
+            hovertext=["Confluence ≤ −2 — strong BEARISH onset"] * len(_rx),
+            hoverinfo="text", showlegend=False,
+        ), row=1, col=1)
+
     # BB bands
     fig.add_trace(go.Scatter(
         x=xp, y=plot["bb_upper"].tolist(), mode="lines", name="BB Upper",
@@ -224,7 +323,16 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         line=dict(color="#1565C0", width=1.5), showlegend=True,
     ), row=1, col=1)
 
-    # ── Panel 2: MPR shift ribbon ─────────────────────────────────────────────
+    # ── Panel 2: Confluence ribbon (net of all 4 directional lenses) ─────────
+    conf_clrs = [_confluence_color(s) for s in conf_scores]
+    fig.add_trace(go.Bar(
+        x=xp, y=[1] * n, marker_color=conf_clrs, marker_line_width=0,
+        name="Confluence ribbon", showlegend=False,
+        hovertext=conf_hov, hoverinfo="text",
+    ), row=2, col=1)
+    fig.update_yaxes(visible=False, row=2, col=1)
+
+    # ── Panel 3: MPR shift ribbon ─────────────────────────────────────────────
     if has_mpr:
         mpr_vals = plot["mpr_shift"].fillna(0).tolist()
         mpr_clrs = [_mpr_bar_color(v) for v in mpr_vals]
@@ -232,10 +340,10 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             x=xp, y=[1] * n, marker_color=mpr_clrs, marker_line_width=0,
             name="MPR ribbon", showlegend=False,
             hovertext=[f"MPR shift: {v:.3f}" for v in mpr_vals], hoverinfo="text",
-        ), row=2, col=1)
-    fig.update_yaxes(visible=False, row=2, col=1)
+        ), row=3, col=1)
+    fig.update_yaxes(visible=False, row=3, col=1)
 
-    # ── Panel 3: EMA slope phase ribbon ──────────────────────────────────────
+    # ── Panel 4: EMA slope phase ribbon ──────────────────────────────────────
     if has_ema:
         eph_f2 = [int(v) if not pd.isna(v) else 3 for v in plot["Slope_Phase"].tolist()]
         ema_clrs = [_EMA_PHASE_COLORS.get(ep, "#FFD600") for ep in eph_f2]
@@ -243,10 +351,10 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             x=xp, y=[1] * n, marker_color=ema_clrs, marker_line_width=0,
             name="EMA Phase ribbon", showlegend=False,
             hovertext=[_EMA_LABELS.get(ep, "?") for ep in eph_f2], hoverinfo="text",
-        ), row=3, col=1)
-    fig.update_yaxes(visible=False, row=3, col=1)
+        ), row=4, col=1)
+    fig.update_yaxes(visible=False, row=4, col=1)
 
-    # ── Panel 4: EMA slope + K1/K2 bands  (pg17 style) ───────────────────────
+    # ── Panel 5: EMA slope + K1/K2 bands  (pg17 style) ───────────────────────
     if has_k:
         xr  = xp[::-1]
         k1f = list(plot["k1"]); k1r = list(plot["k1"][::-1])
@@ -256,19 +364,19 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             x=xp + xr, y=k1f + [-v for v in k1r], fill="toself",
             fillcolor="rgba(255,214,0,0.20)", line=dict(width=0),
             name="±K1 neutral", showlegend=True, hoverinfo="skip",
-        ), row=4, col=1)
+        ), row=5, col=1)
         # +K1..+K2 bullish band (Phase 2)
         fig.add_trace(go.Scatter(
             x=xp + xr, y=k2f + k1r, fill="toself",
             fillcolor="rgba(0,200,83,0.14)", line=dict(width=0),
             showlegend=False, hoverinfo="skip",
-        ), row=4, col=1)
+        ), row=5, col=1)
         # −K1..−K2 bearish band (Phase 4)
         fig.add_trace(go.Scatter(
             x=xp + xr, y=[-v for v in k1f] + [-v for v in k2r], fill="toself",
             fillcolor="rgba(213,0,0,0.14)", line=dict(width=0),
             showlegend=False, hoverinfo="skip",
-        ), row=4, col=1)
+        ), row=5, col=1)
         # K1/K2 boundary lines
         for _cn, _cc, _dash, _lbl, _sgn in [
             ("k2", "#2E7D32", "dot",  "+K2",  1),
@@ -279,7 +387,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             fig.add_trace(go.Scatter(
                 x=xp, y=(_sgn * plot[_cn]).tolist(), mode="lines", name=_lbl,
                 line=dict(color=_cc, width=1.3, dash=_dash), showlegend=True,
-            ), row=4, col=1)
+            ), row=5, col=1)
         # slope bars coloured by phase
         _slc = [_EMA_PHASE_COLORS.get(int(p) if not pd.isna(p) else 3, "#888")
                 for p in plot["Slope_Phase"].tolist()]
@@ -288,15 +396,15 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             name="EMA slope", opacity=0.85, showlegend=False,
             hovertext=[f"slope {s:+.2f}" for s in plot["ema_slope"].tolist()],
             hoverinfo="text",
-        ), row=4, col=1)
-        fig.add_hline(y=0, line_width=1, line_color="#bbb", row=4, col=1)
+        ), row=5, col=1)
+        fig.add_hline(y=0, line_width=1, line_color="#bbb", row=5, col=1)
         _k2max = float(plot["k2"].max()) if not plot["k2"].empty else 1.0
         if not _k2max or pd.isna(_k2max):
             _k2max = 1.0
         fig.update_yaxes(title_text="Slope", range=[-_k2max * 2.4, _k2max * 2.4],
-                         row=4, col=1, gridcolor="#eeeeee", zeroline=False)
+                         row=5, col=1, gridcolor="#eeeeee", zeroline=False)
 
-    # ── Panel 5: BW% bars (left) + MPR shift line (right) ────────────────────
+    # ── Panel 6: BW% bars (left) + MPR shift line (right) ────────────────────
     for ph, col in _PHASE_COLOR.items():
         mask = [i for i, p in enumerate(phs) if p == ph]
         if mask:
@@ -304,11 +412,11 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                 x=[xp[i] for i in mask], y=[bw[i] for i in mask],
                 name=ph.replace("_", " "), marker_color=col, opacity=0.85,
                 showlegend=True,
-            ), row=5, col=1)
+            ), row=6, col=1)
     for thr, lbl, col in _BW_LEVELS:
         fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
                       annotation_text=lbl, annotation_position="right",
-                      row=5, col=1)
+                      row=6, col=1)
 
     if has_mpr:
         mpr_vals2 = plot["mpr_shift"].tolist()
@@ -317,17 +425,24 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                 x=[xp[0], xp[-1]], y=[thr_v, thr_v],
                 mode="lines", line=dict(color=thr_c, width=1, dash="dot"),
                 showlegend=False, hoverinfo="skip",
-            ), row=5, col=1, secondary_y=True)
+            ), row=6, col=1, secondary_y=True)
         fig.add_trace(go.Scatter(
             x=xp, y=mpr_vals2, mode="lines", name="MPR Shift",
             line=dict(color="#7B1FA2", width=1.5), showlegend=True,
-        ), row=5, col=1, secondary_y=True)
+        ), row=6, col=1, secondary_y=True)
         fig.update_yaxes(title_text="MPR", range=[-1.1, 1.1],
-                         row=5, col=1, secondary_y=True,
+                         row=6, col=1, secondary_y=True,
                          gridcolor="#eeeeee", zeroline=False)
 
     # ── ribbon colour legends — labelled swatches in the gap above each ribbon ─
     _sq = "<span style='color:{c}'>■</span>"
+    _conf_leg = "&nbsp; ".join([
+        f"{_sq.format(c='#0d47a1')} Str bull",
+        f"{_sq.format(c='#90caf9')} Mild bull",
+        f"{_sq.format(c='#cfd8dc')} Neutral",
+        f"{_sq.format(c='#ef9a9a')} Mild bear",
+        f"{_sq.format(c='#b71c1c')} Str bear",
+    ])
     _mpr_leg = "&nbsp; ".join([
         f"{_sq.format(c=_MPR_BULL_STRONG)} Bull str",
         f"{_sq.format(c=_MPR_BULL_MILD)} Bull mild",
@@ -339,7 +454,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         f"{_sq.format(c=_EMA_PHASE_COLORS[p])} P{p} {_EMA_PHASE_SHORT[p]}"
         for p in (1, 2, 3, 4, 5)
     ])
-    for _yr, _txt in [("y2 domain", _mpr_leg), ("y3 domain", _ema_leg)]:
+    for _yr, _txt in [("y2 domain", _conf_leg), ("y3 domain", _mpr_leg), ("y4 domain", _ema_leg)]:
         fig.add_annotation(
             xref="paper", x=0.0, xanchor="left",
             yref=_yr, y=1.05, yanchor="bottom",
@@ -349,9 +464,10 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
 
     # ── left-margin panel names (subplot titles overlap the bars) ─────────────
     for _yr, _nm, _hint in [
-        ("y2 domain", "MPR Shift", ""),
-        ("y3 domain", "EMA Phase", ""),
-        ("y4 domain", "EMA Slope", "slope vs ±K1/±K2"),
+        ("y2 domain", "Confluence", "net −4…+4"),
+        ("y3 domain", "MPR Shift", ""),
+        ("y4 domain", "EMA Phase", ""),
+        ("y5 domain", "EMA Slope", "slope vs ±K1/±K2"),
     ]:
         _sub = f"<br><span style='font-size:11px;color:#777'>{_hint}</span>" if _hint else ""
         fig.add_annotation(
@@ -362,7 +478,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         )
 
     fig.update_layout(
-        height=1120,
+        height=1320,
         margin=dict(l=98, r=65, t=50, b=10),
         paper_bgcolor="white", plot_bgcolor="white",
         font=dict(color="#222", size=14),
@@ -371,13 +487,13 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         xaxis_rangeslider_visible=False,
         hovermode="x unified", barmode="overlay",
     )
-    for r in [1, 2, 3, 4, 5]:
+    for r in [1, 2, 3, 4, 5, 6]:
         fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1,
                          secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
                          range=[-0.5, n - 0.5], row=r, col=1)
     fig.update_yaxes(title_text="Price", row=1, col=1)
-    fig.update_yaxes(title_text="BW%",   row=5, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
     return fig
 
 
@@ -884,11 +1000,11 @@ with _cv2:
         _vb = (f"Lenses lean <b>{_dirw}</b> {_conf}. {threat_leg} is the side price is drifting toward, so {_skew}. "
                f"Engine ratio: <b>{ratio}</b> · size {lot_pct}% ({bb_regime}). "
                + ("✓ matches engine ratio." if _match else "⚠ differs from engine ratio — re-check before sizing."))
-    ui.alert_box(_vt, _vb, level=_vl)
+    ui.alert_box(_vt, _vb, level=_vl, big=True)
     ui.alert_box(
         f"Size dial — BB Phase {bb_regime}",
         f"Lot size {lot_pct}% · {lot_reason}. Volatility regime sets HOW BIG; the votes above set WHICH WAY.",
-        level="info",
+        level="info", big=True,
     )
 
 st.divider()

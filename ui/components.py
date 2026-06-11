@@ -212,7 +212,7 @@ def kill_switch_row(name: str, active: bool, detail: str = "") -> None:
     )
 
 
-def alert_box(title: str, body: str, level: str = "info") -> None:
+def alert_box(title: str, body: str, level: str = "info", big: bool = False) -> None:
     colors = {
         "danger":  ("#fef2f2", "#dc2626", "#fee2e2"),
         "warning": ("#fffbeb", "#d97706", "#fef3c7"),
@@ -220,12 +220,13 @@ def alert_box(title: str, body: str, level: str = "info") -> None:
         "success": ("#f0fdf4", "#16a34a", "#dcfce7"),
     }
     bg, border, _ = colors.get(level, colors["info"])
+    _ts, _bs, _pad = ("15px", "13.5px", "12px 15px") if big else ("11px", "10px", "9px 13px")
     st.markdown(
         f"<div style='background:{bg};border:1px solid {border};"
         f"border-left:4px solid {border};border-radius:6px;"
-        f"padding:9px 13px;margin-bottom:6px;'>"
-        f"<div style='font-size:11px;font-weight:700;color:#0f1724;margin-bottom:3px;'>{title}</div>"
-        f"<div style='font-size:10px;color:#5a6b8a;font-family:monospace;line-height:1.5;'>{body}</div>"
+        f"padding:{_pad};margin-bottom:6px;'>"
+        f"<div style='font-size:{_ts};font-weight:700;color:#0f1724;margin-bottom:3px;'>{title}</div>"
+        f"<div style='font-size:{_bs};color:#5a6b8a;font-family:monospace;line-height:1.55;'>{body}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
