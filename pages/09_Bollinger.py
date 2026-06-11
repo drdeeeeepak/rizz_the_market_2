@@ -485,13 +485,18 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         legend=dict(orientation="h", x=0, y=-0.04,
                     bgcolor="rgba(255,255,255,0.9)", font=dict(size=13)),
         xaxis_rangeslider_visible=False,
-        hovermode="x unified", barmode="overlay",
+        hovermode="closest", barmode="overlay",
+        hoverlabel=dict(bgcolor="rgba(255,255,255,0.78)",
+                        bordercolor="rgba(0,0,0,0.25)",
+                        font=dict(size=12, color="#222"), namelength=-1),
     )
     for r in [1, 2, 3, 4, 5, 6]:
         fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1,
                          secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
-                         range=[-0.5, n - 0.5], row=r, col=1)
+                         range=[-0.5, n - 0.5], row=r, col=1,
+                         showspikes=True, spikemode="across", spikesnap="cursor",
+                         spikethickness=1, spikecolor="#aaa", spikedash="dot")
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
     return fig
