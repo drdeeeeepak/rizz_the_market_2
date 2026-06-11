@@ -205,8 +205,6 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     if df.empty or len(df) < 5:
         return None
 
-    from analytics.ema_slope_phases import PHASE_LABELS as _EMA_LABELS
-
     plot = df.dropna(subset=["phase"]).copy()
     # ── last ~6 weeks of candles (1 month + extra context) ───────────────────
     if not plot.empty:
@@ -416,7 +414,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                 x=[xp[i] for i in mask], y=[bw[i] for i in mask],
                 name=ph.replace("_", " "), marker_color=col, opacity=0.85,
                 showlegend=True,
-                hovertemplate="BW %{y:.2f}%% · " + ph.replace("_", " ") + "<extra></extra>",
+                hovertemplate="BW %{y:.2f}% · " + ph.replace("_", " ") + "<extra></extra>",
             ), row=6, col=1)
     for thr, lbl, col in _BW_LEVELS:
         fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
@@ -537,7 +535,7 @@ if _is_live():
 
         if not _df.empty:
             try:
-                _df_1h = get_nifty_1h_phase()
+                _df_1h = get_nifty_1h_phase(days=60)  # reuse the chart's cached fetch
                 _df_2h = resample_ohlcv(_df_1h, "2h") if not _df_1h.empty else pd.DataFrame()
                 _df_4h = resample_ohlcv(_df_1h, "4h") if not _df_1h.empty else pd.DataFrame()
             except Exception:
