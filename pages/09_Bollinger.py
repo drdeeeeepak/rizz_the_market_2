@@ -282,45 +282,22 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         whiskerwidth=0.3, showlegend=False,
     ), row=1, col=1)
 
-    # Strong-conviction onset markers (confluence crossing ±2) — backtest cues
-    _bx, _by, _rx, _ry = [], [], [], []
-    for i in range(n):
-        s  = conf_scores[i]
-        sp = conf_scores[i - 1] if i > 0 else 0.0
-        if s >= 2 and sp < 2:
-            _bx.append(i); _by.append(plot["low"].iloc[i] * 0.9985)
-        elif s <= -2 and sp > -2:
-            _rx.append(i); _ry.append(plot["high"].iloc[i] * 1.0015)
-    if _bx:
-        fig.add_trace(go.Scatter(
-            x=_bx, y=_by, mode="markers", name="Strong bull onset (≥+2)",
-            marker=dict(symbol="triangle-up", size=12, color="#0d47a1",
-                        line=dict(width=1, color="#fff")),
-            hovertext=["Confluence ≥ +2 — strong BULLISH onset"] * len(_bx),
-            hoverinfo="text", showlegend=False,
-        ), row=1, col=1)
-    if _rx:
-        fig.add_trace(go.Scatter(
-            x=_rx, y=_ry, mode="markers", name="Strong bear onset (≤−2)",
-            marker=dict(symbol="triangle-down", size=12, color="#b71c1c",
-                        line=dict(width=1, color="#fff")),
-            hovertext=["Confluence ≤ −2 — strong BEARISH onset"] * len(_rx),
-            hoverinfo="text", showlegend=False,
-        ), row=1, col=1)
-
     # BB bands
     fig.add_trace(go.Scatter(
         x=xp, y=plot["bb_upper"].tolist(), mode="lines", name="BB Upper",
         line=dict(color="#1565C0", width=1, dash="dot"), showlegend=True,
+        hoverinfo="skip",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=xp, y=plot["bb_lower"].tolist(), mode="lines", name="BB Lower",
         line=dict(color="#1565C0", width=1, dash="dot"),
         fill="tonexty", fillcolor="rgba(21,101,192,0.07)", showlegend=False,
+        hoverinfo="skip",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=xp, y=plot["bb_basis"].tolist(), mode="lines", name="BB Basis",
         line=dict(color="#1565C0", width=1.5), showlegend=True,
+        hoverinfo="skip",
     ), row=1, col=1)
 
     # ── Panel 2: Confluence ribbon (net of all 4 directional lenses) ─────────
@@ -338,8 +315,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         mpr_clrs = [_mpr_bar_color(v) for v in mpr_vals]
         fig.add_trace(go.Bar(
             x=xp, y=[1] * n, marker_color=mpr_clrs, marker_line_width=0,
-            name="MPR ribbon", showlegend=False,
-            hovertext=[f"MPR shift: {v:.3f}" for v in mpr_vals], hoverinfo="text",
+            name="MPR ribbon", showlegend=False, hoverinfo="skip",
         ), row=3, col=1)
     fig.update_yaxes(visible=False, row=3, col=1)
 
@@ -349,8 +325,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         ema_clrs = [_EMA_PHASE_COLORS.get(ep, "#FFD600") for ep in eph_f2]
         fig.add_trace(go.Bar(
             x=xp, y=[1] * n, marker_color=ema_clrs, marker_line_width=0,
-            name="EMA Phase ribbon", showlegend=False,
-            hovertext=[_EMA_LABELS.get(ep, "?") for ep in eph_f2], hoverinfo="text",
+            name="EMA Phase ribbon", showlegend=False, hoverinfo="skip",
         ), row=4, col=1)
     fig.update_yaxes(visible=False, row=4, col=1)
 
@@ -387,15 +362,14 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             fig.add_trace(go.Scatter(
                 x=xp, y=(_sgn * plot[_cn]).tolist(), mode="lines", name=_lbl,
                 line=dict(color=_cc, width=1.3, dash=_dash), showlegend=True,
+                hoverinfo="skip",
             ), row=5, col=1)
         # slope bars coloured by phase
         _slc = [_EMA_PHASE_COLORS.get(int(p) if not pd.isna(p) else 3, "#888")
                 for p in plot["Slope_Phase"].tolist()]
         fig.add_trace(go.Bar(
             x=xp, y=plot["ema_slope"].tolist(), marker_color=_slc,
-            name="EMA slope", opacity=0.85, showlegend=False,
-            hovertext=[f"slope {s:+.2f}" for s in plot["ema_slope"].tolist()],
-            hoverinfo="text",
+            name="EMA slope", opacity=0.85, showlegend=False, hoverinfo="skip",
         ), row=5, col=1)
         fig.add_hline(y=0, line_width=1, line_color="#bbb", row=5, col=1)
         _k2max = float(plot["k2"].max()) if not plot["k2"].empty else 1.0
@@ -411,7 +385,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             fig.add_trace(go.Bar(
                 x=[xp[i] for i in mask], y=[bw[i] for i in mask],
                 name=ph.replace("_", " "), marker_color=col, opacity=0.85,
-                showlegend=True,
+                showlegend=True, hoverinfo="skip",
             ), row=6, col=1)
     for thr, lbl, col in _BW_LEVELS:
         fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
@@ -429,6 +403,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         fig.add_trace(go.Scatter(
             x=xp, y=mpr_vals2, mode="lines", name="MPR Shift",
             line=dict(color="#7B1FA2", width=1.5), showlegend=True,
+            hoverinfo="skip",
         ), row=6, col=1, secondary_y=True)
         fig.update_yaxes(title_text="MPR", range=[-1.1, 1.1],
                          row=6, col=1, secondary_y=True,
@@ -485,18 +460,16 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         legend=dict(orientation="h", x=0, y=-0.04,
                     bgcolor="rgba(255,255,255,0.9)", font=dict(size=13)),
         xaxis_rangeslider_visible=False,
-        hovermode="closest", barmode="overlay",
-        hoverlabel=dict(bgcolor="rgba(255,255,255,0.78)",
-                        bordercolor="rgba(0,0,0,0.25)",
+        hovermode="x unified", barmode="overlay",
+        hoverlabel=dict(bgcolor="rgba(255,255,255,0.5)",
+                        bordercolor="rgba(0,0,0,0.2)",
                         font=dict(size=12, color="#222"), namelength=-1),
     )
     for r in [1, 2, 3, 4, 5, 6]:
         fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1,
                          secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
-                         range=[-0.5, n - 0.5], row=r, col=1,
-                         showspikes=True, spikemode="across", spikesnap="cursor",
-                         spikethickness=1, spikecolor="#aaa", spikedash="dot")
+                         range=[-0.5, n - 0.5], row=r, col=1)
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
     return fig
