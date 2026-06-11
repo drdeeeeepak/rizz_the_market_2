@@ -160,16 +160,30 @@ def _confluence_color(s):
     return "#b71c1c"
 
 def _confluence_series(plot):
-    """Per-bar net directional score (−4..+4) + hover text, from the chart df."""
+    """Per-bar net score (−4..+4) + concise hover texts.
+    Returns (scores, conf_hover [net only], pbwalk_hover [%B + walk])."""
     n = len(plot)
     pb  = plot["bb_pct_b"]        if "bb_pct_b"        in plot.columns else None
     sph = plot["Slope_Phase"]     if "Slope_Phase"     in plot.columns else None
     wuc = plot["walk_up_count"]   if "walk_up_count"   in plot.columns else None
     wdc = plot["walk_down_count"] if "walk_down_count" in plot.columns else None
     mpr = plot["mpr_shift"]       if "mpr_shift"       in plot.columns else None
-    scores, hovers = [], []
+
+    def _wlbl(u, d):
+        days = max(u, d)
+        return "STRONG" if days >= 4 else "MODERATE" if days == 3 else "MILD" if days == 2 else "NONE"
+
+    def _lean(s):
+        if s >=  2: return "STRONG BULL"
+        if s >=  1: return "bull lean"
+        if s >  -1: return "neutral"
+        if s >  -2: return "bear lean"
+        return "STRONG BEAR"
+
+    scores, conf_hov, pbwalk_hov = [], [], []
     for i in range(n):
-        zone = _pct_b_zone(float(pb.iloc[i])) if pb is not None and not pd.isna(pb.iloc[i]) else "MIDLINE"
+        pbv  = float(pb.iloc[i]) if pb is not None and not pd.isna(pb.iloc[i]) else 0.5
+        zone = _pct_b_zone(pbv)
         vp = _PCTB_VOTE.get(zone, 0.0)
         ph = int(sph.iloc[i]) if sph is not None and not pd.isna(sph.iloc[i]) else 3
         ve = _EMA_VOTE.get(ph, 0.0)
@@ -180,12 +194,9 @@ def _confluence_series(plot):
         vm = _mpr_vote_hist(mv)
         s  = vp + ve + vw + vm
         scores.append(s)
-        hovers.append(
-            f"Confluence {s:+.1f} / ±4<br>"
-            f"%B {zone} {vp:+.1f} · EMA P{ph} {ve:+.1f}<br>"
-            f"Walk ↑{u}↓{d} {vw:+.1f} · MPR {vm:+.1f}"
-        )
-    return scores, hovers
+        conf_hov.append(f"Confluence {s:+.1f} / ±4 · {_lean(s)}")
+        pbwalk_hov.append(f"%B {pbv:.2f} {zone} · Walk ↑{u} ↓{d} {_wlbl(u, d)}")
+    return scores, conf_hov, pbwalk_hov
 
 
 def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
@@ -234,8 +245,8 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             s0, s_ph = i, phs[i]
     segs.append((s0, n - 1, s_ph))
 
-    # per-bar confluence (used by the ribbon + strong-conviction price markers)
-    conf_scores, conf_hov = _confluence_series(plot)
+    # per-bar confluence (ribbon) + %B/walk readout (bottom of price panel)
+    conf_scores, conf_hov, pbwalk_hov = _confluence_series(plot)
 
     fig = make_subplots(
         rows=6, cols=1, shared_xaxes=True,
@@ -282,6 +293,16 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         whiskerwidth=0.3, showlegend=False,
     ), row=1, col=1)
 
+    # %B + Walk readout — invisible flat line pinned to the bottom of the price
+    # panel, so its hover box appears low (away from the candles).
+    _y_bottom = float(plot["low"].min())
+    fig.add_trace(go.Scatter(
+        x=xp, y=[_y_bottom] * n, mode="lines",
+        line=dict(color="rgba(120,120,120,0.0)", width=0),
+        name="%B / Walk", showlegend=False,
+        hovertext=pbwalk_hov, hoverinfo="text",
+    ), row=1, col=1)
+
     # BB bands
     fig.add_trace(go.Scatter(
         x=xp, y=plot["bb_upper"].tolist(), mode="lines", name="BB Upper",
@@ -315,7 +336,9 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         mpr_clrs = [_mpr_bar_color(v) for v in mpr_vals]
         fig.add_trace(go.Bar(
             x=xp, y=[1] * n, marker_color=mpr_clrs, marker_line_width=0,
-            name="MPR ribbon", showlegend=False, hoverinfo="skip",
+            name="MPR ribbon", showlegend=False,
+            hovertext=[f"MPR {v:+.2f} · {_mpr_label(v)}" for v in mpr_vals],
+            hoverinfo="text",
         ), row=3, col=1)
     fig.update_yaxes(visible=False, row=3, col=1)
 
@@ -325,7 +348,9 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         ema_clrs = [_EMA_PHASE_COLORS.get(ep, "#FFD600") for ep in eph_f2]
         fig.add_trace(go.Bar(
             x=xp, y=[1] * n, marker_color=ema_clrs, marker_line_width=0,
-            name="EMA Phase ribbon", showlegend=False, hoverinfo="skip",
+            name="EMA Phase ribbon", showlegend=False,
+            hovertext=[f"EMA P{ep} {_EMA_PHASE_SHORT.get(ep, '')}" for ep in eph_f2],
+            hoverinfo="text",
         ), row=4, col=1)
     fig.update_yaxes(visible=False, row=4, col=1)
 
@@ -369,7 +394,8 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                 for p in plot["Slope_Phase"].tolist()]
         fig.add_trace(go.Bar(
             x=xp, y=plot["ema_slope"].tolist(), marker_color=_slc,
-            name="EMA slope", opacity=0.85, showlegend=False, hoverinfo="skip",
+            name="EMA slope", opacity=0.85, showlegend=False,
+            hovertemplate="EMA slope %{y:+.2f}<extra></extra>",
         ), row=5, col=1)
         fig.add_hline(y=0, line_width=1, line_color="#bbb", row=5, col=1)
         _k2max = float(plot["k2"].max()) if not plot["k2"].empty else 1.0
@@ -385,7 +411,8 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             fig.add_trace(go.Bar(
                 x=[xp[i] for i in mask], y=[bw[i] for i in mask],
                 name=ph.replace("_", " "), marker_color=col, opacity=0.85,
-                showlegend=True, hoverinfo="skip",
+                showlegend=True,
+                hovertemplate="BW %{y:.2f}%% · " + ph.replace("_", " ") + "<extra></extra>",
             ), row=6, col=1)
     for thr, lbl, col in _BW_LEVELS:
         fig.add_hline(y=thr, line_width=1, line_dash="dot", line_color=col,
@@ -403,7 +430,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         fig.add_trace(go.Scatter(
             x=xp, y=mpr_vals2, mode="lines", name="MPR Shift",
             line=dict(color="#7B1FA2", width=1.5), showlegend=True,
-            hoverinfo="skip",
+            hovertemplate="MPR line %{y:+.2f}<extra></extra>",
         ), row=6, col=1, secondary_y=True)
         fig.update_yaxes(title_text="MPR", range=[-1.1, 1.1],
                          row=6, col=1, secondary_y=True,
@@ -460,7 +487,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         legend=dict(orientation="h", x=0, y=-0.04,
                     bgcolor="rgba(255,255,255,0.9)", font=dict(size=13)),
         xaxis_rangeslider_visible=False,
-        hovermode="x unified", barmode="overlay",
+        hovermode="x", barmode="overlay", spikedistance=-1,
         hoverlabel=dict(bgcolor="rgba(255,255,255,0.5)",
                         bordercolor="rgba(0,0,0,0.2)",
                         font=dict(size=12, color="#222"), namelength=-1),
@@ -469,7 +496,9 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         fig.update_yaxes(gridcolor="#eeeeee", zeroline=False, row=r, col=1,
                          secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
-                         range=[-0.5, n - 0.5], row=r, col=1)
+                         range=[-0.5, n - 0.5], row=r, col=1,
+                         showspikes=True, spikemode="across", spikesnap="data",
+                         spikethickness=1, spikecolor="#888", spikedash="dot")
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
     return fig
