@@ -752,8 +752,8 @@ with _lc4:
         "MPR SHIFT", _mpr_label(mpr_2h),
         sub=(f"{_mval:+.2f} · 4H {mpr_4h:+.2f}" if mpr_4h is not None else f"{_mval:+.2f}"),
         color=_mpr_named_colour(mpr_2h),
-        tip_term="MPR Shift",
-        tip1="Recent vs baseline share of closes above the basis — pressure building underneath.",
+        tip_term="MPR Shift (Mid-band Position Ratio)",
+        tip1="Recent vs baseline share of closes above the mid-band basis — pressure building underneath.",
         tip2="Blue / negative = bullish pressure. Red / positive = bearish pressure. Leads %B.",
         tip3="Tiebreaker — confirms or vetoes the skew before walk count even reacts.")
 with _lc5:
@@ -1170,7 +1170,11 @@ A walk = price closing at or beyond the Bollinger Band on consecutive bars. It s
 
 with st.expander("MPR Shift Reference — Pressure Building Underneath", expanded=False):
     st.markdown("""
-**MPR shift** = (fraction of *recent* closes above the BB basis) − (fraction over a *longer* baseline).
+**MPR = Mid-band Position Ratio** — the rolling share of closes sitting *above* the Bollinger
+mid-band (the 20-period basis). MPR = 1.0 means every recent close was above the mid-band; 0.0 means every
+close was below it.
+
+**MPR shift** = (Mid-band Position Ratio over a *recent/short* window) − (the same over a *longer* baseline).
 It measures how positioning around the mid-band is **changing** — it turns *before* %B and walk count do,
 so it's your earliest read on a building or fading move.
 
