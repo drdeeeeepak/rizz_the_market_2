@@ -49,11 +49,14 @@ _BW_LEVELS = [
 ]
 _EMA_PHASE_COLORS = {1: "#00C853", 2: "#69F0AE", 3: "#FFD600", 4: "#FF6D00", 5: "#D50000"}
 _EMA_PHASE_SHORT  = {1: "Str Bull", 2: "Mild Bull", 3: "Flat", 4: "Mild Bear", 5: "Str Bear"}
-_MPR_BULL_STRONG  = "#1565C0"   # mpr_shift < -0.30
-_MPR_BULL_MILD    = "#90CAF9"   # -0.30 to -0.10
+# mpr_shift = recent − baseline share of closes ABOVE the mid-band.
+# POSITIVE = price recently more above mid-band = BULLISH (blue);
+# NEGATIVE = recently more below = BEARISH (red).
+_MPR_BULL_STRONG  = "#1565C0"   # mpr_shift >  0.30
+_MPR_BULL_MILD    = "#90CAF9"   #  0.10 to  0.30
 _MPR_NEUTRAL      = "#BDBDBD"
-_MPR_BEAR_MILD    = "#EF9A9A"   # 0.10 to 0.30
-_MPR_BEAR_STRONG  = "#B71C1C"   # > 0.30
+_MPR_BEAR_MILD    = "#EF9A9A"   # -0.30 to -0.10
+_MPR_BEAR_STRONG  = "#B71C1C"   # < -0.30
 
 
 def _classify_bw(bw):
@@ -77,10 +80,10 @@ def _add_mpr(df: pd.DataFrame, long_win: int, short_win: int) -> pd.DataFrame:
 
 def _mpr_bar_color(v):
     if pd.isna(v):   return _MPR_NEUTRAL
-    if v >  0.30:    return _MPR_BEAR_STRONG
-    if v >  0.10:    return _MPR_BEAR_MILD
-    if v < -0.30:    return _MPR_BULL_STRONG
-    if v < -0.10:    return _MPR_BULL_MILD
+    if v >  0.30:    return _MPR_BULL_STRONG   # more above mid-band = bullish
+    if v >  0.10:    return _MPR_BULL_MILD
+    if v < -0.30:    return _MPR_BEAR_STRONG   # more below mid-band = bearish
+    if v < -0.10:    return _MPR_BEAR_MILD
     return _MPR_NEUTRAL
 
 
@@ -309,7 +312,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
 
     if has_mpr:
         mpr_vals2 = plot["mpr_shift"].tolist()
-        for thr_v, thr_c in [(0.30, _MPR_BEAR_STRONG), (-0.30, _MPR_BULL_STRONG), (0.0, "#757575")]:
+        for thr_v, thr_c in [(0.30, _MPR_BULL_STRONG), (-0.30, _MPR_BEAR_STRONG), (0.0, "#757575")]:
             fig.add_trace(go.Scatter(
                 x=[xp[0], xp[-1]], y=[thr_v, thr_v],
                 mode="lines", line=dict(color=thr_c, width=1, dash="dot"),
@@ -734,24 +737,24 @@ def _walk_vote(wu, wd, lbl):
 
 def _mpr_vote(v):
     if v is None:    return 0.0
-    if v >  0.30:    return -1.0   # red = bearish pressure
-    if v >  0.10:    return -0.5
-    if v < -0.30:    return 1.0    # blue = bullish pressure
-    if v < -0.10:    return 0.5
+    if v >  0.30:    return 1.0    # more above mid-band = bullish
+    if v >  0.10:    return 0.5
+    if v < -0.30:    return -1.0   # more below mid-band = bearish
+    if v < -0.10:    return -0.5
     return 0.0
 
 def _mpr_label(v):
     if v is None:    return "—"
-    if v >  0.30:    return "BEAR STRONG"
-    if v >  0.10:    return "BEAR MILD"
-    if v < -0.30:    return "BULL STRONG"
-    if v < -0.10:    return "BULL MILD"
+    if v >  0.30:    return "BULL STRONG"
+    if v >  0.10:    return "BULL MILD"
+    if v < -0.30:    return "BEAR STRONG"
+    if v < -0.10:    return "BEAR MILD"
     return "NEUTRAL"
 
 def _mpr_named_colour(v):
     if v is None:    return "default"
-    if v >  0.10:    return "red"
-    if v < -0.10:    return "blue"
+    if v >  0.10:    return "blue"
+    if v < -0.10:    return "red"
     return "default"
 
 v_pctb = _pctb_vote(zone_2h)
@@ -807,7 +810,7 @@ with _lc4:
         color=_mpr_named_colour(mpr_2h),
         tip_term="MPR Shift (Mid-band Position Ratio)",
         tip1="Recent vs baseline share of closes above the mid-band basis — pressure building underneath.",
-        tip2="Blue / negative = bullish pressure. Red / positive = bearish pressure. Leads %B.",
+        tip2="Blue / positive = bullish (more closes above mid-band). Red / negative = bearish. Leads %B.",
         tip3="Tiebreaker — confirms or vetoes the skew before walk count even reacts.")
 with _lc5:
     _eph_disp = f"P{eph_2h} {_EMA_SHORT.get(eph_2h, '—')}" if eph_2h else "—"
@@ -1231,16 +1234,16 @@ close was below it.
 It measures how positioning around the mid-band is **changing** — it turns *before* %B and walk count do,
 so it's your earliest read on a building or fading move.
 
-On the chart it's the coloured ribbon (panel 2) and the purple line (panel 4). Blue = bullish pressure,
-red = bearish pressure. Vertical lines mark ±0.30 crosses.
+On the chart it's the coloured ribbon (panel 2) and the purple line in the bottom panel.
+**Positive = price recently more ABOVE the mid-band = bullish (blue); negative = more below = bearish (red).**
 
 | MPR shift | Label | What it means | IC action |
 |---|---|---|---|
-| **> +0.30** | BEAR STRONG | Sustained bearish pressure underneath | Confirms a PE-threatened skew (sell more CE). Vote −1 |
-| +0.10 to +0.30 | BEAR MILD | Mild bearish drift | Tilts the tiebreaker bearish. Vote −0.5 |
+| **> +0.30** | BULL STRONG | Sustained bullish pressure — closes pushing above mid-band | Confirms a CE-threatened skew (sell more PE). Vote +1 |
+| +0.10 to +0.30 | BULL MILD | Mild bullish drift | Tilts the tiebreaker bullish. Vote +0.5 |
 | −0.10 to +0.10 | NEUTRAL | No net pressure | No directional input. Vote 0 |
-| −0.30 to −0.10 | BULL MILD | Mild bullish drift | Tilts the tiebreaker bullish. Vote +0.5 |
-| **< −0.30** | BULL STRONG | Sustained bullish pressure | Confirms a CE-threatened skew (sell more PE). Vote +1 |
+| −0.30 to −0.10 | BEAR MILD | Mild bearish drift | Tilts the tiebreaker bearish. Vote −0.5 |
+| **< −0.30** | BEAR STRONG | Sustained bearish pressure — closes slipping below mid-band | Confirms a PE-threatened skew (sell more CE). Vote −1 |
 
 **How to use it:** treat MPR as a **confirmation / veto** lens, never a standalone trigger.
 If %B says "bearish lean" *and* MPR confirms bearish pressure → skew with confidence.
