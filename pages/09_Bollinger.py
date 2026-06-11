@@ -87,6 +87,22 @@ def _mpr_bar_color(v):
     return _MPR_NEUTRAL
 
 
+def _mpr_label(v):
+    if v is None or pd.isna(v): return "—"
+    if v >  0.30:    return "BULL STRONG"
+    if v >  0.10:    return "BULL MILD"
+    if v < -0.30:    return "BEAR STRONG"
+    if v < -0.10:    return "BEAR MILD"
+    return "NEUTRAL"
+
+
+def _mpr_named_colour(v):
+    if v is None or pd.isna(v): return "default"
+    if v >  0.10:    return "blue"
+    if v < -0.10:    return "red"
+    return "default"
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_bb_all_tf():
     """Load 1H raw, compute BB + MPR + EMA phases on 1H / 2H / 4H."""
@@ -111,9 +127,11 @@ def _load_bb_all_tf():
             df = calculate_hourly_ema_slope_phases(df)
             return df.dropna(subset=["bb_bw"]).copy()
 
+        # origin="start" → 2H/4H bars anchored to the 09:15 session open
+        # (otherwise bins anchor to midnight and read 08:00 / 10:00 / 12:00 …)
         df_1h = _prep(raw, long_win=35, short_win=3)
-        df_2h = _prep(resample_ohlcv(raw, "2h"), long_win=20, short_win=2)
-        df_4h = _prep(resample_ohlcv(raw, "4h"), long_win=10, short_win=2)
+        df_2h = _prep(resample_ohlcv(raw, "2h", origin="start"), long_win=20, short_win=2)
+        df_4h = _prep(resample_ohlcv(raw, "4h", origin="start"), long_win=10, short_win=2)
         return df_1h, df_2h, df_4h, None
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e)
@@ -845,47 +863,13 @@ _ZONE_COLOUR = {
     "LO_NEUTRAL": "amber", "LOWER": "red", "BELOW_BAND": "red",
 }
 
-# ── Directional votes — sign convention: + = bullish (CE leg threatened),
-#    − = bearish (PE leg threatened).  Matches the chart's blue=bull / red=bear.
-def _pctb_vote(zone):
-    return {"ABOVE_BAND": 1.0, "UPPER": 1.0, "UP_NEUTRAL": 0.5, "MIDLINE": 0.0,
-            "LO_NEUTRAL": -0.5, "LOWER": -1.0, "BELOW_BAND": -1.0}.get(zone, 0.0)
-
-def _ema_vote(phase):
-    return {1: 1.0, 2: 0.5, 3: 0.0, 4: -0.5, 5: -1.0}.get(phase, 0.0)
-
-def _walk_vote(wu, wd, lbl):
-    mag = {"STRONG": 1.0, "MODERATE": 0.66, "MILD": 0.33}.get(lbl, 0.0)
-    if mag == 0.0:
-        return 0.0
-    return mag if wu >= wd else -mag
-
-def _mpr_vote(v):
-    if v is None:    return 0.0
-    if v >  0.30:    return 1.0    # more above mid-band = bullish
-    if v >  0.10:    return 0.5
-    if v < -0.30:    return -1.0   # more below mid-band = bearish
-    if v < -0.10:    return -0.5
-    return 0.0
-
-def _mpr_label(v):
-    if v is None:    return "—"
-    if v >  0.30:    return "BULL STRONG"
-    if v >  0.10:    return "BULL MILD"
-    if v < -0.30:    return "BEAR STRONG"
-    if v < -0.10:    return "BEAR MILD"
-    return "NEUTRAL"
-
-def _mpr_named_colour(v):
-    if v is None:    return "default"
-    if v >  0.10:    return "blue"
-    if v < -0.10:    return "red"
-    return "default"
-
-v_pctb = _pctb_vote(zone_2h)
-v_ema  = _ema_vote(eph_2h)
-v_walk = _walk_vote(wu_2h, wd_2h, wlbl_2h)
-v_mpr  = _mpr_vote(mpr_2h)
+# Directional votes use the single source-of-truth helpers defined at module
+# top (also used by the chart's per-bar Confluence ribbon, so they always agree).
+# Sign convention: + = bullish (CE leg threatened) · − = bearish (PE leg threatened).
+v_pctb = _PCTB_VOTE.get(zone_2h, 0.0)
+v_ema  = _EMA_VOTE.get(eph_2h, 0.0)
+v_walk = _walk_vote_hist(wu_2h, wd_2h)
+v_mpr  = _mpr_vote_hist(mpr_2h)
 skew_score = v_pctb + v_ema + v_walk + v_mpr   # range −4 … +4
 
 _signs   = [(1 if v > 0 else -1 if v < 0 else 0) for v in (v_pctb, v_ema, v_walk, v_mpr)]

@@ -138,10 +138,13 @@ def compute_supertrend(df: pd.DataFrame, period: int = ST_PERIOD,
 
 # ─── Proxy Resampling ─────────────────────────────────────────────────────────
 
-def resample_ohlcv(df_1h: pd.DataFrame, rule: str) -> pd.DataFrame:
+def resample_ohlcv(df_1h: pd.DataFrame, rule: str, origin: str = "start_day") -> pd.DataFrame:
     """
     Resample 1H OHLCV to 2H or 4H.
     rule: '2h' or '4h'
+    origin: pandas resample origin. Default 'start_day' (anchors bins to
+        midnight). Pass 'start' to anchor to the first bar (≈ 09:15 market
+        open) so intraday bars are session-aligned (09:15 / 11:15 / 13:15 …).
     Returns OHLCV DataFrame with DatetimeIndex.
     """
     if df_1h is None or df_1h.empty:
@@ -159,7 +162,7 @@ def resample_ohlcv(df_1h: pd.DataFrame, rule: str) -> pd.DataFrame:
         df.index = df.index.tz_localize("Asia/Kolkata")
 
     freq = "2h" if rule == "2h" else "4h"
-    resampled = df.resample(freq, origin="start_day").agg({
+    resampled = df.resample(freq, origin=origin).agg({
         "open":   "first",
         "high":   "max",
         "low":    "min",
