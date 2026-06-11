@@ -96,7 +96,7 @@ def _load_bb_all_tf():
         from analytics.bollinger import BollingerOptionsEngine
         from analytics.ema_slope_phases import calculate_hourly_ema_slope_phases
         eng = BollingerOptionsEngine()
-        raw = get_nifty_1h_phase()
+        raw = get_nifty_1h_phase(days=60)
         if raw.empty:
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "1H data empty — Kite login needed"
 
@@ -128,9 +128,9 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     from analytics.ema_slope_phases import PHASE_LABELS as _EMA_LABELS
 
     plot = df.dropna(subset=["phase"]).copy()
-    # ── last ~1 month of candles only ────────────────────────────────────────
+    # ── last ~6 weeks of candles (1 month + extra context) ───────────────────
     if not plot.empty:
-        _cut = plot.index[-1] - pd.Timedelta(days=31)
+        _cut = plot.index[-1] - pd.Timedelta(days=45)
         plot = plot[plot.index >= _cut]
     if len(plot) < 5:
         return None
@@ -177,7 +177,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             [{"secondary_y": True}],
         ],
         subplot_titles=[
-            f"Nifty {title} · BB Phases + EMA Slope  (last 1 month)",
+            f"Nifty {title} · BB Phases + EMA Slope  (last ~6 weeks)",
             "", "", "", "",
         ],
     )
@@ -908,7 +908,7 @@ for _tab, _cdf, _ctitle in [
             if _figc:
                 st.caption(
                     f"Latest {_ctitle} bar: "
-                    f"**{_cdf.index[-1].strftime('%d %b %Y  %H:%M')} IST** · last 1 month"
+                    f"**{_cdf.index[-1].strftime('%d %b %Y  %H:%M')} IST** · last ~6 weeks"
                 )
                 st.plotly_chart(_figc, use_container_width=True)
 
