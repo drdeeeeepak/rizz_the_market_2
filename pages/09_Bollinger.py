@@ -497,10 +497,15 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                          secondary_y=False)
         fig.update_xaxes(tickvals=tv, ticktext=tl, gridcolor="#eeeeee",
                          range=[-0.5, n - 0.5], row=r, col=1,
-                         showspikes=True, spikemode="across", spikesnap="data",
+                         showspikes=True, spikemode="across", spikesnap="cursor",
                          spikethickness=1, spikecolor="#888", spikedash="dot")
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
+    # force every per-panel hover box to the same 50%-transparent style
+    # (per-trace hover otherwise colours each box by its trace colour)
+    fig.update_traces(hoverlabel=dict(
+        bgcolor="rgba(255,255,255,0.5)", bordercolor="rgba(0,0,0,0.25)",
+        font=dict(color="#222", size=12)))
     return fig
 
 
