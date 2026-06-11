@@ -160,9 +160,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         ],
         subplot_titles=[
             f"Nifty {title} · BB Phases + EMA Slope",
-            "MPR Shift  (blue=bullish pressure · red=bearish)",
-            "EMA Slope Phase  (green→red = bullish→bearish)",
-            "BW% by Phase  ·  MPR Shift line (right axis)",
+            "", "", "",
         ],
     )
 
@@ -182,39 +180,6 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
             bgcolor=_PHASE_COLOR.get(ph, "#888"), borderpad=2,
             row=1, col=1,
         )
-
-    # vertical event lines: BB change (grey dot), EMA change (blue dash), MPR ±0.30 cross (solid)
-    for i in range(1, n):
-        if phs[i] != phs[i - 1]:
-            fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
-                          xref="x", yref="y domain",
-                          line=dict(color="rgba(100,100,100,0.35)", width=1, dash="dot"),
-                          row=1, col=1)
-    if has_ema:
-        eph_list = plot["Slope_Phase"].tolist()
-        for i in range(1, n):
-            a, b_ = eph_list[i-1], eph_list[i]
-            if not (pd.isna(a) or pd.isna(b_)) and a != b_:
-                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
-                              xref="x", yref="y domain",
-                              line=dict(color="rgba(21,101,192,0.50)", width=1, dash="dash"),
-                              row=1, col=1)
-    if has_mpr:
-        mpr_raw = plot["mpr_shift"].tolist()
-        for i in range(1, n):
-            vp, vc = mpr_raw[i-1], mpr_raw[i]
-            if pd.isna(vp) or pd.isna(vc):
-                continue
-            if (vp <= 0.30 < vc) or (vp >= 0.30 > vc):
-                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
-                              xref="x", yref="y domain",
-                              line=dict(color="rgba(183,28,28,0.70)", width=1.5),
-                              row=1, col=1)
-            elif (vp >= -0.30 > vc) or (vp <= -0.30 < vc):
-                fig.add_shape(type="line", x0=i-0.5, x1=i-0.5, y0=0, y1=1,
-                              xref="x", yref="y domain",
-                              line=dict(color="rgba(21,101,192,0.70)", width=1.5),
-                              row=1, col=1)
 
     # Candlesticks
     fig.add_trace(go.Candlestick(
@@ -307,9 +272,21 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                          row=4, col=1, secondary_y=True,
                          gridcolor="#eeeeee", zeroline=False)
 
+    # ── ribbon panel labels (left margin — subplot titles overlapped the bars) ─
+    for _yr, _nm, _hint in [
+        ("y2 domain", "MPR Shift", "blue=bull · red=bear"),
+        ("y3 domain", "EMA Slope", "green→red = bull→bear"),
+    ]:
+        fig.add_annotation(
+            xref="paper", x=-0.008, xanchor="right",
+            yref=_yr, y=0.5, yanchor="middle",
+            text=f"<b>{_nm}</b><br><span style='font-size:8px;color:#777'>{_hint}</span>",
+            showarrow=False, align="right", font=dict(size=10, color="#333"),
+        )
+
     fig.update_layout(
         height=850,
-        margin=dict(l=10, r=65, t=50, b=10),
+        margin=dict(l=98, r=65, t=50, b=10),
         paper_bgcolor="white", plot_bgcolor="white",
         font=dict(color="#222", size=12),
         legend=dict(orientation="h", x=0, y=-0.04,
