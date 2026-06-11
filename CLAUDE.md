@@ -14,6 +14,13 @@
 
 ## 2. File Index
 
+### Nested Context Files (auto-loaded by Claude Code per directory)
+
+| File | Loaded when | Contents |
+|---|---|---|
+| `pages/CLAUDE.md` | Working in `pages/` | Bootstrap pattern, signal key → engine table for all 16 pages, UI helper reference, page-specific gotchas |
+| `analytics/CLAUDE.md` | Working in `analytics/` | Engine registry, signal key prefixes, input data requirements, home score weights, guide for adding a new engine |
+
 ### Root
 
 | File | Purpose |
@@ -25,6 +32,8 @@
 | `README.md` | Setup guide, page index, GitHub Actions cron schedule, scoring system |
 
 ### `analytics/` — Signal Engines
+
+> See `analytics/CLAUDE.md` for engine registry, signal key prefixes, input data requirements, and home score weights.
 
 | File | Purpose |
 |---|---|
@@ -56,6 +65,8 @@
 | `README.md` | Token flow diagram; file manifest; required GitHub secrets |
 
 ### `pages/` — Streamlit Dashboard (16 pages)
+
+> See `pages/CLAUDE.md` for bootstrap pattern, per-page signal keys, UI helpers, and gotchas.
 
 | File | Page | Topic |
 |---|---|---|
