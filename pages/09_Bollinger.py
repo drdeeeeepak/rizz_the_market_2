@@ -165,7 +165,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     fig = make_subplots(
         rows=5, cols=1, shared_xaxes=True,
         row_heights=[0.40, 0.05, 0.05, 0.25, 0.25],
-        vertical_spacing=0.022,
+        vertical_spacing=0.032,
         specs=[
             [{"secondary_y": False}],
             [{"secondary_y": False}],
@@ -323,16 +323,38 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                          row=5, col=1, secondary_y=True,
                          gridcolor="#eeeeee", zeroline=False)
 
-    # ── ribbon / panel labels (left margin — subplot titles overlap the bars) ─
+    # ── ribbon colour legends — labelled swatches in the gap above each ribbon ─
+    _sq = "<span style='color:{c}'>■</span>"
+    _mpr_leg = "  ".join([
+        f"{_sq.format(c=_MPR_BULL_STRONG)} Bull str",
+        f"{_sq.format(c=_MPR_BULL_MILD)} Bull mild",
+        f"{_sq.format(c=_MPR_NEUTRAL)} Neutral",
+        f"{_sq.format(c=_MPR_BEAR_MILD)} Bear mild",
+        f"{_sq.format(c=_MPR_BEAR_STRONG)} Bear str",
+    ])
+    _ema_leg = "  ".join([
+        f"{_sq.format(c=_EMA_PHASE_COLORS[p])} P{p} {_EMA_PHASE_SHORT[p]}"
+        for p in (1, 2, 3, 4, 5)
+    ])
+    for _yr, _txt in [("y2 domain", _mpr_leg), ("y3 domain", _ema_leg)]:
+        fig.add_annotation(
+            xref="paper", x=0.0, xanchor="left",
+            yref=_yr, y=1.02, yanchor="bottom",
+            text=_txt, showarrow=False, align="left",
+            font=dict(size=9, color="#555"),
+        )
+
+    # ── left-margin panel names (subplot titles overlap the bars) ─────────────
     for _yr, _nm, _hint in [
-        ("y2 domain", "MPR Shift", "blue=bull · red=bear"),
-        ("y3 domain", "EMA Phase", "green→red phase"),
+        ("y2 domain", "MPR Shift", ""),
+        ("y3 domain", "EMA Phase", ""),
         ("y4 domain", "EMA Slope", "slope vs ±K1/±K2"),
     ]:
+        _sub = f"<br><span style='font-size:8px;color:#777'>{_hint}</span>" if _hint else ""
         fig.add_annotation(
             xref="paper", x=-0.008, xanchor="right",
             yref=_yr, y=0.5, yanchor="middle",
-            text=f"<b>{_nm}</b><br><span style='font-size:8px;color:#777'>{_hint}</span>",
+            text=f"<b>{_nm}</b>{_sub}",
             showarrow=False, align="right", font=dict(size=10, color="#333"),
         )
 
@@ -356,32 +378,6 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     return fig
 
 
-def _ribbon_color_legend() -> None:
-    """Color key for the two ribbons + the slope panel (phase → color)."""
-    def _swatches(items):
-        cols = st.columns(len(items))
-        for c, (lbl, clr) in zip(cols, items):
-            c.markdown(
-                f"<div style='display:flex;align-items:center;gap:6px;'>"
-                f"<span style='display:inline-block;width:14px;height:14px;"
-                f"background:{clr};border-radius:3px;border:1px solid #ccc'></span>"
-                f"<span style='font-size:0.76rem;color:#333'>{lbl}</span></div>",
-                unsafe_allow_html=True,
-            )
-    st.markdown(
-        "<span style='font-size:0.8rem;color:#555'><b>MPR Shift ribbon</b> "
-        "— recent share of closes above the mid-band:</span>",
-        unsafe_allow_html=True)
-    _swatches([
-        ("Bull strong", _MPR_BULL_STRONG), ("Bull mild", _MPR_BULL_MILD),
-        ("Neutral", _MPR_NEUTRAL), ("Bear mild", _MPR_BEAR_MILD),
-        ("Bear strong", _MPR_BEAR_STRONG),
-    ])
-    st.markdown(
-        "<span style='font-size:0.8rem;color:#555'><b>EMA Phase ribbon + Slope panel</b> "
-        "— EMA-20 slope phase:</span>",
-        unsafe_allow_html=True)
-    _swatches([(f"P{p} {_EMA_PHASE_SHORT[p]}", _EMA_PHASE_COLORS[p]) for p in (1, 2, 3, 4, 5)])
 
 
 # ── load all three TFs once (charts rendered in tabs lower down) ──────────────
@@ -912,7 +908,6 @@ for _tab, _cdf, _ctitle in [
                     f"**{_cdf.index[-1].strftime('%d %b %Y  %H:%M')} IST** · last 1 month"
                 )
                 st.plotly_chart(_figc, use_container_width=True)
-                _ribbon_color_legend()
 
 st.divider()
 
