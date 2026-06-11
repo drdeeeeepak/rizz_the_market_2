@@ -191,7 +191,7 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         fig.add_annotation(
             x=(p0 + p1) / 2, y=1.0, xref="x", yref="y domain",
             text=f"<b>{ph.replace('_',' ')}</b>", showarrow=False,
-            font=dict(color="#ffffff", size=9),
+            font=dict(color="#ffffff", size=12),
             bgcolor=_PHASE_COLOR.get(ph, "#888"), borderpad=2,
             row=1, col=1,
         )
@@ -325,23 +325,23 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
 
     # ── ribbon colour legends — labelled swatches in the gap above each ribbon ─
     _sq = "<span style='color:{c}'>■</span>"
-    _mpr_leg = "  ".join([
+    _mpr_leg = "&nbsp; ".join([
         f"{_sq.format(c=_MPR_BULL_STRONG)} Bull str",
         f"{_sq.format(c=_MPR_BULL_MILD)} Bull mild",
         f"{_sq.format(c=_MPR_NEUTRAL)} Neutral",
         f"{_sq.format(c=_MPR_BEAR_MILD)} Bear mild",
         f"{_sq.format(c=_MPR_BEAR_STRONG)} Bear str",
     ])
-    _ema_leg = "  ".join([
+    _ema_leg = "&nbsp; ".join([
         f"{_sq.format(c=_EMA_PHASE_COLORS[p])} P{p} {_EMA_PHASE_SHORT[p]}"
         for p in (1, 2, 3, 4, 5)
     ])
     for _yr, _txt in [("y2 domain", _mpr_leg), ("y3 domain", _ema_leg)]:
         fig.add_annotation(
             xref="paper", x=0.0, xanchor="left",
-            yref=_yr, y=1.02, yanchor="bottom",
-            text=_txt, showarrow=False, align="left",
-            font=dict(size=9, color="#555"),
+            yref=_yr, y=1.05, yanchor="bottom",
+            text=f"<b>{_txt}</b>", showarrow=False, align="left",
+            font=dict(size=13, color="#444"),
         )
 
     # ── left-margin panel names (subplot titles overlap the bars) ─────────────
@@ -350,21 +350,21 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         ("y3 domain", "EMA Phase", ""),
         ("y4 domain", "EMA Slope", "slope vs ±K1/±K2"),
     ]:
-        _sub = f"<br><span style='font-size:8px;color:#777'>{_hint}</span>" if _hint else ""
+        _sub = f"<br><span style='font-size:11px;color:#777'>{_hint}</span>" if _hint else ""
         fig.add_annotation(
             xref="paper", x=-0.008, xanchor="right",
             yref=_yr, y=0.5, yanchor="middle",
             text=f"<b>{_nm}</b>{_sub}",
-            showarrow=False, align="right", font=dict(size=10, color="#333"),
+            showarrow=False, align="right", font=dict(size=13, color="#333"),
         )
 
     fig.update_layout(
         height=1120,
         margin=dict(l=98, r=65, t=50, b=10),
         paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(color="#222", size=12),
+        font=dict(color="#222", size=14),
         legend=dict(orientation="h", x=0, y=-0.04,
-                    bgcolor="rgba(255,255,255,0.9)", font=dict(size=10)),
+                    bgcolor="rgba(255,255,255,0.9)", font=dict(size=13)),
         xaxis_rangeslider_visible=False,
         hovermode="x unified", barmode="overlay",
     )
