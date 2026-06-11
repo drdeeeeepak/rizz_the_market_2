@@ -7,6 +7,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 import ui.components as ui
+from analytics.ema_slope_phases import (
+    PHASE_LABELS as EMA_PHASE_LABELS,
+    PHASE_DEPLOYMENT as EMA_PHASE_DEPLOY,
+)
 
 st.set_page_config(page_title="P09 · Bollinger Bands", layout="wide")
 st_autorefresh(interval=60_000, key="p09")
@@ -323,45 +327,9 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
     return fig
 
 
-# ── load all three TFs once ───────────────────────────────────────────────────
+# ── load all three TFs once (charts rendered in tabs lower down) ──────────────
 with st.spinner("Loading Bollinger data (1H · 2H · 4H)…"):
     _df1h, _df2h, _df4h, _bb_err = _load_bb_all_tf()
-
-# ── 1H chart ─────────────────────────────────────────────────────────────────
-ui.section_header("1H — Bollinger Phases  (1-month window)")
-if _df1h.empty:
-    st.warning(f"⚠️ 1H chart — {_bb_err or 'no data'}")
-else:
-    _fig1h = _build_bb_chart(_df1h, "1H")
-    if _fig1h:
-        st.caption(f"Latest 1H bar: **{_df1h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df1h)} candles")
-        st.plotly_chart(_fig1h, use_container_width=True)
-
-st.divider()
-
-# ── 2H chart ─────────────────────────────────────────────────────────────────
-ui.section_header("2H — Bollinger Phases  (PRIMARY · 1-month window)")
-if _df2h.empty:
-    st.warning(f"⚠️ 2H chart — {_bb_err or 'no data'}")
-else:
-    _fig2h = _build_bb_chart(_df2h, "2H")
-    if _fig2h:
-        st.caption(f"Latest 2H bar: **{_df2h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df2h)} candles")
-        st.plotly_chart(_fig2h, use_container_width=True)
-
-st.divider()
-
-# ── 4H chart ─────────────────────────────────────────────────────────────────
-ui.section_header("4H — Bollinger Phases  (SECONDARY · 1-month window)")
-if _df4h.empty:
-    st.warning(f"⚠️ 4H chart — {_bb_err or 'no data'}")
-else:
-    _fig4h = _build_bb_chart(_df4h, "4H")
-    if _fig4h:
-        st.caption(f"Latest 4H bar: **{_df4h.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_df4h)} candles")
-        st.plotly_chart(_fig4h, use_container_width=True)
-
-st.divider()
 
 if not sig:
     st.warning("⚠️ No signal data available. EOD job may not have run yet.")
@@ -664,6 +632,229 @@ if wlbl_2h == "STRONG":
 elif wlbl_2h == "MODERATE":
     _ws = "upper" if wu_2h >= wd_2h else "lower"
     st.warning(f"⚠️ **2H MODERATE WALK** — Day {max(wu_2h,wd_2h)} along {_ws} band. Asymmetry applied.")
+
+st.divider()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1.5 — LENS SCOREBOARD + CONFLUENCE  (current condition, each lens)
+# ─────────────────────────────────────────────────────────────────────────────
+# Live MPR shift + EMA slope phase are NOT in `sig` — pull the latest bar from
+# the chart dataframes loaded above.
+def _last_valid(df, col):
+    try:
+        if df is not None and not df.empty and col in df.columns:
+            s = df[col].dropna()
+            if not s.empty:
+                return float(s.iloc[-1])
+    except Exception:
+        pass
+    return None
+
+mpr_2h = _last_valid(_df2h, "mpr_shift")
+mpr_4h = _last_valid(_df4h, "mpr_shift")
+_eph_2h_raw = _last_valid(_df2h, "Slope_Phase")
+_eph_4h_raw = _last_valid(_df4h, "Slope_Phase")
+eph_2h = int(_eph_2h_raw) if _eph_2h_raw is not None else None
+eph_4h = int(_eph_4h_raw) if _eph_4h_raw is not None else None
+
+_EMA_SHORT   = {1: "Str Bull", 2: "Mild Bull", 3: "Flat", 4: "Mild Bear", 5: "Str Bear"}
+_EMA_HEX     = {1: "#00C853", 2: "#69F0AE", 3: "#FFD600", 4: "#FF6D00", 5: "#D50000"}
+_ZONE_COLOUR = {
+    "ABOVE_BAND": "red", "UPPER": "red", "UP_NEUTRAL": "amber", "MIDLINE": "green",
+    "LO_NEUTRAL": "amber", "LOWER": "red", "BELOW_BAND": "red",
+}
+
+# ── Directional votes — sign convention: + = bullish (CE leg threatened),
+#    − = bearish (PE leg threatened).  Matches the chart's blue=bull / red=bear.
+def _pctb_vote(zone):
+    return {"ABOVE_BAND": 1.0, "UPPER": 1.0, "UP_NEUTRAL": 0.5, "MIDLINE": 0.0,
+            "LO_NEUTRAL": -0.5, "LOWER": -1.0, "BELOW_BAND": -1.0}.get(zone, 0.0)
+
+def _ema_vote(phase):
+    return {1: 1.0, 2: 0.5, 3: 0.0, 4: -0.5, 5: -1.0}.get(phase, 0.0)
+
+def _walk_vote(wu, wd, lbl):
+    mag = {"STRONG": 1.0, "MODERATE": 0.66, "MILD": 0.33}.get(lbl, 0.0)
+    if mag == 0.0:
+        return 0.0
+    return mag if wu >= wd else -mag
+
+def _mpr_vote(v):
+    if v is None:    return 0.0
+    if v >  0.30:    return -1.0   # red = bearish pressure
+    if v >  0.10:    return -0.5
+    if v < -0.30:    return 1.0    # blue = bullish pressure
+    if v < -0.10:    return 0.5
+    return 0.0
+
+def _mpr_label(v):
+    if v is None:    return "—"
+    if v >  0.30:    return "BEAR STRONG"
+    if v >  0.10:    return "BEAR MILD"
+    if v < -0.30:    return "BULL STRONG"
+    if v < -0.10:    return "BULL MILD"
+    return "NEUTRAL"
+
+def _mpr_named_colour(v):
+    if v is None:    return "default"
+    if v >  0.10:    return "red"
+    if v < -0.10:    return "blue"
+    return "default"
+
+v_pctb = _pctb_vote(zone_2h)
+v_ema  = _ema_vote(eph_2h)
+v_walk = _walk_vote(wu_2h, wd_2h, wlbl_2h)
+v_mpr  = _mpr_vote(mpr_2h)
+skew_score = v_pctb + v_ema + v_walk + v_mpr   # range −4 … +4
+
+_signs   = [(1 if v > 0 else -1 if v < 0 else 0) for v in (v_pctb, v_ema, v_walk, v_mpr)]
+conflict = any(s > 0 for s in _signs) and any(s < 0 for s in _signs)
+
+_extreme = bb_regime == "EXTREME_SQUEEZE" or squeeze == "DEEP"
+if   skew_score >=  2: lean_label, threat_leg = "STRONG BULLISH", "CE"
+elif skew_score >=  1: lean_label, threat_leg = "MILD BULLISH",   "CE"
+elif skew_score <= -2: lean_label, threat_leg = "STRONG BEARISH", "PE"
+elif skew_score <= -1: lean_label, threat_leg = "MILD BEARISH",   "PE"
+else:                  lean_label, threat_leg = "NEUTRAL",        "NONE"
+
+ui.section_header("Lens Scoreboard — Current Condition (2H primary · 4H confirm)",
+                  "Each lens answers a different question · tap ⓘ for what it means for your position")
+
+_lc1, _lc2, _lc3, _lc4, _lc5 = st.columns(5)
+with _lc1:
+    ui.metric_card_with_tip(
+        "BB PHASE", bb_regime, sub=f"4H {reg_4h} · BW {bw_2h:.1f}%",
+        color=REGIME_COLOUR.get(bb_regime, "default"),
+        tip_term="BB Phase (BW%)",
+        tip1="Bollinger bandwidth = how much room price has to move (the volatility regime).",
+        tip2="SQUEEZE / CALM = premium rich, full size. EXTREME_SQUEEZE / HIGH_VOL = explosive, size down.",
+        tip3="Drives LOT SIZE, not direction. Extreme squeeze forces a 1:1 condor.")
+with _lc2:
+    ui.metric_card_with_tip(
+        "%B ZONE", zone_2h, sub=f"{pb_2h:.2f} · 4H {zone_4h}",
+        color=_ZONE_COLOUR.get(zone_2h, "default"),
+        tip_term="%B Zone",
+        tip1="Where price sits inside the band: 0 = lower band, 1 = upper band.",
+        tip2="Upper half = CE leg threatened. Lower half = PE leg threatened. Mid = balanced.",
+        tip3="Primary skew-direction driver — sell MORE of the leg that is far from price.")
+with _lc3:
+    _wval = wlbl_2h if wlbl_2h != "NONE" else "NONE"
+    ui.metric_card_with_tip(
+        "BAND WALK", _wval, sub=f"↑{wu_2h} ↓{wd_2h} · 4H {wlbl_4h}",
+        color=WALK_COLOUR.get(wlbl_2h, "default"),
+        tip_term="Band Walk",
+        tip1="Consecutive closes at/beyond the band — a sustained push on one side.",
+        tip2="2=MILD, 3=MODERATE, 4+=STRONG. Confirms a real trend against a short leg.",
+        tip3="Lean ratio to the safe leg; after entry it is your roll alarm.")
+with _lc4:
+    _mval = mpr_2h if mpr_2h is not None else 0.0
+    ui.metric_card_with_tip(
+        "MPR SHIFT", _mpr_label(mpr_2h),
+        sub=(f"{_mval:+.2f} · 4H {mpr_4h:+.2f}" if mpr_4h is not None else f"{_mval:+.2f}"),
+        color=_mpr_named_colour(mpr_2h),
+        tip_term="MPR Shift",
+        tip1="Recent vs baseline share of closes above the basis — pressure building underneath.",
+        tip2="Blue / negative = bullish pressure. Red / positive = bearish pressure. Leads %B.",
+        tip3="Tiebreaker — confirms or vetoes the skew before walk count even reacts.")
+with _lc5:
+    _eph_disp = f"P{eph_2h} {_EMA_SHORT.get(eph_2h, '—')}" if eph_2h else "—"
+    ui.metric_card_with_tip(
+        "EMA SLOPE", _eph_disp,
+        sub=(f"4H P{eph_4h} {_EMA_SHORT.get(eph_4h, '')}" if eph_4h else "4H —"),
+        border=_EMA_HEX.get(eph_2h, "#BDBDBD"),
+        tip_term="EMA Slope Phase",
+        tip1="Direction & strength of the EMA-20 slope (Phase 1 bullish → Phase 5 bearish).",
+        tip2="Phase 3 = flat, balanced IC. Phase 1/2 bullish, Phase 4/5 bearish.",
+        tip3="Trend truth-serum — confirms the %B skew direction (or warns it's just a pullback).")
+
+# ── Confluence verdict ────────────────────────────────────────────────────────
+ui.section_header("Confluence Verdict", "Four directional lenses vote · BB Phase sets size separately")
+
+def _dir_word(v):
+    if v > 0:  return "Bullish · CE risk"
+    if v < 0:  return "Bearish · PE risk"
+    return "Neutral"
+
+_vote_df = pd.DataFrame(
+    [
+        ["%B Zone",   zone_2h,                                  f"{v_pctb:+.2f}", _dir_word(v_pctb)],
+        ["EMA Slope", f"P{eph_2h} {_EMA_SHORT.get(eph_2h,'—')}" if eph_2h else "—", f"{v_ema:+.2f}", _dir_word(v_ema)],
+        ["Band Walk", f"{wlbl_2h} (↑{wu_2h} ↓{wd_2h})",         f"{v_walk:+.2f}", _dir_word(v_walk)],
+        ["MPR Shift", _mpr_label(mpr_2h),                       f"{v_mpr:+.2f}",  _dir_word(v_mpr)],
+        ["— SUM —",   "",                                       f"{skew_score:+.2f}", lean_label],
+    ],
+    columns=["Lens", "2H Read", "Vote", "Lean"],
+)
+
+def _lean_cell(v):
+    if "Bearish" in v or "BEARISH" in v:  return "background-color:#fee2e2;color:#7f1d1d;font-weight:700"
+    if "Bullish" in v or "BULLISH" in v:  return "background-color:#dbeafe;color:#1e3a8a;font-weight:700"
+    return ""
+
+_cv1, _cv2 = st.columns([1, 1])
+with _cv1:
+    st.dataframe(
+        _vote_df.style.map(_lean_cell, subset=["Lean"]),
+        use_container_width=True, hide_index=True,
+    )
+    st.caption("Vote scale per lens: ±1 strong · ±0.5 mild · 0 neutral.  + = bullish (CE risk) · − = bearish (PE risk).")
+with _cv2:
+    if _extreme:
+        _vt = "🟡 Direction unknown — squeeze coil"
+        _vb = (f"BB Phase {bb_regime} / squeeze {squeeze}: a violent two-way break is more likely than a drift. "
+               f"Ignore the {skew_score:+.1f} lean — enter <b>1:1</b> at {lot_pct}% lots and wait for the breakout to pick a side.")
+        _vl = "warning"
+    elif lean_label == "NEUTRAL":
+        _vt = f"🟢 Balanced — symmetric IC week ({skew_score:+.1f}/±4)"
+        _vb = (f"No directional edge across the four lenses. Sell a symmetric <b>1:1</b> condor. "
+               f"Size: {lot_pct}% ({bb_regime}). Engine ratio: {ratio}.")
+        _vl = "success"
+    else:
+        _dirw = "bearish" if threat_leg == "PE" else "bullish"
+        _skew = ("skew CE-heavy — sell more CE, fewer PE (e.g. 2 CE / 1 PE)"
+                 if threat_leg == "PE" else
+                 "skew PE-heavy — sell more PE, fewer CE (e.g. 2 PE / 1 CE)")
+        if conflict and abs(skew_score) < 2:
+            _conf = "but the lenses partly disagree — treat as LOW conviction, lean lightly or stay 1:1"
+            _vl   = "warning"
+        elif not conflict:
+            _conf = "and all firing lenses agree — HIGH conviction"
+            _vl   = "info"
+        else:
+            _conf = "with mixed signals — MEDIUM conviction"
+            _vl   = "info"
+        _match = (threat_leg in ratio) or ratio == "1:1"
+        _vt = f"{lean_label} ({skew_score:+.1f}/±4) — {threat_leg} leg threatened"
+        _vb = (f"Lenses lean <b>{_dirw}</b> {_conf}. {threat_leg} is the side price is drifting toward, so {_skew}. "
+               f"Engine ratio: <b>{ratio}</b> · size {lot_pct}% ({bb_regime}). "
+               + ("✓ matches engine ratio." if _match else "⚠ differs from engine ratio — re-check before sizing."))
+    ui.alert_box(_vt, _vb, level=_vl)
+    ui.alert_box(
+        f"Size dial — BB Phase {bb_regime}",
+        f"Lot size {lot_pct}% · {lot_reason}. Volatility regime sets HOW BIG; the votes above set WHICH WAY.",
+        level="info",
+    )
+
+st.divider()
+
+# ── Charts (timeframe tabs — 2H primary) ──────────────────────────────────────
+ui.section_header("Charts — Bollinger Phases by Timeframe",
+                  "2H primary · switch tabs for 4H / 1H detail")
+_tab2h, _tab4h, _tab1h = st.tabs(["2H — PRIMARY", "4H — SECONDARY", "1H"])
+for _tab, _cdf, _ctitle in [
+    (_tab2h, _df2h, "2H"), (_tab4h, _df4h, "4H"), (_tab1h, _df1h, "1H"),
+]:
+    with _tab:
+        if _cdf.empty:
+            st.warning(f"⚠️ {_ctitle} chart — {_bb_err or 'no data'}")
+        else:
+            _figc = _build_bb_chart(_cdf, _ctitle)
+            if _figc:
+                st.caption(
+                    f"Latest {_ctitle} bar: "
+                    f"**{_cdf.index[-1].strftime('%d %b %Y  %H:%M')} IST** · {len(_cdf)} candles"
+                )
+                st.plotly_chart(_figc, use_container_width=True)
 
 st.divider()
 
@@ -975,4 +1166,89 @@ A walk = price closing at or beyond the Bollinger Band on consecutive bars. It s
 | 4+ | **STRONG** | Max ratio + reduce size | +1 stress condition if on 4H |
 
 **2H walk** drives ratio directly. **4H walk ≥ 4 days** adds +1 to stress score (condition 3 in the table above).
+""")
+
+with st.expander("MPR Shift Reference — Pressure Building Underneath", expanded=False):
+    st.markdown("""
+**MPR shift** = (fraction of *recent* closes above the BB basis) − (fraction over a *longer* baseline).
+It measures how positioning around the mid-band is **changing** — it turns *before* %B and walk count do,
+so it's your earliest read on a building or fading move.
+
+On the chart it's the coloured ribbon (panel 2) and the purple line (panel 4). Blue = bullish pressure,
+red = bearish pressure. Vertical lines mark ±0.30 crosses.
+
+| MPR shift | Label | What it means | IC action |
+|---|---|---|---|
+| **> +0.30** | BEAR STRONG | Sustained bearish pressure underneath | Confirms a PE-threatened skew (sell more CE). Vote −1 |
+| +0.10 to +0.30 | BEAR MILD | Mild bearish drift | Tilts the tiebreaker bearish. Vote −0.5 |
+| −0.10 to +0.10 | NEUTRAL | No net pressure | No directional input. Vote 0 |
+| −0.30 to −0.10 | BULL MILD | Mild bullish drift | Tilts the tiebreaker bullish. Vote +0.5 |
+| **< −0.30** | BULL STRONG | Sustained bullish pressure | Confirms a CE-threatened skew (sell more PE). Vote +1 |
+
+**How to use it:** treat MPR as a **confirmation / veto** lens, never a standalone trigger.
+If %B says "bearish lean" *and* MPR confirms bearish pressure → skew with confidence.
+If %B says bearish but MPR is flipping bullish → the move may be exhausting → stay 1:1 or skew lightly.
+Post-entry, an MPR cross through ±0.30 is the earliest "conditions are changing" flag for the threatened leg.
+""")
+
+with st.expander("EMA Slope Phase Reference — Trend Direction & Strength", expanded=False):
+    st.markdown(f"""
+**EMA slope phase** classifies the bar-to-bar slope of the 20-period EMA into 5 states, scaled by ATR
+(so the thresholds adapt to volatility). It's the **trend truth-serum** — %B can read "upper band" in both a
+calm grind up *and* a blow-off top; the slope phase tells them apart.
+
+On the chart it's the coloured dots at candle highs and the ribbon (panel 3): green → red = bullish → bearish.
+
+| Phase | Label | Vote | What it means for your IC |
+|---|---|---|---|
+| **1** | {EMA_PHASE_LABELS[1].split('—')[1].strip()} | +1 | {EMA_PHASE_DEPLOY[1]} |
+| **2** | {EMA_PHASE_LABELS[2].split('—')[1].strip()} | +0.5 | {EMA_PHASE_DEPLOY[2]} |
+| **3** | {EMA_PHASE_LABELS[3].split('—')[1].strip()} | 0 | {EMA_PHASE_DEPLOY[3]} |
+| **4** | {EMA_PHASE_LABELS[4].split('—')[1].strip()} | −0.5 | {EMA_PHASE_DEPLOY[4]} |
+| **5** | {EMA_PHASE_LABELS[5].split('—')[1].strip()} | −1 | {EMA_PHASE_DEPLOY[5]} |
+
+**How to use it:** Phase 3 = the textbook balanced-IC environment. Phase 1/2 = bullish (CE threatened → sell more PE),
+Phase 4/5 = bearish (PE threatened → sell more CE, **your 2 CE / 1 PE trade**). A *fresh* strong phase is a clean
+skew signal; a strong phase that's been running many bars is late-stage and reversal-prone — confirm against MPR
+before pressing the skew.
+""")
+
+with st.expander("Confluence Reference — How the 5 Lenses Combine", expanded=True):
+    st.markdown("""
+**The one rule:** *BB Phase sizes the trade; the other four lenses vote on direction. Skew hard only when the
+votes agree; flatten to 1:1 and shrink whenever they conflict or BW% is extreme.*
+
+Think of two independent axes:
+
+| Axis | Lens | Answers | Drives |
+|---|---|---|---|
+| **Size** | BB Phase (BW%) | How much room to move? | Lot % + base strike distance |
+| **Direction** | %B + EMA Slope + Walk + MPR | Which way, how confidently? | Skew (which leg to sell more of) |
+
+**Directional confluence score** = sum of the four votes (each −1 … +1), range **−4 … +4**.
+Sign convention: **+ = bullish (CE leg threatened)**, **− = bearish (PE leg threatened → your CE-heavy skew)**.
+
+| Score | Read | Action |
+|---|---|---|
+| **≤ −2** | Strong bearish | PE threatened → skew CE-heavy (2 CE / 1 PE), full conviction |
+| −2 to −1 | Mild bearish | Light CE-heavy lean |
+| −1 to +1 | Balanced | Symmetric 1:1 condor |
+| +1 to +2 | Mild bullish | Light PE-heavy lean |
+| **≥ +2** | Strong bullish | CE threatened → skew PE-heavy (2 PE / 1 CE) |
+
+**When the lenses conflict, the conflict IS the signal:**
+
+| Conflict | Meaning | Action |
+|---|---|---|
+| %B bearish (low) but EMA Phase 1/2 (bullish) | Pullback inside an uptrend, not a trend | Don't skew CE-heavy — 1:1 or mild PE-heavy |
+| %B bearish + Walk STRONG but MPR flipping bullish | Down-move exhausting, snap-back brewing | Lighten skew, prep to defend PE on a bounce |
+| Strong trend but BB Phase EXTREME_SQUEEZE | Coil = violent two-way risk | Force 1:1, cap 50% — don't trust the trend through a squeeze |
+| All lenses agree but 1W BW% > 10.2% | Right direction, wrong vol environment | Quarter size — a macro move can run over any wing |
+
+**Multi-TF rule:** the 2H drives the vote; the 4H is the confirmation. A 2H skew gets **downgraded to 1:1**
+if the 4H contradicts it (WEAK confidence), and **upgraded with extra distance** if the 4H confirms.
+Never skew on a single timeframe.
+
+**Your Tuesday-EOD workflow:** BW% → lot size · %B + EMA slope → skew direction · Walk + MPR → skew conviction.
+5/5 aligned (squeeze/calm BW% + all four directional lenses agreeing) = your highest-conviction, full-size skew week.
 """)
