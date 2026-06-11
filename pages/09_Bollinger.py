@@ -291,6 +291,8 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         increasing=dict(line=dict(color="#26a69a", width=1), fillcolor="#26a69a"),
         decreasing=dict(line=dict(color="#ef5350", width=1), fillcolor="#ef5350"),
         whiskerwidth=0.3, showlegend=False,
+        hoverlabel=dict(bgcolor="rgba(255,255,255,0.5)",
+                        bordercolor="rgba(0,0,0,0.25)", font=dict(color="#222", size=12)),
     ), row=1, col=1)
 
     # %B + Walk readout — invisible flat line pinned to the bottom of the price
@@ -301,6 +303,8 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
         line=dict(color="rgba(120,120,120,0.0)", width=0),
         name="%B / Walk", showlegend=False,
         hovertext=pbwalk_hov, hoverinfo="text",
+        hoverlabel=dict(bgcolor="rgba(255,255,255,0.5)",
+                        bordercolor="rgba(0,0,0,0.25)", font=dict(color="#222", size=12)),
     ), row=1, col=1)
 
     # BB bands
@@ -501,11 +505,6 @@ def _build_bb_chart(df: pd.DataFrame, title: str) -> object:
                          spikethickness=1, spikecolor="#888", spikedash="dot")
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="BW%",   row=6, col=1, secondary_y=False)
-    # force every per-panel hover box to the same 50%-transparent style
-    # (per-trace hover otherwise colours each box by its trace colour)
-    fig.update_traces(hoverlabel=dict(
-        bgcolor="rgba(255,255,255,0.5)", bordercolor="rgba(0,0,0,0.25)",
-        font=dict(color="#222", size=12)))
     return fig
 
 
