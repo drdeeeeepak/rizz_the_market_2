@@ -132,10 +132,10 @@ def _card(title, body, color, sub=""):
     st.markdown(
         f"<div style='background:{color}15;border-left:6px solid {color};"
         f"border-radius:8px;padding:14px 16px;height:100%;'>"
-        f"<div style='font-size:12px;font-weight:800;letter-spacing:.5px;"
+        f"<div style='font-size:15px;font-weight:800;letter-spacing:.5px;"
         f"color:{color};text-transform:uppercase;'>{title}</div>"
-        f"<div style='font-size:15px;font-weight:700;color:#0f172a;margin:6px 0;'>{body}</div>"
-        f"<div style='font-size:12px;color:#475569;line-height:1.5;'>{sub}</div>"
+        f"<div style='font-size:18px;font-weight:700;color:#0f172a;margin:6px 0;'>{body}</div>"
+        f"<div style='font-size:15px;color:#475569;line-height:1.5;'>{sub}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -188,9 +188,9 @@ for col, c in zip(sc_cols, scorecard):
     with col:
         st.markdown(
             f"<div style='border:1px solid {mc}55;border-radius:8px;padding:8px 10px;text-align:center;'>"
-            f"<div style='font-size:11px;font-weight:700;color:#334155;'>{c['pillar']}</div>"
-            f"<div style='font-size:12px;color:#475569;margin:4px 0;min-height:32px;'>{c['read']}</div>"
-            f"<div style='font-size:12px;font-weight:800;color:{mc};'>{mark}</div>"
+            f"<div style='font-size:14px;font-weight:700;color:#334155;'>{c['pillar']}</div>"
+            f"<div style='font-size:15px;color:#475569;margin:4px 0;min-height:40px;'>{c['read']}</div>"
+            f"<div style='font-size:15px;font-weight:800;color:{mc};'>{mark}</div>"
             f"</div>", unsafe_allow_html=True)
 if verdict.get("conflict"):
     st.caption("⚠️ The signals are **conflicted** — this is the kind of move that often fizzles. "
@@ -259,14 +259,19 @@ fig.add_trace(go.Scatter(x=x, y=df["vwap"], mode="lines", name="VWAP (fair price
 
 flip = gex.get("flip_level")
 if flip:
-    fig.add_hline(y=flip, line=dict(color="#7c3aed", width=1.3, dash="dash"),
+    fig.add_hline(y=flip, line=dict(color="#7c3aed", width=1.5, dash="dash"),
                   annotation_text=f"Gamma flip {flip:,.0f}", annotation_position="top left",
+                  annotation_font=dict(size=15, color="#7c3aed"),
+                  annotation_bgcolor="rgba(255,255,255,0.88)", annotation_borderpad=3,
                   row=1, col=1)
-for wall, col, lbl in [(gex.get("call_wall"), "#ef4444", "Call wall"),
-                       (gex.get("put_wall"), "#10b981", "Put wall")]:
+# Separate corners + white background boxes so labels never sit unreadable on candles.
+for wall, col, lbl, pos in [(gex.get("call_wall"), "#ef4444", "Call wall", "top right"),
+                            (gex.get("put_wall"), "#10b981", "Put wall", "bottom right")]:
     if wall:
-        fig.add_hline(y=wall, line=dict(color=col, width=1, dash="dot"),
-                      annotation_text=lbl, annotation_position="bottom left",
+        fig.add_hline(y=wall, line=dict(color=col, width=1.2, dash="dot"),
+                      annotation_text=lbl, annotation_position=pos,
+                      annotation_font=dict(size=15, color=col),
+                      annotation_bgcolor="rgba(255,255,255,0.88)", annotation_borderpad=3,
                       row=1, col=1)
 
 # Four marker types (drawn only when the state flips).
@@ -327,11 +332,13 @@ if has_breadth:
     fig.update_yaxes(title_text="breadth %", range=[0, 100], row=4, col=1)
 
 fig.update_layout(
-    height=940 if has_breadth else 820, margin=dict(l=10, r=10, t=30, b=10),
+    height=980 if has_breadth else 860, margin=dict(l=10, r=10, t=30, b=10),
     xaxis_rangeslider_visible=False, plot_bgcolor="white",
-    legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+    font=dict(size=15),                                  # +3pt global (ticks, titles, hover)
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0, font=dict(size=14)),
     hovermode="x unified",
 )
+fig.update_annotations(font_size=15)
 # Thin out x labels so they're readable.
 step = max(1, len(x) // 14)
 fig.update_xaxes(tickmode="array", tickvals=x[::step], tickangle=-40,
@@ -391,10 +398,10 @@ else:
         st.markdown(
             f"<div style='display:flex;gap:14px;align-items:center;padding:8px 12px;"
             f"border-left:5px solid {col};background:{col}10;border-radius:6px;margin-bottom:6px;'>"
-            f"<div style='font-weight:800;color:{col};min-width:70px;'>{r['grade']}</div>"
-            f"<div style='min-width:130px;color:#0f172a;font-weight:600;'>{day_label}</div>"
-            f"<div style='min-width:80px;color:#334155;'>close {r['close']:,}</div>"
-            f"<div style='color:#475569;font-size:13px;'>"
+            f"<div style='font-size:16px;font-weight:800;color:{col};min-width:70px;'>{r['grade']}</div>"
+            f"<div style='font-size:16px;min-width:130px;color:#0f172a;font-weight:600;'>{day_label}</div>"
+            f"<div style='font-size:16px;min-width:80px;color:#334155;'>close {r['close']:,}</div>"
+            f"<div style='color:#475569;font-size:16px;'>"
             f"closed {r['close_location']}% up the day's range · {vwap_txt} · {bounce_txt}{extra}{live_hint}</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -415,11 +422,13 @@ with st.expander("🔎 Where the gamma walls sit (option positioning detail)"):
                              name="Net dealer gamma"))
         if flip:
             bar.add_vline(x=flip, line=dict(color="#7c3aed", dash="dash"),
-                          annotation_text="flip")
+                          annotation_text="flip", annotation_font=dict(size=15),
+                          annotation_bgcolor="rgba(255,255,255,0.88)")
         bar.add_vline(x=spot, line=dict(color="#2563eb", dash="dot"),
-                      annotation_text="spot")
-        bar.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                          plot_bgcolor="white", showlegend=False,
+                      annotation_text="spot", annotation_font=dict(size=15),
+                      annotation_bgcolor="rgba(255,255,255,0.88)")
+        bar.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10),
+                          plot_bgcolor="white", showlegend=False, font=dict(size=15),
                           xaxis_title="strike", yaxis_title="net dealer gamma (relative)")
         st.plotly_chart(bar, use_container_width=True)
         st.caption("Green bars = strikes where dealers DAMP moves (price gets pinned / pulled back). "
