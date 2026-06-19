@@ -4,6 +4,7 @@
 # Updated 27 Apr 2026: added get_nifty_15m(), get_nifty_30m(), get_nifty_5m() for SuperTrend MTF page.
 
 import logging
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -536,41 +537,86 @@ def get_nifty_1h_ema_slope(days: int = EMA_SLOPE_FETCH_DAYS) -> pd.DataFrame:
 
 # ─── Generic Nifty intraday (Page 18 — Conviction Radar) ─────────────────────
 
-_INTERVAL_PER_DAY = {"5minute": 75, "15minute": 25, "30minute": 13, "60minute": 7}
+
+def _trim_sessions(df: pd.DataFrame, days: int) -> pd.DataFrame:
+    """Keep only the last `days` distinct trading sessions."""
+    sessions = sorted(set(df.index.normalize()))
+    if len(sessions) > days:
+        cutoff = sessions[-days]
+        df = df[df.index.normalize() >= cutoff]
+    return df
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty_fut_token() -> int:
+    """
+    Resolve the CURRENT near-month NIFTY futures instrument token.
+    Futures carry real traded volume (the index itself reports volume=0 on Kite),
+    so VWAP / volume-delta must be computed on the future. Cached daily.
+    Returns 0 on failure.
+    """
+    kite = _get_kite_safe()
+    try:
+        insts = kite.instruments("NFO")
+        today = date.today()
+        cands = []
+        for i in insts:
+            if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT":
+                try:
+                    exp = pd.to_datetime(i.get("expiry")).date()
+                except Exception:
+                    continue
+                cands.append((exp, int(i["instrument_token"])))
+        if not cands:
+            return 0
+        future = sorted([c for c in cands if c[0] >= today])
+        return future[0][1] if future else sorted(cands)[-1][1]
+    except Exception as e:
+        log.error("Nifty fut token resolve failed: %s", e)
+        return 0
+
+
+def _fetch_intraday(token: int, interval: str, days: int) -> pd.DataFrame:
+    kite = _get_kite_safe()
+    to_date = date.today()
+    from_date = to_date - timedelta(days=days + 5)   # +5 calendar buffer for weekends/holidays
+    data = kite.historical_data(
+        token, from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d"), interval,
+    )
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    return _trim_sessions(df[["open", "high", "low", "close", "volume"]], days)
+
+
+@st.cache_data(ttl=TTL_5M, show_spinner=False)
+def get_nifty_fut_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
+    """
+    Near-month NIFTY FUTURES intraday OHLCV (WITH volume) for the Conviction Radar.
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    tok = get_nifty_fut_token()
+    if not tok:
+        return pd.DataFrame()
+    try:
+        return _fetch_intraday(tok, interval, days)
+    except Exception as e:
+        log.error("Nifty fut intraday (%s) fetch failed: %s", interval, e)
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=TTL_5M, show_spinner=False)
 def get_nifty_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
     """
-    Fetch Nifty index intraday OHLCV for the Conviction Radar.
-    interval: '5minute' | '15minute' | '30minute' | '60minute'
-    days    : approx trading days to return (default 7).
-    Public wrapper — returns empty DataFrame on failure, never raises.
+    Nifty INDEX intraday OHLCV — fallback only. NOTE: the index reports volume=0,
+    so VWAP / volume-delta degrade to a price-only proxy. Prefer the futures fetch.
     """
-    kite = _get_kite_safe()
     try:
-        to_date = date.today()
-        from_date = to_date - timedelta(days=days + 5)   # +5 calendar buffer for weekends/holidays
-        data = kite.historical_data(
-            NIFTY_INDEX_TOKEN,
-            from_date.strftime("%Y-%m-%d"),
-            to_date.strftime("%Y-%m-%d"),
-            interval,
-        )
-        if not data:
-            return pd.DataFrame()
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        df = df[["open", "high", "low", "close", "volume"]]
-        # Keep only the last `days` distinct trading sessions.
-        sessions = sorted(set(df.index.normalize()))
-        if len(sessions) > days:
-            cutoff = sessions[-days]
-            df = df[df.index.normalize() >= cutoff]
-        return df
+        return _fetch_intraday(NIFTY_INDEX_TOKEN, interval, days)
     except Exception as e:
-        log.error("Nifty intraday (%s) fetch failed: %s", interval, e)
+        log.error("Nifty index intraday (%s) fetch failed: %s", interval, e)
         return pd.DataFrame()
 
 
@@ -627,20 +673,33 @@ def get_nifty50_intraday(interval: str = "15minute", days: int = 7) -> dict:
     to_date = date.today()
     from_date = to_date - timedelta(days=days + 5)
     out = {}
+    # Kite historical API limit ≈ 3 requests/sec. Throttle + one backoff retry.
+    THROTTLE = 0.34
     for sym, tok in tokens.items():
-        try:
-            data = kite.historical_data(
-                tok, from_date.strftime("%Y-%m-%d"),
-                to_date.strftime("%Y-%m-%d"), interval,
-            )
-            if not data:
-                continue
-            df = pd.DataFrame(data)
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.set_index("date").sort_index()
-            out[sym] = df[["open", "high", "low", "close", "volume"]]
-        except Exception as e:
-            log.warning("Breadth fetch %s failed: %s", sym, e)
+        data = None
+        for attempt in range(2):
+            try:
+                data = kite.historical_data(
+                    tok, from_date.strftime("%Y-%m-%d"),
+                    to_date.strftime("%Y-%m-%d"), interval,
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if attempt == 0 and ("too many" in msg or "rate" in msg or "throttle" in msg):
+                    time.sleep(1.0)          # rate-limited — back off once and retry
+                    continue
+                log.warning("Breadth fetch %s failed: %s", sym, e)
+                break
+        if data:
+            try:
+                df = pd.DataFrame(data)
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date").sort_index()
+                out[sym] = _trim_sessions(df[["open", "high", "low", "close", "volume"]], days)
+            except Exception as e:
+                log.warning("Breadth parse %s failed: %s", sym, e)
+        time.sleep(THROTTLE)                 # stay under the per-second limit
     return out
 
 

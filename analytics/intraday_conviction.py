@@ -47,9 +47,16 @@ TREND_THRESH = 60       # score ≥ this → defend / trend signal
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _session_vwap(df: pd.DataFrame) -> pd.Series:
-    """VWAP that resets every trading day (true intraday VWAP)."""
+    """
+    VWAP that resets every trading day (true intraday VWAP).
+    If the instrument carries no volume (e.g. the Nifty index reports volume=0),
+    fall back to a running average of the typical price — still a usable
+    "fair price" line, just without volume weighting.
+    """
     tp = (df["high"] + df["low"] + df["close"]) / 3.0
     day = df.index.normalize() if hasattr(df.index, "normalize") else pd.to_datetime(df.index).normalize()
+    if float(pd.to_numeric(df["volume"], errors="coerce").fillna(0).sum()) <= 0:
+        return tp.groupby(day).transform(lambda s: s.expanding().mean())
     pv = (tp * df["volume"]).groupby(day).cumsum()
     vv = df["volume"].groupby(day).cumsum().replace(0, np.nan)
     return (pv / vv).ffill()

@@ -19,7 +19,7 @@ from plotly.subplots import make_subplots
 import ui.components as ui
 from page_utils import bootstrap_signals, show_page_header
 from data.live_fetcher import (
-    get_nifty_intraday, get_nifty50_intraday,
+    get_nifty_fut_intraday, get_nifty_intraday, get_nifty50_intraday,
     get_india_vix, get_dual_expiry_chains,
 )
 from analytics.gamma_exposure import compute_gex
@@ -33,8 +33,14 @@ st.caption("Plain-English answer to: *be patient on this fall, or get out?* · "
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
 
+# Be LOUD about a missing spot rather than silently faking a price.
 if spot <= 0:
-    spot = float(sig.get("spot", 0)) or 24000.0
+    spot = float(sig.get("spot", 0))
+if spot <= 0:
+    st.error("⚠️ Live Nifty spot is unavailable from Kite right now (login/market-data issue). "
+             "Gamma levels need a real spot — refresh after logging in. Showing nothing rather "
+             "than guessing a price.")
+    st.stop()
 
 # ── Controls ──────────────────────────────────────────────────────────────────
 c1, c2, c3 = st.columns([1, 1, 2])
@@ -44,20 +50,35 @@ with c1:
 with c2:
     days = st.slider("Trading days shown", 3, 10, 7)
 with c3:
-    use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~15s)", value=True)
+    use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~20s)", value=True)
 
 # ── Data ──────────────────────────────────────────────────────────────────────
+# Candles come from the near-month FUTURE (real volume; the index reports 0).
 with st.spinner("Loading intraday data…"):
-    df_idx = get_nifty_intraday(interval=interval, days=days)
+    df_idx = get_nifty_fut_intraday(interval=interval, days=days)
+    used_index_fallback = False
+    if df_idx is None or df_idx.empty:
+        df_idx = get_nifty_intraday(interval=interval, days=days)   # index fallback (no volume)
+        used_index_fallback = not (df_idx is None or df_idx.empty)
     vix = get_india_vix() or 0.0
-    chains = get_dual_expiry_chains(spot if spot > 0 else 24000)
+    chains = get_dual_expiry_chains(spot)
 
 if df_idx is None or df_idx.empty:
-    st.error("Could not load Nifty intraday data from Kite. Check login / market data.")
+    st.error("Could not load Nifty intraday data from Kite. Check login / market data, then refresh.")
     st.stop()
 
+if used_index_fallback:
+    st.warning("⚠️ Could not load Nifty futures — using the index instead. The index has no volume, "
+               "so VWAP is a price-only proxy and the volume-delta read is disabled. Signals are weaker. "
+               "Refresh once futures data is available.")
+
 # Expected one-day move from VIX (same convention as the EMA-Ribbon DTB logic).
-expected_move_pts = spot * (vix / 100.0) / 16.0 if vix > 0 else 0.0
+if vix > 0:
+    expected_move_pts = spot * (vix / 100.0) / 16.0
+else:
+    expected_move_pts = spot * 0.006      # ~0.6% fallback when VIX is unavailable
+    st.info("ℹ️ India VIX unavailable — using a 0.6% fallback for the 'expected move'. "
+            "The 'stretch' read is approximate until VIX returns.")
 
 # Breadth (optional).
 breadth = pd.Series(dtype=float)
@@ -70,6 +91,9 @@ if use_breadth:
 near_df = chains.get("near", pd.DataFrame())
 near_dte = chains.get("near_dte", 7)
 atm_iv = float(sig.get("atm_iv", 12.0) or 12.0)
+if near_df is None or near_df.empty:
+    st.warning("⚠️ Option chain unavailable — the dealer-gamma 'market mode' and flip line can't be "
+               "computed right now. The price/volume/breadth signals below still work.")
 gex = compute_gex(near_df, spot, near_dte, iv_fallback_pct=atm_iv)
 
 # Per-candle enrichment + verdicts.
@@ -126,6 +150,21 @@ with m4:
     ui.metric_card("EXPECTED MOVE TODAY", f"±{expected_move_pts:,.0f}" if expected_move_pts else "—",
                    sub=f"From VIX {vix:.1f} — used for 'stretch'", color="default")
 
+with st.expander("⏱ How far ahead does this actually see? (read me once)"):
+    st.markdown(
+        f"This is an **early-warning / context** tool, not a crystal ball that says 'price reverses in "
+        f"exactly 10 minutes'. Be realistic about what it gives you:\n"
+        f"- **Updates once per candle** — every **{interval_label}**. So a fresh read lands at each candle "
+        f"close, not continuously. Use 5-min for faster (noisier) reads, 15-min for steadier ones.\n"
+        f"- **The genuinely *leading* parts** are the **divergences** (momentum/volume stop confirming the "
+        f"price low *before* it turns) and the **gamma flip line** (known in advance — it tells you the "
+        f"*environment* before the move happens). These typically warn **1–3 candles early**.\n"
+        f"- **Before the close:** the 🔴 LIVE row in the daily-close table grades *today* as it forms, so in "
+        f"the **last 45–60 min** you get a pre-close 'is this bounce trustworthy?' read while you can still act.\n"
+        f"- It **shifts the odds** in your favour and stops panic-decisions at the exact wrong moment — it "
+        f"does **not** guarantee the turn. Always keep your hard stop."
+    )
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -145,9 +184,10 @@ fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                     row_heights=heights)
 
 # Row 1 — candles + VWAP + flip + walls + markers
+candle_name = "Nifty index" if used_index_fallback else "Nifty (near-month future)"
 fig.add_trace(go.Candlestick(
     x=x, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-    name="Nifty", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
+    name=candle_name, increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
     showlegend=False), row=1, col=1)
 
 fig.add_trace(go.Scatter(x=x, y=df["vwap"], mode="lines", name="VWAP (fair price)",
@@ -240,25 +280,30 @@ ui.section_header("Daily close quality — could you trust the late-day move?",
 if cc is None or cc.empty:
     st.info("Not enough intraday history to grade daily closes.")
 else:
+    today_ist = pd.Timestamp.now(tz="Asia/Kolkata").date()
     GRADE_COLOR = {"HIGH": "#16a34a", "MEDIUM": "#d97706", "LOW": "#dc2626"}
     for _, r in cc.sort_values("date", ascending=False).iterrows():
         col = GRADE_COLOR.get(r["grade"], "#64748b")
         bounce_txt = "late bounce" if r["late_bounce"] else "no late bounce"
         vwap_txt = "closed ABOVE fair value" if r["above_vwap"] else "closed BELOW fair value"
         extra = f" · {r['note']}" if r["note"] else ""
+        is_today = r["date"] == today_ist
+        day_label = f"{r['date']} 🔴 LIVE" if is_today else str(r["date"])
+        live_hint = (" <i>(in progress — firms up toward 3:30)</i>" if is_today else "")
         st.markdown(
             f"<div style='display:flex;gap:14px;align-items:center;padding:8px 12px;"
             f"border-left:5px solid {col};background:{col}10;border-radius:6px;margin-bottom:6px;'>"
             f"<div style='font-weight:800;color:{col};min-width:70px;'>{r['grade']}</div>"
-            f"<div style='min-width:90px;color:#0f172a;font-weight:600;'>{r['date']}</div>"
+            f"<div style='min-width:130px;color:#0f172a;font-weight:600;'>{day_label}</div>"
             f"<div style='min-width:80px;color:#334155;'>close {r['close']:,}</div>"
             f"<div style='color:#475569;font-size:13px;'>"
-            f"closed {r['close_location']}% up the day's range · {vwap_txt} · {bounce_txt}{extra}</div>"
+            f"closed {r['close_location']}% up the day's range · {vwap_txt} · {bounce_txt}{extra}{live_hint}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
     st.caption("Reading: a **LOW** grade after a late bounce is the warning you were missing — "
-               "it usually means the bounce was a short-cover into the close and the next session gaps against it.")
+               "it usually means the bounce was a short-cover into the close and the next session gaps against it. "
+               "The **🔴 LIVE** row grades *today's* close as it forms, so in the last hour you get a pre-close read.")
 
 # ── Gamma walls detail (optional deep-dive) ───────────────────────────────────
 with st.expander("🔎 Where the gamma walls sit (option positioning detail)"):
@@ -282,7 +327,9 @@ with st.expander("🔎 Where the gamma walls sit (option positioning detail)"):
         st.caption("Green bars = strikes where dealers DAMP moves (price gets pinned / pulled back). "
                    "Red bars = strikes where dealers AMPLIFY moves. The flip is where green turns to red.")
 
-st.caption("Gamma regime is a today-only snapshot (option open-interest isn't available for past days), "
-           "so the ▲/▼ chart marks come from price, momentum, volume and breadth — things we can measure on "
-           "every past candle — while the gamma flip line gives today's structural context. "
-           "These shift the odds; they are not a guarantee.")
+st.caption("Notes: Candles are the near-month **future** (real volume); the gamma flip/walls are on the "
+           "**spot** option chain, so they sit a few points off the futures price (basis) — read them as "
+           "zones, not to-the-point levels. Gamma regime is a today-only snapshot (option open-interest "
+           "isn't available for past days), so the ▲/▼ chart marks come from price, momentum, volume and "
+           "breadth — things we can measure on every past candle — while the flip line gives today's "
+           "structural context. These shift the odds; they are not a guarantee.")
