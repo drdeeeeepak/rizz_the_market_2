@@ -4,6 +4,7 @@
 # Updated 27 Apr 2026: added get_nifty_15m(), get_nifty_30m(), get_nifty_5m() for SuperTrend MTF page.
 
 import logging
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -532,6 +533,174 @@ def get_nifty_1h_ema_slope(days: int = EMA_SLOPE_FETCH_DAYS) -> pd.DataFrame:
     except Exception as e:
         log.error("1H EMA slope fetch failed: %s", e)
         return pd.DataFrame()
+
+
+# ─── Generic Nifty intraday (Page 18 — Conviction Radar) ─────────────────────
+
+
+def _trim_sessions(df: pd.DataFrame, days: int) -> pd.DataFrame:
+    """Keep only the last `days` distinct trading sessions."""
+    sessions = sorted(set(df.index.normalize()))
+    if len(sessions) > days:
+        cutoff = sessions[-days]
+        df = df[df.index.normalize() >= cutoff]
+    return df
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty_fut_token() -> int:
+    """
+    Resolve the CURRENT near-month NIFTY futures instrument token.
+    Futures carry real traded volume (the index itself reports volume=0 on Kite),
+    so VWAP / volume-delta must be computed on the future. Cached daily.
+    Returns 0 on failure.
+    """
+    kite = _get_kite_safe()
+    try:
+        insts = kite.instruments("NFO")
+        today = date.today()
+        cands = []
+        for i in insts:
+            if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT":
+                try:
+                    exp = pd.to_datetime(i.get("expiry")).date()
+                except Exception:
+                    continue
+                cands.append((exp, int(i["instrument_token"])))
+        if not cands:
+            return 0
+        future = sorted([c for c in cands if c[0] >= today])
+        return future[0][1] if future else sorted(cands)[-1][1]
+    except Exception as e:
+        log.error("Nifty fut token resolve failed: %s", e)
+        return 0
+
+
+def _fetch_intraday(token: int, interval: str, days: int) -> pd.DataFrame:
+    kite = _get_kite_safe()
+    to_date = date.today()
+    from_date = to_date - timedelta(days=days + 5)   # +5 calendar buffer for weekends/holidays
+    data = kite.historical_data(
+        token, from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d"), interval,
+    )
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    return _trim_sessions(df[["open", "high", "low", "close", "volume"]], days)
+
+
+@st.cache_data(ttl=TTL_5M, show_spinner=False)
+def get_nifty_fut_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
+    """
+    Near-month NIFTY FUTURES intraday OHLCV (WITH volume) for the Conviction Radar.
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    tok = get_nifty_fut_token()
+    if not tok:
+        return pd.DataFrame()
+    try:
+        return _fetch_intraday(tok, interval, days)
+    except Exception as e:
+        log.error("Nifty fut intraday (%s) fetch failed: %s", interval, e)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=TTL_5M, show_spinner=False)
+def get_nifty_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
+    """
+    Nifty INDEX intraday OHLCV — fallback only. NOTE: the index reports volume=0,
+    so VWAP / volume-delta degrade to a price-only proxy. Prefer the futures fetch.
+    """
+    try:
+        return _fetch_intraday(NIFTY_INDEX_TOKEN, interval, days)
+    except Exception as e:
+        log.error("Nifty index intraday (%s) fetch failed: %s", interval, e)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty50_tokens() -> dict:
+    """
+    Resolve the 50 Nifty-50 constituent instrument tokens.
+    Uses data/nifty500_tokens.json if present, else resolves the first 50
+    symbols from data/nifty500_symbols.json via Kite's NSE instrument dump.
+    Returns {symbol: token}. Empty dict on failure.
+    """
+    import json, os
+    try:
+        syms_path = "data/nifty500_symbols.json"
+        if not os.path.exists(syms_path):
+            return {}
+        with open(syms_path) as fh:
+            nifty50 = json.load(fh)[:50]
+        nset = set(nifty50)
+
+        tok_path = "data/nifty500_tokens.json"
+        if os.path.exists(tok_path):
+            with open(tok_path) as fh:
+                m = json.load(fh)
+            out = {s: int(m[s]) for s in nifty50 if s in m}
+            if len(out) >= 40:
+                return out
+
+        # Fall back to live resolution from the NSE instrument list.
+        kite = _get_kite_safe()
+        instruments = kite.instruments("NSE")
+        out = {}
+        for inst in instruments:
+            sym = inst.get("tradingsymbol", "")
+            if inst.get("instrument_type") == "EQ" and sym in nset:
+                out[sym] = inst["instrument_token"]
+        return out
+    except Exception as e:
+        log.error("Nifty50 token resolve failed: %s", e)
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_nifty50_intraday(interval: str = "15minute", days: int = 7) -> dict:
+    """
+    Fetch intraday OHLCV for all 50 Nifty-50 constituents (for breadth).
+    Heavy (~50 historical calls) — cached 10 min. Returns {symbol: DataFrame};
+    failed symbols are skipped. Empty dict on total failure.
+    """
+    tokens = get_nifty50_tokens()
+    if not tokens:
+        return {}
+    kite = _get_kite_safe()
+    to_date = date.today()
+    from_date = to_date - timedelta(days=days + 5)
+    out = {}
+    # Kite historical API limit ≈ 3 requests/sec. Throttle + one backoff retry.
+    THROTTLE = 0.34
+    for sym, tok in tokens.items():
+        data = None
+        for attempt in range(2):
+            try:
+                data = kite.historical_data(
+                    tok, from_date.strftime("%Y-%m-%d"),
+                    to_date.strftime("%Y-%m-%d"), interval,
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if attempt == 0 and ("too many" in msg or "rate" in msg or "throttle" in msg):
+                    time.sleep(1.0)          # rate-limited — back off once and retry
+                    continue
+                log.warning("Breadth fetch %s failed: %s", sym, e)
+                break
+        if data:
+            try:
+                df = pd.DataFrame(data)
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date").sort_index()
+                out[sym] = _trim_sessions(df[["open", "high", "low", "close", "volume"]], days)
+            except Exception as e:
+                log.warning("Breadth parse %s failed: %s", sym, e)
+        time.sleep(THROTTLE)                 # stay under the per-second limit
+    return out
 
 
 # ─── Nifty 500 breadth ────────────────────────────────────────────────────────
