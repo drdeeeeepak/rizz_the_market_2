@@ -239,7 +239,8 @@ def pillar_scorecard(row: pd.Series, gamma_regime: str = "UNKNOWN",
             read, lean = read_dn, -1
         else:
             read, lean = read_flat, 0
-        agrees = (lean == bias) if bias != 0 else None
+        # A neutral pillar neither agrees nor fights — show it as flat, not a conflict.
+        agrees = None if (lean == 0 or bias == 0) else (lean == bias)
         cards.append({"pillar": name, "read": read, "lean": lean, "agrees": agrees})
 
     cards.append({"pillar": "Price vs VWAP",
