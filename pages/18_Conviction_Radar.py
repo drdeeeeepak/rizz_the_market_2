@@ -108,8 +108,19 @@ gex = compute_gex(near_df, spot, near_dte, iv_fallback_pct=atm_iv)
 # Per-candle enrichment + verdicts.
 df = ic.enrich(df_idx, expected_move_pts=expected_move_pts,
                breadth=breadth if not breadth.empty else None)
+
+# Safety net: if the app was just updated, Streamlit may still hold an OLD cached
+# engine module in memory while running the NEW page. Detect the mismatch and ask
+# for a clean refresh instead of crashing with a raw KeyError.
+_REQUIRED = {"bull_read", "bear_read", "state", "vwap", "above_vwap", "confidence", "conflict"}
+if df.empty or not _REQUIRED.issubset(df.columns):
+    st.warning("🔄 The app was just updated. Press **↻** (top-right) or reload the page once to "
+               "load the new engine. (Streamlit kept an older version cached in memory.)")
+    st.stop()
+
 verdict = ic.live_verdict(df, gex["regime"], gex.get("spot_vs_flip_pts"))
 markers = ic.transition_markers(df)
+scorecard = ic.pillar_scorecard(df.iloc[-1], gex.get("regime", "UNKNOWN"), gex.get("spot_vs_flip_pts"))
 cc = ic.close_conviction(df_idx, breadth=breadth if not breadth.empty else None)
 
 
@@ -156,8 +167,34 @@ with m3:
                         if gex.get("spot_vs_flip_pts") is not None else "near-the-money"),
                    color="green" if (gex.get("spot_vs_flip_pts") or 0) >= 0 else "red")
 with m4:
-    ui.metric_card("EXPECTED MOVE TODAY", f"±{expected_move_pts:,.0f}" if expected_move_pts else "—",
-                   sub=f"From VIX {vix:.1f} — used for 'stretch'", color="default")
+    _conf = verdict.get("confidence", 0)
+    _agree = verdict.get("agree", 0)
+    _oppose = verdict.get("oppose", 0)
+    ui.metric_card("SIGNAL AGREEMENT", f"{_conf}%",
+                   sub=f"{_agree} signals agree · {_oppose} fight — higher = more trustworthy",
+                   color="green" if _conf >= 67 else "red" if verdict.get("conflict") else "amber")
+
+# ── Conflict scorecard — exactly which signals agree vs fight right now ────────
+ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
+                  "Each pillar votes; a continuation call is only trusted when they line up")
+sc_cols = st.columns(len(scorecard))
+for col, c in zip(sc_cols, scorecard):
+    if c["agrees"] is True:
+        mark, mc = "✅ agrees", "#16a34a"
+    elif c["agrees"] is False:
+        mark, mc = "❌ fights", "#dc2626"
+    else:
+        mark, mc = "• flat", "#64748b"
+    with col:
+        st.markdown(
+            f"<div style='border:1px solid {mc}55;border-radius:8px;padding:8px 10px;text-align:center;'>"
+            f"<div style='font-size:11px;font-weight:700;color:#334155;'>{c['pillar']}</div>"
+            f"<div style='font-size:12px;color:#475569;margin:4px 0;min-height:32px;'>{c['read']}</div>"
+            f"<div style='font-size:12px;font-weight:800;color:{mc};'>{mark}</div>"
+            f"</div>", unsafe_allow_html=True)
+if verdict.get("conflict"):
+    st.caption("⚠️ The signals are **conflicted** — this is the kind of move that often fizzles. "
+               "The engine is withholding any 'ride it / defend' continuation call until they line up.")
 
 with st.expander("⏱ How far ahead does this actually see? (read me once)"):
     st.markdown(
@@ -188,13 +225,30 @@ ui.section_header("Last %d sessions — with the signals drawn on" % days,
 # X as category strings to avoid overnight gaps in the candles.
 x = [t.strftime("%d-%b %H:%M") for t in df.index]
 
-rows = 3 if (not breadth.empty and df["breadth"].notna().any()) else 2
-heights = [0.62, 0.20, 0.18] if rows == 3 else [0.74, 0.26]
-fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+has_breadth = (not breadth.empty and df["breadth"].notna().any())
+rows = 4 if has_breadth else 3
+heights = [0.50, 0.16, 0.18, 0.16] if has_breadth else [0.58, 0.20, 0.22]
+fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.025,
                     row_heights=heights)
 
-# Row 1 — candles + VWAP + flip + walls + markers
+# Row 1 — candles + VWAP + Bollinger band + expected-move envelope + flip + walls + markers
 candle_name = "Nifty index" if used_index_fallback else "Nifty (near-month future)"
+
+# Bollinger band shading (visualises %B / how stretched price is)
+fig.add_trace(go.Scatter(x=x, y=df["bb_upper"], mode="lines", line=dict(width=0),
+                         hoverinfo="skip", showlegend=False), row=1, col=1)
+fig.add_trace(go.Scatter(x=x, y=df["bb_lower"], mode="lines", line=dict(width=0),
+                         fill="tonexty", fillcolor="rgba(100,116,139,0.10)",
+                         name="Bollinger band", hoverinfo="skip"), row=1, col=1)
+
+# Expected-move envelope around fair value (VWAP ± today's VIX-implied move)
+if expected_move_pts:
+    for sgn in (1, -1):
+        fig.add_trace(go.Scatter(x=x, y=df["vwap"] + sgn * expected_move_pts, mode="lines",
+                                 line=dict(color="#f59e0b", width=0.8, dash="dot"),
+                                 name="Expected-move band" if sgn == 1 else None,
+                                 showlegend=(sgn == 1), hoverinfo="skip"), row=1, col=1)
+
 fig.add_trace(go.Candlestick(
     x=x, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
     name=candle_name, increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
@@ -233,26 +287,47 @@ for key, anchor, mult, sym, fill, edge, label in _MARKER_SPECS:
         marker=dict(symbol=sym, size=13, color=fill, line=dict(width=1, color=edge))),
         row=1, col=1)
 
-# Row 2 — bull vs bear read (works in both regimes: above VWAP = ride/topping; below = brew/defend)
+# Row 2 — RSI (momentum) with 30/70 lines + divergence markers (the leading tells)
+fig.add_trace(go.Scatter(x=x, y=df["rsi"], mode="lines", name="RSI (momentum)",
+                         line=dict(color="#8b5cf6", width=1.1)), row=2, col=1)
+for yv in (30, 50, 70):
+    fig.add_hline(y=yv, line=dict(color="#cbd5e1", width=0.7,
+                  dash="dot" if yv == 50 else "dash"), row=2, col=1)
+_bd = df[df["rsi_bull_div"]]
+if not _bd.empty:
+    fig.add_trace(go.Scatter(x=[t.strftime("%d-%b %H:%M") for t in _bd.index], y=_bd["rsi"],
+                  mode="markers", name="Bullish RSI divergence",
+                  marker=dict(symbol="circle", size=7, color="#16a34a")), row=2, col=1)
+_rd = df[df["rsi_bear_div"]]
+if not _rd.empty:
+    fig.add_trace(go.Scatter(x=[t.strftime("%d-%b %H:%M") for t in _rd.index], y=_rd["rsi"],
+                  mode="markers", name="Bearish RSI divergence",
+                  marker=dict(symbol="circle", size=7, color="#dc2626")), row=2, col=1)
+fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
+
+# Row 3 — bull vs bear read + signal-agreement (confidence)
 fig.add_trace(go.Scatter(x=x, y=df["bull_read"], mode="lines",
                          name="Bull read (stay/long)", line=dict(color="#16a34a", width=1.2)),
-              row=2, col=1)
+              row=3, col=1)
 fig.add_trace(go.Scatter(x=x, y=df["bear_read"], mode="lines",
                          name="Bear read (defend)", line=dict(color="#dc2626", width=1.2)),
-              row=2, col=1)
-fig.add_hline(y=55, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=2, col=1)
-fig.update_yaxes(title_text="reads 0-100", range=[0, 100], row=2, col=1)
+              row=3, col=1)
+fig.add_trace(go.Scatter(x=x, y=df["confidence"], mode="lines",
+                         name="Signal agreement %", line=dict(color="#a855f7", width=1.0, dash="dot")),
+              row=3, col=1)
+fig.add_hline(y=55, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=3, col=1)
+fig.update_yaxes(title_text="reads / agree", range=[0, 100], row=3, col=1)
 
-# Row 3 — breadth (optional)
-if rows == 3:
+# Row 4 — breadth (optional)
+if has_breadth:
     fig.add_trace(go.Scatter(x=x, y=df["breadth"], mode="lines",
                              name="% Nifty-50 above VWAP",
-                             line=dict(color="#0891b2", width=1.2)), row=3, col=1)
-    fig.add_hline(y=50, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=3, col=1)
-    fig.update_yaxes(title_text="breadth %", range=[0, 100], row=3, col=1)
+                             line=dict(color="#0891b2", width=1.2)), row=4, col=1)
+    fig.add_hline(y=50, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=4, col=1)
+    fig.update_yaxes(title_text="breadth %", range=[0, 100], row=4, col=1)
 
 fig.update_layout(
-    height=760, margin=dict(l=10, r=10, t=30, b=10),
+    height=940 if has_breadth else 820, margin=dict(l=10, r=10, t=30, b=10),
     xaxis_rangeslider_visible=False, plot_bgcolor="white",
     legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
     hovermode="x unified",
@@ -277,11 +352,16 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
         "lows with momentum and breadth agreeing. A real trend down — don't wait for a V-recovery.\n"
         "- **Amber ▽ 'Topping — defend CALL'** — above fair value but the up-move looks exhausted (overbought, "
         "stretched, fewer stocks confirming the high). Watch your sold-CALL leg.\n"
+        "- **Grey Bollinger band** — normal price envelope. Candles poking outside it = stretched (snap-back risk).\n"
+        "- **Amber dotted 'Expected-move band'** — fair value ± the move VIX expects today. Price beyond it has "
+        "travelled more than the day 'should' — extension that often mean-reverts.\n"
         "- **Purple dashed 'Gamma flip'** — today's line in the sand from option positioning. Above it the "
         "market tends to *mean-revert* (patience/continuation favoured); below it, it tends to *trend*.\n"
-        "- **Lower panel reads** — green **Bull read** = the case for staying/long (ride-it or be-patient); "
-        "red **Bear read** = the case for defending (downtrend or topping). Whichever leads, and clears 55, "
-        "drives the marker.\n"
+        "- **RSI panel** — momentum (0–100). The green/red dots are **divergences** (price makes a new "
+        "low/high but momentum doesn't) — the *earliest* warning a move is tiring, usually 1–3 candles ahead.\n"
+        "- **Reads panel** — green **Bull read** (case to stay/long), red **Bear read** (case to defend), and "
+        "the purple dotted **Signal-agreement %**: when agreement is high the move is trustworthy; when it dips "
+        "the pillars are fighting and continuation calls are withheld.\n"
         "- **Breadth panel** — % of the 50 biggest stocks above their own fair price. A bounce on *low* breadth "
         "is narrow and fragile; a fall on *low* breadth is broad and real."
     )

@@ -174,8 +174,89 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     df["bull_read"] = np.where(df["above_vwap"], df["uptrend_score"], df["reversal_score"])
     df["bear_read"] = np.where(df["above_vwap"], df["topping_score"], df["downtrend_score"])
 
+    # Conflict-weighting: do the independent signals AGREE with the price direction?
+    df = _confluence(df)
+
     df["state"] = _state(df)
     return df
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Conflict weighting — the "don't enter a move that won't materialise" layer
+# ──────────────────────────────────────────────────────────────────────────────
+# Five independent pillars each vote bull (+1) / bear (−1) / neutral (0).
+# We measure how many AGREE with the current price direction (above/below VWAP).
+# When 2+ pillars FIGHT the direction, the tape is conflicted → low confidence →
+# we refuse to flag a continuation trade (it tends to chop and fail).
+
+PILLARS = ["Price vs VWAP", "Momentum (RSI)", "Volume (CVD)", "Breadth", "Structure"]
+
+
+def _confluence(df: pd.DataFrame) -> pd.DataFrame:
+    above, below = df["above_vwap"].to_numpy(), df["below_vwap"].to_numpy()
+    bias = np.where(above, 1, np.where(below, -1, 0))
+
+    rsi = df["rsi"].to_numpy()
+    vote_mom = np.where(rsi >= 55, 1, np.where(rsi <= 45, -1, 0))
+    vote_vol = np.where(df["cvd_up"].to_numpy(), 1, -1)
+    br = df["breadth"].to_numpy()
+    has_br = ~np.isnan(br)
+    vote_brd = np.where(has_br & (br > 55), 1, np.where(has_br & (br < 45), -1, 0))
+    vote_str = np.where(df["higher_low"].to_numpy(), 1,
+                        np.where(df["lower_low"].to_numpy(), -1, 0))
+
+    votes = np.vstack([vote_mom, vote_vol, vote_brd, vote_str])      # (4, N)
+    agree = ((votes == bias) & (bias != 0)).sum(axis=0)
+    oppose = ((votes == -bias) & (bias != 0)).sum(axis=0)
+    denom = agree + oppose
+    conf = np.where(denom > 0, agree / denom * 100.0, 0.0)
+
+    df["bias"] = bias
+    df["vote_mom"] = vote_mom
+    df["vote_vol"] = vote_vol
+    df["vote_brd"] = vote_brd
+    df["vote_str"] = vote_str
+    df["agree_count"] = agree
+    df["oppose_count"] = oppose
+    df["confidence"] = np.round(conf)
+    df["conflict"] = oppose >= 2
+    df["signal_quality"] = np.where(df["conflict"], "MIXED",
+                            np.where(df["confidence"] >= 67, "HIGH", "FAIR"))
+    return df
+
+
+def pillar_scorecard(row: pd.Series, gamma_regime: str = "UNKNOWN",
+                     spot_vs_flip=None) -> list:
+    """Plain-English ✅/❌ per pillar for the latest candle (for the page)."""
+    bias = int(row.get("bias", 0))
+    dir_word = "up" if bias > 0 else ("down" if bias < 0 else "flat")
+    cards = []
+
+    def add(name, vote, read_up, read_dn, read_flat):
+        if vote > 0:
+            read, lean = read_up, 1
+        elif vote < 0:
+            read, lean = read_dn, -1
+        else:
+            read, lean = read_flat, 0
+        agrees = (lean == bias) if bias != 0 else None
+        cards.append({"pillar": name, "read": read, "lean": lean, "agrees": agrees})
+
+    cards.append({"pillar": "Price vs VWAP",
+                  "read": f"{'above' if bias>0 else 'below' if bias<0 else 'at'} fair value (move is {dir_word})",
+                  "lean": bias, "agrees": True if bias != 0 else None})
+    add("Momentum (RSI)", int(row.get("vote_mom", 0)), "strong (>55)", "weak (<45)", "middling")
+    add("Volume (CVD)", int(row.get("vote_vol", 0)), "buyers winning", "sellers winning", "balanced")
+    add("Breadth", int(row.get("vote_brd", 0)), "broad (>55%)", "narrow (<45%)", "mixed / n/a")
+    add("Structure", int(row.get("vote_str", 0)), "higher lows", "lower lows", "no clear swing")
+
+    # Gamma is a today-only extra pillar (not in the per-candle history).
+    if gamma_regime in ("POSITIVE", "NEGATIVE"):
+        g_lean = 1 if (gamma_regime == "POSITIVE" or (spot_vs_flip or 0) >= 0) else -1
+        cards.append({"pillar": "Dealer gamma",
+                      "read": "cushioning (mean-revert)" if g_lean > 0 else "amplifying (trend)",
+                      "lean": g_lean, "agrees": (g_lean == bias) if bias != 0 else None})
+    return cards
 
 
 def _reversal_score(df: pd.DataFrame) -> pd.Series:
@@ -236,10 +317,14 @@ def _state(df: pd.DataFrame) -> pd.Series:
     rev, down = df["reversal_score"], df["downtrend_score"]
     up, top = df["uptrend_score"], df["topping_score"]
 
-    m_down = below & df["persist_below"] & (down >= DOWNTREND_THRESH) & (down > rev)
+    # Continuation calls (UPTREND / DOWNTREND) require the signals to AGREE — a
+    # conflicted tape (2+ pillars fighting) is exactly the trade that fizzles, so
+    # we withhold the marker rather than send you into a move that won't follow through.
+    ok = ~df["conflict"]
+    m_down = below & df["persist_below"] & (down >= DOWNTREND_THRESH) & (down > rev) & ok
     m_top = above & (top >= TOPPING_THRESH) & (top > up)
     m_brew = below & (rev >= REVERSAL_THRESH) & (rev >= down)
-    m_up = above & (up >= UPTREND_THRESH) & (up >= top)
+    m_up = above & (up >= UPTREND_THRESH) & (up >= top) & ok
 
     out[m_down] = "DOWNTREND"        # defend PUT
     out[m_top] = "TOPPING"           # defend CALL
@@ -321,9 +406,29 @@ def live_verdict(df: pd.DataFrame, gamma_regime: str, spot_vs_flip: float) -> di
     state = last["state"]
     bull = int(last.get("bull_read", 0))
     bear = int(last.get("bear_read", 0))
+    conf = int(last.get("confidence", 0))
+    conflict = bool(last.get("conflict", False))
+    agree = int(last.get("agree_count", 0))
+    oppose = int(last.get("oppose_count", 0))
     pos_gamma = gamma_regime == "POSITIVE"
     above_flip = (spot_vs_flip or 0) >= 0
     cushioned = pos_gamma or above_flip          # dealers dampening = mean-revert friendly
+
+    def _ret(badge, color, headline, detail):
+        return {"badge": badge, "color": color, "headline": headline, "detail": detail,
+                "bull_read": bull, "bear_read": bear, "state": state,
+                "confidence": conf, "conflict": conflict, "agree": agree, "oppose": oppose}
+
+    # Conflict gate first: if the tape is fighting itself and there's no clean
+    # exhaustion turn, the honest call is STAND ASIDE — this is the move that
+    # usually doesn't materialise and traps you.
+    if conflict and state in ("NEUTRAL",):
+        return _ret(
+            "MIXED — STAND ASIDE", "#a855f7",
+            f"Signals disagree ({oppose} of the pillars are fighting the direction).",
+            "This is the classic 'looks like a move but doesn't follow through' setup. The honest edge "
+            "here is to NOT initiate — wait until the pillars line up (confidence climbs) before trusting "
+            "a continuation. See the scorecard below for exactly which signals conflict.")
 
     if state == "UPTREND":
         if cushioned:
@@ -365,8 +470,7 @@ def live_verdict(df: pd.DataFrame, gamma_regime: str, spot_vs_flip: float) -> di
         headline = f"Price is {side} fair value but no clear continuation or exhaustion signal yet."
         detail = "Nothing decisive. Let the next few candles resolve. Avoid acting on emotion in the chop."
 
-    return {"badge": badge, "color": color, "headline": headline, "detail": detail,
-            "bull_read": bull, "bear_read": bear, "state": state}
+    return _ret(badge, color, headline, detail)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

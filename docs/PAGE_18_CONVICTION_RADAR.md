@@ -51,6 +51,8 @@ not a guarantee. Always keep your hard stop.
 | **Bull read** | 0–100: the case for *staying / long* — when above VWAP it's the uptrend (ride-it) score; when below VWAP it's the bounce-brewing (be-patient) score. |
 | **Bear read** | 0–100: the case for *defending* — when above VWAP it's the topping (defend-CALL) score; when below VWAP it's the downtrend (defend-PUT) score. |
 | **The 4 states** | BOUNCE_BREWING (▲), UPTREND/ride-it (★), DOWNTREND/defend-PUT (▼), TOPPING/defend-CALL (▽), or NEUTRAL. |
+| **Signal agreement / Confidence** | 0–100: of the independent pillars (momentum, volume, breadth, structure), how many *agree* with the price direction. High = trustworthy; low = conflicted. |
+| **Pillar scorecard** | The ✅/❌ row showing exactly which signals agree vs fight right now. |
 | **IST** | Indian Standard Time. All day/session logic uses IST. |
 
 ---
@@ -218,6 +220,25 @@ The latest candle's state is combined with **today's gamma regime**
 
 Key design point: **a bounce is only fully trusted ("ride it") when price reclaims
 fair value AND the structure (higher lows, breadth, buyers) AND dealer gamma all agree.**
+
+### 4.15 Conflict weighting — "don't enter a move that won't materialise"
+Five independent **pillars** each vote bull (+1) / bear (−1) / neutral (0):
+*Price vs VWAP · Momentum (RSI) · Volume (CVD) · Breadth · Structure (higher/lower lows)*
+(plus *Dealer gamma* as a today-only sixth pillar in the live verdict).
+
+We count how many **agree** with the current price direction:
+```
+confidence = agree / (agree + oppose) × 100
+conflict   = (2 or more pillars fighting the direction)
+```
+- The **Signal-agreement %** (purple dotted line + the top metric card) is this number.
+- The **scorecard** shows each pillar as ✅ agrees / ❌ fights / • flat.
+- **Continuation calls (UPTREND ★ / DOWNTREND ▼) are withheld when conflicted** — a
+  conflicted tape is exactly the move that chops and fails, so the engine refuses to
+  send you in. (Exhaustion turns — ▲ brewing, ▽ topping — are *allowed* to fire against
+  the move, since that's their job.)
+- When conflicted with no clean turn, the verdict becomes **`MIXED — STAND ASIDE`**:
+  the honest "no edge, don't initiate" call.
 
 ---
 
