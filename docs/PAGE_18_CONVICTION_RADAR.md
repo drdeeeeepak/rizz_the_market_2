@@ -9,13 +9,17 @@
 
 ## 1. Read it in 30 seconds
 
-1. **Top-left card = what to do right now.** It reads `BE PATIENT`, `DEFEND NOW`,
-   `WAIT — BUT STAY ALERT`, `ABOVE FAIR VALUE`, or `NEUTRAL`.
+1. **Top-left card = what to do right now.** It reads `RIDE THE UPTREND`,
+   `BE PATIENT`, `WAIT — BUT STAY ALERT`, `DEFEND PUT — real downtrend`,
+   `DEFEND CALL — upside tiring`, or `NEUTRAL`.
 2. **Top-right card = the market's mood (dealer gamma).** `Shock-absorber` = dips
    tend to get bought back (patience pays). `Accelerator` = falls can snowball
    (defend). The **Gamma Flip line** is the price that separates the two.
-3. **Chart = the proof.** Green ▲ "be patient" and red ▼ "defend" marks show where
-   the engine fired over the last ~7 days, so you can see how it behaved.
+3. **Chart = the proof.** Four marks show where the engine fired over the last ~7 days:
+   - **green ▲** = bounce *brewing* (early, be patient)
+   - **blue ★** = uptrend, *ride it* (bounce **continuing** — the stay-in-it signal)
+   - **red ▼** = downtrend, *defend PUT*
+   - **amber ▽** = topping, *defend CALL*
 4. **Bottom table = close quality.** Grades each day's *close* HIGH / MEDIUM / LOW.
    A LOW after a late bounce = likely short-cover = gap risk. Today's row is 🔴 LIVE.
 
@@ -44,8 +48,9 @@ not a guarantee. Always keep your hard stop.
 | **IV** | Implied Volatility — the option market's expected volatility, used to price gamma. |
 | **DTE** | Days To Expiry of the option chain used for gamma. |
 | **VIX** | India VIX — the market's 30-day expected volatility (the "fear gauge"). |
-| **Reversal read** | 0–100 score: how strongly a fall looks ready to bounce (be patient). |
-| **Trend read** | 0–100 score: how strongly a fall looks like a real trend (defend). |
+| **Bull read** | 0–100: the case for *staying / long* — when above VWAP it's the uptrend (ride-it) score; when below VWAP it's the bounce-brewing (be-patient) score. |
+| **Bear read** | 0–100: the case for *defending* — when above VWAP it's the topping (defend-CALL) score; when below VWAP it's the downtrend (defend-PUT) score. |
+| **The 4 states** | BOUNCE_BREWING (▲), UPTREND/ride-it (★), DOWNTREND/defend-PUT (▼), TOPPING/defend-CALL (▽), or NEUTRAL. |
 | **IST** | Indian Standard Time. All day/session logic uses IST. |
 
 ---
@@ -151,35 +156,68 @@ Sum of these, then capped 0–100 (computed only meaningfully when **below VWAP*
 | Stabbed below lower Bollinger band (%B < 0.05) | +10 |
 | Breadth turning up while price is down | +10 |
 
-### 4.10 Trend read (0–100) — "defend now" score
+### 4.10 Downtrend score (0–100) — "defend PUT" (below VWAP)
+The `+25 just for being below VWAP` of the old version is **gone** — that's what
+painted false ▼ on every pullback. It now needs **persistence** (3 consecutive
+below-VWAP candles) before it can fire.
 | Condition | Points |
 |---|---|
-| Below VWAP (sellers in control) | +25 |
-| Fresh lower low **with** momentum agreeing (no RSI div) | +22 |
-| Fresh lower low **with** selling still hitting (no CVD div) | +18 |
-| Weak momentum (RSI < 40) | +12 |
-| Riding the lower band (%B < 0.2) | +10 |
-| Broad participation in the fall (breadth < 35%) | +15 |
+| **Persistent** below VWAP (3 candles in a row) | +28 |
+| Fresh lower low **with** momentum agreeing (no RSI div) | +20 |
+| Fresh lower low **with** buyers not returning (CVD not turning up) | +15 |
+| Weak momentum (RSI < 40) | +10 |
+| Broad participation in the fall (breadth < 40%) | +15 |
 
-### 4.11 State + chart markers
-Each candle is labelled:
-- **PATIENCE** (green ▲) if `reversal ≥ 60` AND below VWAP AND `reversal ≥ trend`.
-- **TREND** (red ▼) if `trend ≥ 60` AND below VWAP AND `trend > reversal`.
+### 4.11 Uptrend score (0–100) — "ride it / bounce continuing" (above VWAP)
+The new **strict** continuation signal you asked for. A bounce only counts as
+*continuing* when it is reclaimed **and** structurally healthy:
+| Condition | Points |
+|---|---|
+| **Holding** above VWAP (3 candles in a row) | +25 |
+| Higher-low structure (swing low rising) | +25 |
+| Buyers regaining control (CVD turning up) | +20 |
+| Breadth confirms (>50% of Nifty-50 above their VWAP)* | +20 |
+| Healthy, not-overbought momentum (55 ≤ RSI ≤ 72) | +10 |
+
+\* if breadth isn't loaded, this gets +10 partial credit so the signal still works.
+
+### 4.12 Topping score (0–100) — "defend CALL" (above VWAP)
+| Condition | Points |
+|---|---|
+| Overbought (RSI > 70) | +25 |
+| Stretched far above fair value (stretch-up > 1.2) | +20 |
+| Higher high but momentum fading (bearish RSI divergence) | +18 |
+| Fewer stocks confirming the high (breadth diverging down) | +17 |
+| Long upper rejection wick (>0.4) | +12 |
+
+### 4.13 State + chart markers (the 4-state swing map)
+Each candle is labelled (and the marker is drawn only when the state **changes**):
+- **BOUNCE_BREWING** (green ▲) — below VWAP, `reversal ≥ 60`, `reversal ≥ downtrend`.
+- **UPTREND / ride it** (blue ★) — above VWAP, `uptrend ≥ 55`, `uptrend ≥ topping`.
+- **DOWNTREND / defend PUT** (red ▼) — below VWAP **and persistent**, `downtrend ≥ 58`, `downtrend > reversal`.
+- **TOPPING / defend CALL** (amber ▽) — above VWAP, `topping ≥ 55`, `topping > uptrend`.
 - **NEUTRAL** otherwise.
 
-Markers are drawn **only when the state changes** (not every candle) to keep the
-chart readable. Look to the *right* of each marker to see what price did next.
+Because the up-side now has its own state, **counter-trend red ▼ are suppressed
+during a confirmed uptrend** — fixing the "defend arrows all over a rally" problem.
 
-### 4.12 Live verdict (top-left card) — gamma gates patience
-The latest candle's state is combined with **today's gamma regime**:
-- Above VWAP → `ABOVE FAIR VALUE` (buyers in control; no loss-booking pressure).
-- PATIENCE **and** (positive gamma **or** above flip) → **`BE PATIENT`** (high confidence).
-- PATIENCE **but** accelerator mode → **`WAIT — BUT STAY ALERT`** (bounce may be shallow).
-- TREND → **`DEFEND NOW`** (don't wait for a V-recovery).
+The lower **reads panel** shows two lines that work in *both* regimes:
+`bull_read` (green) = uptrend score when above VWAP, else the bounce-brewing score;
+`bear_read` (red) = topping score when above VWAP, else the downtrend score.
+
+### 4.14 Live verdict (top-left card) — gamma gates the call
+The latest candle's state is combined with **today's gamma regime**
+(`cushioned = positive gamma OR spot above the flip`):
+- **UPTREND** + cushioned → **`RIDE THE UPTREND`** (bounce confirmed, PUT side safe).
+- **UPTREND** + accelerator → **`UPTREND — BUT THIN AIR`** (ride with a trailing stop).
+- **TOPPING** → **`DEFEND CALL — upside tiring`**.
+- **BOUNCE_BREWING** + cushioned → **`BE PATIENT`** (a VWAP reclaim flips it to RIDE).
+- **BOUNCE_BREWING** + accelerator → **`WAIT — BUT STAY ALERT`** (bounce may be shallow).
+- **DOWNTREND** → **`DEFEND PUT — real downtrend`** (don't wait for a V-recovery).
 - Else → `NEUTRAL — NO EDGE`.
 
-This is the key design point: **a tired-looking fall is only fully trusted as
-"be patient" when dealers are also cushioning the market.**
+Key design point: **a bounce is only fully trusted ("ride it") when price reclaims
+fair value AND the structure (higher lows, breadth, buyers) AND dealer gamma all agree.**
 
 ---
 
@@ -238,13 +276,20 @@ a **pre-close** read while you can still act.
 
 **You're short a PUT and the market is falling:**
 1. Check the **top-left card**. `BE PATIENT` → don't book at the low; wait for a VWAP
-   reclaim or for the candle to settle. `DEFEND NOW` → manage the leg, no V coming.
+   reclaim. `DEFEND PUT — real downtrend` → manage the leg, no V coming.
 2. Confirm with the **market mode**: shock-absorber backs patience; accelerator says
    keep a hard line.
-3. Glance at **breadth**: a fall on <35% breadth is broad and real; a bounce on
+3. Glance at **breadth**: a fall on <40% breadth is broad and real; a bounce on
    <50% breadth is narrow and fragile.
-4. Watch for a **green ▲** appearing on the latest candle — that's the engine saying
-   exhaustion is building.
+4. Watch the latest candle: a **green ▲** = exhaustion building; when it turns into a
+   **blue ★ `RIDE THE UPTREND`**, the bounce is confirmed and your PUT side is safe.
+
+**Is the bounce/uptrend real, or a trap? (your "bounce continuing" question)**
+- A blue **★ RIDE THE UPTREND** means price reclaimed fair value **and** is making
+  higher lows **and** breadth >50% **and** buyers (CVD) returned — a *confirmed*
+  up-leg, not a one-candle pop. Stay in it; trail a stop under the last higher-low.
+- If instead you see an amber **▽ DEFEND CALL**, the up-move is tiring — watch your
+  sold-CALL leg.
 
 **Deciding whether to trust a late-day bounce:**
 - Look at the **🔴 LIVE** close-quality row in the last hour. **LOW** = treat the
