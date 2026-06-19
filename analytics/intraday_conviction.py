@@ -37,9 +37,14 @@ log = logging.getLogger(__name__)
 
 RSI_PERIOD = 14
 BB_PERIOD = 20
-DIV_LOOKBACK = 6        # candles back to compare for divergence
-REVERSAL_THRESH = 60    # score ≥ this while below VWAP → patience signal
-TREND_THRESH = 60       # score ≥ this → defend / trend signal
+DIV_LOOKBACK = 6        # candles back to compare for divergence / swing structure
+PERSIST = 3             # consecutive candles needed to call a move "persistent"
+REVERSAL_THRESH = 60    # below VWAP + tired → bounce brewing (be patient)
+DOWNTREND_THRESH = 58   # below VWAP + persistent → defend PUT
+UPTREND_THRESH = 55     # above VWAP + continuation confirmed → ride it
+TOPPING_THRESH = 55     # above VWAP + tired → defend CALL
+# Legacy alias (kept so any old import doesn't break)
+TREND_THRESH = DOWNTREND_THRESH
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -114,20 +119,37 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     df["bb_upper"] = upper
 
     df["below_vwap"] = df["close"] < df["vwap"]
+    df["above_vwap"] = df["close"] > df["vwap"]
 
-    # Stretch: how far below VWAP, measured in "expected daily moves".
+    # Stretch above/below VWAP, measured in "expected daily moves".
     em_half = max(expected_move_pts * 0.5, 1.0)
     df["stretch_down"] = ((df["vwap"] - df["close"]) / em_half).clip(lower=0)
+    df["stretch_up"] = ((df["close"] - df["vwap"]) / em_half).clip(lower=0)
 
-    # Rejection wick: long lower wick after a push down = buyers stepping in.
+    # Rejection wicks: long lower wick = buyers stepping in; long upper wick = sellers.
     rng = (df["high"] - df["low"]).replace(0, np.nan)
     df["lower_wick_frac"] = ((df[["open", "close"]].min(axis=1) - df["low"]) / rng).fillna(0)
+    df["upper_wick_frac"] = ((df["high"] - df[["open", "close"]].max(axis=1)) / rng).fillna(0)
 
-    # Divergences over the last DIV_LOOKBACK candles (within the visible series).
+    # Divergences over the last DIV_LOOKBACK candles.
     px_ll = df["low"] < df["low"].shift(DIV_LOOKBACK)            # price lower low
+    px_hh = df["high"] > df["high"].shift(DIV_LOOKBACK)          # price higher high
     df["rsi_bull_div"] = px_ll & (df["rsi"] > df["rsi"].shift(DIV_LOOKBACK))
     df["cvd_bull_div"] = px_ll & (df["cvd"] > df["cvd"].shift(DIV_LOOKBACK))
+    df["rsi_bear_div"] = px_hh & (df["rsi"] < df["rsi"].shift(DIV_LOOKBACK))
     df["lower_low"] = px_ll
+    df["higher_high"] = px_hh
+
+    # Swing structure: higher-lows = uptrend skeleton.
+    rl = df["low"].rolling(DIV_LOOKBACK).min()
+    df["higher_low"] = rl > rl.shift(DIV_LOOKBACK)
+
+    # Buyers regaining control (CVD turning up) — the continuation tell.
+    df["cvd_up"] = df["cvd"] > df["cvd"].shift(DIV_LOOKBACK)
+
+    # Persistence filters — kill single-candle noise.
+    df["persist_below"] = df["below_vwap"].rolling(PERSIST).sum() >= PERSIST
+    df["persist_above"] = df["above_vwap"].rolling(PERSIST).sum() >= PERSIST
 
     # Breadth alignment (optional).
     if breadth is not None and not breadth.empty:
@@ -135,16 +157,29 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
         df["breadth"] = df["breadth"].astype(float)
     else:
         df["breadth"] = np.nan
+    br = df["breadth"]
+    # Breadth diverging down while price makes a higher high = hidden weakness at the top.
+    df["breadth_div_down"] = df["higher_high"] & br.notna() & (br < br.shift(DIV_LOOKBACK))
 
-    # ── Scores ────────────────────────────────────────────────────────────────
-    df["reversal_score"] = _reversal_score(df)
-    df["trend_score"] = _trend_score(df)
+    # ── Four scores (symmetric: downside AND upside) ───────────────────────────
+    df["reversal_score"] = _reversal_score(df)     # below VWAP, tired → bounce brewing
+    df["downtrend_score"] = _downtrend_score(df)   # below VWAP, persistent → defend PUT
+    df["uptrend_score"] = _uptrend_score(df)       # above VWAP, confirmed → ride it
+    df["topping_score"] = _topping_score(df)       # above VWAP, tired → defend CALL
+    # Legacy alias used by older callers / tests.
+    df["trend_score"] = df["downtrend_score"]
+
+    # Two-line dashboard read that works in BOTH regimes:
+    #   bull_read = the case for staying / patience    bear_read = the case for defending
+    df["bull_read"] = np.where(df["above_vwap"], df["uptrend_score"], df["reversal_score"])
+    df["bear_read"] = np.where(df["above_vwap"], df["topping_score"], df["downtrend_score"])
+
     df["state"] = _state(df)
     return df
 
 
 def _reversal_score(df: pd.DataFrame) -> pd.Series:
-    """0-100: how strongly a downside move looks ready to bounce (be patient)."""
+    """0-100: a downside move looks ready to BOUNCE (be patient). Only below VWAP."""
     s = pd.Series(0.0, index=df.index)
     s += np.where(df["below_vwap"], df["stretch_down"].clip(0, 2) * 18, 0)   # extended below fair value
     s += np.where(df["rsi"] < 35, (35 - df["rsi"]).clip(0, 20) * 1.2, 0)     # oversold
@@ -152,34 +187,64 @@ def _reversal_score(df: pd.DataFrame) -> pd.Series:
     s += np.where(df["cvd_bull_div"], 18, 0)                                  # selling drying up
     s += np.where(df["lower_wick_frac"] > 0.4, 12, 0)                         # rejection wick
     s += np.where(df["pct_b"] < 0.05, 10, 0)                                  # stabbed below lower band
-    # Breadth turning up while price is down = real exhaustion confirmation.
     br = df["breadth"]
     s += np.where(br.notna() & (br > br.shift(DIV_LOOKBACK)) & df["below_vwap"], 10, 0)
     return s.clip(0, 100).round()
 
 
-def _trend_score(df: pd.DataFrame) -> pd.Series:
-    """0-100: how strongly a downside move looks like a real trend (defend now)."""
+def _downtrend_score(df: pd.DataFrame) -> pd.Series:
+    """0-100: a real DOWNTREND (defend PUT). Persistence-gated to cut pullback noise."""
     s = pd.Series(0.0, index=df.index)
-    s += np.where(df["below_vwap"], 25, 0)                                    # sellers in control
-    s += np.where(df["lower_low"] & ~df["rsi_bull_div"], 22, 0)              # fresh lows, momentum agrees
-    s += np.where(df["lower_low"] & ~df["cvd_bull_div"], 18, 0)              # sellers still hitting it
-    s += np.where(df["rsi"] < 40, 12, 0)
-    s += np.where(df["pct_b"] < 0.2, 10, 0)                                   # riding the lower band = trend
+    s += np.where(df["persist_below"], 28, 0)                                 # sustained below fair value
+    s += np.where(df["lower_low"] & ~df["rsi_bull_div"], 20, 0)              # fresh lows, momentum agrees
+    s += np.where(df["lower_low"] & ~df["cvd_up"], 15, 0)                    # sellers still in control
+    s += np.where(df["rsi"] < 40, 10, 0)
     br = df["breadth"]
-    s += np.where(br.notna() & (br < 35), 15, 0)                              # broad participation in the fall
+    s += np.where(br.notna() & (br < 40), 15, 0)                              # broad participation in the fall
+    return s.clip(0, 100).round()
+
+
+def _uptrend_score(df: pd.DataFrame) -> pd.Series:
+    """0-100: a bounce is CONTINUING / real UPTREND (ride it). Only above VWAP.
+    Strict confirmation: reclaimed & holding VWAP + higher-lows + breadth + buyers (CVD up)."""
+    s = pd.Series(0.0, index=df.index)
+    s += np.where(df["persist_above"], 25, 0)                                 # holding above fair value
+    s += np.where(df["higher_low"], 25, 0)                                    # higher-low skeleton
+    s += np.where(df["cvd_up"], 20, 0)                                        # buyers regaining control
+    s += np.where((df["rsi"] >= 55) & (df["rsi"] <= 72), 10, 0)             # healthy (not overbought) momentum
+    br = df["breadth"]
+    # Breadth confirms when available; partial credit when breadth not loaded.
+    s += np.where(br.notna() & (br > 50), 20, np.where(br.isna(), 10, 0))
+    return s.clip(0, 100).round()
+
+
+def _topping_score(df: pd.DataFrame) -> pd.Series:
+    """0-100: an up move looks TIRED / topping (defend CALL). Only above VWAP."""
+    s = pd.Series(0.0, index=df.index)
+    s += np.where(df["rsi"] > 70, 25, 0)                                      # overbought
+    s += np.where(df["stretch_up"] > 1.2, 20, 0)                              # stretched far above fair value
+    s += np.where(df["rsi_bear_div"], 18, 0)                                  # higher high, momentum fading
+    s += np.where(df["breadth_div_down"], 17, 0)                              # fewer stocks confirming the high
+    s += np.where(df["upper_wick_frac"] > 0.4, 12, 0)                         # rejection wick at the top
     return s.clip(0, 100).round()
 
 
 def _state(df: pd.DataFrame) -> pd.Series:
-    """Label each candle: PATIENCE (bounce brewing) / TREND (defend) / NEUTRAL."""
+    """Label each candle into the 4-state swing map (+ NEUTRAL)."""
     out = pd.Series("NEUTRAL", index=df.index)
-    patience = (df["reversal_score"] >= REVERSAL_THRESH) & df["below_vwap"] & \
-               (df["reversal_score"] >= df["trend_score"])
-    trend = (df["trend_score"] >= TREND_THRESH) & df["below_vwap"] & \
-            (df["trend_score"] > df["reversal_score"])
-    out[trend] = "TREND"
-    out[patience] = "PATIENCE"
+    above, below = df["above_vwap"], df["below_vwap"]
+    rev, down = df["reversal_score"], df["downtrend_score"]
+    up, top = df["uptrend_score"], df["topping_score"]
+
+    m_down = below & df["persist_below"] & (down >= DOWNTREND_THRESH) & (down > rev)
+    m_top = above & (top >= TOPPING_THRESH) & (top > up)
+    m_brew = below & (rev >= REVERSAL_THRESH) & (rev >= down)
+    m_up = above & (up >= UPTREND_THRESH) & (up >= top)
+
+    out[m_down] = "DOWNTREND"        # defend PUT
+    out[m_top] = "TOPPING"           # defend CALL
+    out[m_brew] = "BOUNCE_BREWING"   # be patient (early reversal)
+    out[m_up] = "UPTREND"            # ride it (bounce continuing)
     return out
 
 
@@ -187,14 +252,24 @@ def _state(df: pd.DataFrame) -> pd.Series:
 # Markers — only when the state CHANGES (keeps the chart readable)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_STATE_KEYS = {
+    "brewing": "BOUNCE_BREWING",
+    "uptrend": "UPTREND",
+    "downtrend": "DOWNTREND",
+    "topping": "TOPPING",
+}
+
+
 def transition_markers(df: pd.DataFrame) -> dict:
-    """Return {'patience': sub-df, 'trend': sub-df} at state-change candles only."""
+    """
+    Return {'brewing','uptrend','downtrend','topping': sub-df} at state-change
+    candles only (so each marker appears once when the state flips, not every bar).
+    """
+    empty = df.iloc[0:0] if not df.empty else df
     if df.empty or "state" not in df.columns:
-        return {"patience": df.iloc[0:0], "trend": df.iloc[0:0]}
+        return {k: empty for k in _STATE_KEYS}
     changed = df["state"] != df["state"].shift(1)
-    pat = df[(df["state"] == "PATIENCE") & changed]
-    trd = df[(df["state"] == "TREND") & changed]
-    return {"patience": pat, "trend": trd}
+    return {k: df[(df["state"] == v) & changed] for k, v in _STATE_KEYS.items()}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -234,53 +309,64 @@ def breadth_series(stock_dfs: dict) -> pd.Series:
 
 def live_verdict(df: pd.DataFrame, gamma_regime: str, spot_vs_flip: float) -> dict:
     """
-    Combine the latest candle's intraday state with today's dealer-gamma regime
-    into one plain-English call.
+    Combine the latest candle's 4-state read with today's dealer-gamma regime
+    into one plain-English call covering BOTH the PUT and CALL side.
     """
     if df.empty:
         return {"badge": "NO DATA", "color": "#64748b",
-                "headline": "No intraday data yet.", "detail": ""}
+                "headline": "No intraday data yet.", "detail": "",
+                "bull_read": 0, "bear_read": 0, "state": "NO_DATA"}
 
     last = df.iloc[-1]
     state = last["state"]
-    rev = int(last["reversal_score"])
-    trd = int(last["trend_score"])
-    below = bool(last["below_vwap"])
+    bull = int(last.get("bull_read", 0))
+    bear = int(last.get("bear_read", 0))
     pos_gamma = gamma_regime == "POSITIVE"
     above_flip = (spot_vs_flip or 0) >= 0
+    cushioned = pos_gamma or above_flip          # dealers dampening = mean-revert friendly
 
-    # Master switch: gamma regime gates how much we trust "patience".
-    if not below:
-        badge, color = "ABOVE FAIR VALUE", "#10b981"
-        headline = "Price is above the day's fair value (VWAP) — buyers in control."
-        detail = ("Your sold-PUT side is comfortable here. No loss-booking pressure. "
-                  "Watch the CALL side if price keeps pushing up.")
-    elif state == "PATIENCE" and (pos_gamma or above_flip):
-        badge, color = "BE PATIENT", "#10b981"
-        headline = "Falling, but the move looks tired AND dealers cushion dips."
-        detail = (f"Reversal read {rev}/100. The market is stretched and momentum is "
-                  "fading while big players are in shock-absorber mode. Booking the loss "
-                  "right at the low is usually the worst moment — wait for a VWAP reclaim "
-                  "or for price to settle before deciding.")
-    elif state == "PATIENCE" and not (pos_gamma or above_flip):
-        badge, color = "WAIT — BUT STAY ALERT", "#f59e0b"
-        headline = "The fall looks tired, but dealers are NOT cushioning today."
-        detail = (f"Reversal read {rev}/100. A bounce may come, but in accelerator mode "
-                  "it can be shallow and fail. Give it a little room, but keep a hard line: "
-                  "if price loses the recent low on volume, act.")
-    elif state == "TREND":
-        badge, color = "DEFEND NOW", "#ef4444"
-        headline = "This is behaving like a real trend day, not a dip."
-        detail = (f"Trend read {trd}/100. Fresh lows, momentum and volume agree, breadth is "
-                  "weak. Do not wait for a V-recovery — manage the threatened (PUT) side now.")
+    if state == "UPTREND":
+        if cushioned:
+            badge, color = "RIDE THE UPTREND", "#16a34a"
+            headline = "Bounce is CONTINUING — reclaimed fair value with higher lows, breadth and buyers."
+            detail = (f"Up-read {bull}/100. This is a confirmed up-leg, not a one-candle pop. Your sold-PUT "
+                      "side is getting safer by the candle. Stay in it; only the CALL side needs watching "
+                      "if it runs into the topping signal.")
+        else:
+            badge, color = "UPTREND — BUT THIN AIR", "#22c55e"
+            headline = "Bounce is continuing, but dealers are in accelerator mode (moves over-extend)."
+            detail = (f"Up-read {bull}/100. Fine to ride, but in this regime up-moves can spike then snap. "
+                      "Trail a stop under the most recent higher-low rather than assuming it glides.")
+    elif state == "TOPPING":
+        badge, color = "DEFEND CALL — upside tiring", "#f59e0b"
+        headline = "Above fair value but the up-move looks exhausted (overbought / stretched / fewer stocks confirming)."
+        detail = (f"Bear-read {bear}/100. Momentum is fading at the highs. Your sold-CALL leg is the one to "
+                  "watch now — tighten it or be ready if price rolls back under VWAP.")
+    elif state == "BOUNCE_BREWING":
+        if cushioned:
+            badge, color = "BE PATIENT", "#10b981"
+            headline = "Falling, but the move looks tired AND dealers cushion dips."
+            detail = (f"Bull-read {bull}/100. Stretched, momentum fading, big players in shock-absorber mode. "
+                      "Booking the loss right at the low is usually the worst moment — wait for a VWAP reclaim "
+                      "(which would flip this to RIDE THE UPTREND) before deciding.")
+        else:
+            badge, color = "WAIT — BUT STAY ALERT", "#f59e0b"
+            headline = "The fall looks tired, but dealers are NOT cushioning today."
+            detail = (f"Bull-read {bull}/100. A bounce may come, but in accelerator mode it can be shallow and "
+                      "fail. Give it room, but keep a hard line: if price loses the recent low on volume, act.")
+    elif state == "DOWNTREND":
+        badge, color = "DEFEND PUT — real downtrend", "#ef4444"
+        headline = "Persistent below fair value, not a one-candle dip."
+        detail = (f"Bear-read {bear}/100. Sustained lower lows with momentum and breadth agreeing. Do not wait "
+                  "for a V-recovery — manage the threatened PUT side now.")
     else:
+        side = "above" if bool(last.get("above_vwap")) else "below"
         badge, color = "NEUTRAL — NO EDGE", "#64748b"
-        headline = "Below fair value but no clear exhaustion or trend signal yet."
-        detail = ("Nothing decisive. Let the next few candles resolve. Avoid acting on "
-                  "emotion in the chop.")
+        headline = f"Price is {side} fair value but no clear continuation or exhaustion signal yet."
+        detail = "Nothing decisive. Let the next few candles resolve. Avoid acting on emotion in the chop."
 
     return {"badge": badge, "color": color, "headline": headline, "detail": detail,
-            "reversal_score": rev, "trend_score": trd, "state": state}
+            "bull_read": bull, "bear_read": bear, "state": state}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

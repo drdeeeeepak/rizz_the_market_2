@@ -142,13 +142,13 @@ with cR:
 st.markdown("")
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    ui.metric_card("REVERSAL READ", f"{verdict.get('reversal_score', 0)}/100",
-                   sub="Higher = bounce more likely (be patient)",
-                   color="green" if verdict.get("reversal_score", 0) >= 60 else "default")
+    ui.metric_card("BULL READ", f"{verdict.get('bull_read', 0)}/100",
+                   sub="Case for staying/long (ride or be patient)",
+                   color="green" if verdict.get("bull_read", 0) >= 55 else "default")
 with m2:
-    ui.metric_card("TREND READ", f"{verdict.get('trend_score', 0)}/100",
-                   sub="Higher = real trend (defend now)",
-                   color="red" if verdict.get("trend_score", 0) >= 60 else "default")
+    ui.metric_card("BEAR READ", f"{verdict.get('bear_read', 0)}/100",
+                   sub="Case for defending (downtrend or topping)",
+                   color="red" if verdict.get("bear_read", 0) >= 55 else "default")
 with m3:
     flip = gex.get("flip_level")
     ui.metric_card("GAMMA FLIP LINE", f"{flip:,.0f}" if flip else "—",
@@ -181,8 +181,9 @@ st.divider()
 # ══════════════════════════════════════════════════════════════════════════════
 
 ui.section_header("Last %d sessions — with the signals drawn on" % days,
-                  "▲ green = 'bounce brewing, be patient'  ·  ▼ red = 'real trend, defend'  ·  "
-                  "blue line = VWAP (fair price)  ·  dashed = gamma flip line")
+                  "▲ green = bounce brewing (be patient) · ★ blue = uptrend, ride it (bounce continuing) · "
+                  "▼ red = downtrend, defend PUT · ▽ amber = topping, defend CALL · "
+                  "blue line = VWAP · dashed = gamma flip")
 
 # X as category strings to avoid overnight gaps in the candles.
 x = [t.strftime("%d-%b %H:%M") for t in df.index]
@@ -214,29 +215,32 @@ for wall, col, lbl in [(gex.get("call_wall"), "#ef4444", "Call wall"),
                       annotation_text=lbl, annotation_position="bottom left",
                       row=1, col=1)
 
-pat = markers["patience"]
-if not pat.empty:
+# Four marker types (drawn only when the state flips).
+#   below candle = bullish-case markers · above candle = defend markers
+_MARKER_SPECS = [
+    ("brewing",   "low",  0.9985, "triangle-up",      "#16a34a", "#065f46", "Bounce brewing (be patient)"),
+    ("uptrend",   "low",  0.9970, "star-triangle-up", "#0ea5e9", "#075985", "Uptrend — ride it (bounce continuing)"),
+    ("downtrend", "high", 1.0015, "triangle-down",    "#dc2626", "#7f1d1d", "Downtrend — defend PUT"),
+    ("topping",   "high", 1.0030, "triangle-down-open", "#f59e0b", "#92400e", "Topping — defend CALL"),
+]
+for key, anchor, mult, sym, fill, edge, label in _MARKER_SPECS:
+    md = markers.get(key)
+    if md is None or md.empty:
+        continue
     fig.add_trace(go.Scatter(
-        x=[t.strftime("%d-%b %H:%M") for t in pat.index], y=pat["low"] * 0.9985,
-        mode="markers", name="Be patient (bounce brewing)",
-        marker=dict(symbol="triangle-up", size=12, color="#16a34a",
-                    line=dict(width=1, color="#065f46"))), row=1, col=1)
-trd = markers["trend"]
-if not trd.empty:
-    fig.add_trace(go.Scatter(
-        x=[t.strftime("%d-%b %H:%M") for t in trd.index], y=trd["high"] * 1.0015,
-        mode="markers", name="Defend (real trend)",
-        marker=dict(symbol="triangle-down", size=12, color="#dc2626",
-                    line=dict(width=1, color="#7f1d1d"))), row=1, col=1)
+        x=[t.strftime("%d-%b %H:%M") for t in md.index], y=md[anchor] * mult,
+        mode="markers", name=label,
+        marker=dict(symbol=sym, size=13, color=fill, line=dict(width=1, color=edge))),
+        row=1, col=1)
 
-# Row 2 — the two reads (reversal vs trend)
-fig.add_trace(go.Scatter(x=x, y=df["reversal_score"], mode="lines",
-                         name="Reversal read", line=dict(color="#16a34a", width=1.2)),
+# Row 2 — bull vs bear read (works in both regimes: above VWAP = ride/topping; below = brew/defend)
+fig.add_trace(go.Scatter(x=x, y=df["bull_read"], mode="lines",
+                         name="Bull read (stay/long)", line=dict(color="#16a34a", width=1.2)),
               row=2, col=1)
-fig.add_trace(go.Scatter(x=x, y=df["trend_score"], mode="lines",
-                         name="Trend read", line=dict(color="#dc2626", width=1.2)),
+fig.add_trace(go.Scatter(x=x, y=df["bear_read"], mode="lines",
+                         name="Bear read (defend)", line=dict(color="#dc2626", width=1.2)),
               row=2, col=1)
-fig.add_hline(y=60, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=2, col=1)
+fig.add_hline(y=55, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=2, col=1)
 fig.update_yaxes(title_text="reads 0-100", range=[0, 100], row=2, col=1)
 
 # Row 3 — breadth (optional)
@@ -262,19 +266,24 @@ st.plotly_chart(fig, use_container_width=True)
 
 with st.expander("📖 What each thing on the chart means (plain English)"):
     st.markdown(
-        "- **Blue VWAP line** — the day's *fair price*. Above it, buyers are winning; "
-        "below it, sellers are. A fall that reclaims this line is the first real sign a bounce has legs.\n"
-        "- **Green ▲ 'Be patient'** — at this candle the fall looked *tired*: stretched far from fair "
-        "value, momentum no longer making new lows, and selling drying up. Booking a loss right here is "
-        "usually the worst moment. Look right of each ▲ to see whether price bounced.\n"
-        "- **Red ▼ 'Defend'** — the opposite: fresh lows with momentum, volume and breadth all agreeing. "
-        "A real trend day — don't wait for a V-recovery.\n"
+        "- **Blue VWAP line** — the day's *fair price*. Above it, buyers are winning; below it, sellers are. "
+        "Reclaiming this line is the first real sign a bounce has legs.\n"
+        "- **Green ▲ 'Bounce brewing'** — below fair value but the fall looks *tired* (stretched, momentum no "
+        "longer making new lows, selling drying up). The early 'be patient' nudge — a turn may be near.\n"
+        "- **Blue ★ 'Uptrend — ride it'** — the bounce is now *confirmed continuing*: price reclaimed and is "
+        "holding above fair value, making higher lows, with breadth and buyers (CVD) behind it. **This is the "
+        "uptrend / stay-in-it signal.** Counter-trend red marks are suppressed while this is active.\n"
+        "- **Red ▼ 'Downtrend — defend PUT'** — *persistent* below fair value (not a one-candle dip): fresh "
+        "lows with momentum and breadth agreeing. A real trend down — don't wait for a V-recovery.\n"
+        "- **Amber ▽ 'Topping — defend CALL'** — above fair value but the up-move looks exhausted (overbought, "
+        "stretched, fewer stocks confirming the high). Watch your sold-CALL leg.\n"
         "- **Purple dashed 'Gamma flip'** — today's line in the sand from option positioning. Above it the "
-        "market tends to *mean-revert* (patience pays); below it, it tends to *trend* (be defensive).\n"
-        "- **Lower panel reads** — the green 'reversal' line and red 'trend' line are the two scores; "
-        "whichever is higher (and above 60) drives the marker.\n"
-        "- **Breadth panel** — what % of the 50 biggest stocks are above their own fair price. A bounce on "
-        "*low* breadth is narrow and fragile; a fall on *low* breadth is broad and real."
+        "market tends to *mean-revert* (patience/continuation favoured); below it, it tends to *trend*.\n"
+        "- **Lower panel reads** — green **Bull read** = the case for staying/long (ride-it or be-patient); "
+        "red **Bear read** = the case for defending (downtrend or topping). Whichever leads, and clears 55, "
+        "drives the marker.\n"
+        "- **Breadth panel** — % of the 50 biggest stocks above their own fair price. A bounce on *low* breadth "
+        "is narrow and fragile; a fall on *low* breadth is broad and real."
     )
 
 st.divider()
