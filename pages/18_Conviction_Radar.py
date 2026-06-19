@@ -33,6 +33,15 @@ st.caption("Plain-English answer to: *be patient on this fall, or get out?* · "
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
 
+# ── Full reference (renders docs/PAGE_18_CONVICTION_RADAR.md — one source of truth) ──
+with st.expander("📚 How to read this page — full reference (abbreviations + every calculation)"):
+    from pathlib import Path as _Path
+    _ref = _Path(__file__).resolve().parent.parent / "docs" / "PAGE_18_CONVICTION_RADAR.md"
+    if _ref.exists():
+        st.markdown(_ref.read_text(encoding="utf-8"))
+    else:
+        st.info("Reference file docs/PAGE_18_CONVICTION_RADAR.md not found in this deployment.")
+
 # Be LOUD about a missing spot rather than silently faking a price.
 if spot <= 0:
     spot = float(sig.get("spot", 0))
