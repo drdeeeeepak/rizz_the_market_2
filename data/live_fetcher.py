@@ -534,6 +534,116 @@ def get_nifty_1h_ema_slope(days: int = EMA_SLOPE_FETCH_DAYS) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ─── Generic Nifty intraday (Page 18 — Conviction Radar) ─────────────────────
+
+_INTERVAL_PER_DAY = {"5minute": 75, "15minute": 25, "30minute": 13, "60minute": 7}
+
+
+@st.cache_data(ttl=TTL_5M, show_spinner=False)
+def get_nifty_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
+    """
+    Fetch Nifty index intraday OHLCV for the Conviction Radar.
+    interval: '5minute' | '15minute' | '30minute' | '60minute'
+    days    : approx trading days to return (default 7).
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    kite = _get_kite_safe()
+    try:
+        to_date = date.today()
+        from_date = to_date - timedelta(days=days + 5)   # +5 calendar buffer for weekends/holidays
+        data = kite.historical_data(
+            NIFTY_INDEX_TOKEN,
+            from_date.strftime("%Y-%m-%d"),
+            to_date.strftime("%Y-%m-%d"),
+            interval,
+        )
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        df = df[["open", "high", "low", "close", "volume"]]
+        # Keep only the last `days` distinct trading sessions.
+        sessions = sorted(set(df.index.normalize()))
+        if len(sessions) > days:
+            cutoff = sessions[-days]
+            df = df[df.index.normalize() >= cutoff]
+        return df
+    except Exception as e:
+        log.error("Nifty intraday (%s) fetch failed: %s", interval, e)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty50_tokens() -> dict:
+    """
+    Resolve the 50 Nifty-50 constituent instrument tokens.
+    Uses data/nifty500_tokens.json if present, else resolves the first 50
+    symbols from data/nifty500_symbols.json via Kite's NSE instrument dump.
+    Returns {symbol: token}. Empty dict on failure.
+    """
+    import json, os
+    try:
+        syms_path = "data/nifty500_symbols.json"
+        if not os.path.exists(syms_path):
+            return {}
+        with open(syms_path) as fh:
+            nifty50 = json.load(fh)[:50]
+        nset = set(nifty50)
+
+        tok_path = "data/nifty500_tokens.json"
+        if os.path.exists(tok_path):
+            with open(tok_path) as fh:
+                m = json.load(fh)
+            out = {s: int(m[s]) for s in nifty50 if s in m}
+            if len(out) >= 40:
+                return out
+
+        # Fall back to live resolution from the NSE instrument list.
+        kite = _get_kite_safe()
+        instruments = kite.instruments("NSE")
+        out = {}
+        for inst in instruments:
+            sym = inst.get("tradingsymbol", "")
+            if inst.get("instrument_type") == "EQ" and sym in nset:
+                out[sym] = inst["instrument_token"]
+        return out
+    except Exception as e:
+        log.error("Nifty50 token resolve failed: %s", e)
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_nifty50_intraday(interval: str = "15minute", days: int = 7) -> dict:
+    """
+    Fetch intraday OHLCV for all 50 Nifty-50 constituents (for breadth).
+    Heavy (~50 historical calls) — cached 10 min. Returns {symbol: DataFrame};
+    failed symbols are skipped. Empty dict on total failure.
+    """
+    tokens = get_nifty50_tokens()
+    if not tokens:
+        return {}
+    kite = _get_kite_safe()
+    to_date = date.today()
+    from_date = to_date - timedelta(days=days + 5)
+    out = {}
+    for sym, tok in tokens.items():
+        try:
+            data = kite.historical_data(
+                tok, from_date.strftime("%Y-%m-%d"),
+                to_date.strftime("%Y-%m-%d"), interval,
+            )
+            if not data:
+                continue
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            out[sym] = df[["open", "high", "low", "close", "volume"]]
+        except Exception as e:
+            log.warning("Breadth fetch %s failed: %s", sym, e)
+    return out
+
+
 # ─── Nifty 500 breadth ────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=TTL_DAILY, show_spinner=False)
