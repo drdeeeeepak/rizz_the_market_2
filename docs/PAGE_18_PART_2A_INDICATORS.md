@@ -70,7 +70,8 @@ stretch_down  = (VWAP − close) / (expected_move × 0.5)   # only when below VW
 stretch_up    = (close − VWAP) / (expected_move × 0.5)   # only when above VWAP
 ```
 A stretch of 1.0 = half an expected-move from fair value; 2.0+ is very stretched
-(mean-reversion odds rise). Stretch is capped at 2 in the scoring. *(Table cols: `Str↑`, `Str↓`.)*
+(mean-reversion odds rise). Stretch is capped at 2 in the scoring. *(Table col: a single
+signed `Stretch` — positive 🟢 when above fair value, negative 🔴 when below.)*
 
 ### B.6 Divergences (the genuinely *leading* signal)
 Comparing each candle to **6 candles earlier** (`DIV_LOOKBACK = 6`):
@@ -83,8 +84,9 @@ RSI bear div = price_higher_high AND RSI < RSI[6 ago]  # momentum not confirming
 CVD bear div = price_higher_high AND CVD < CVD[6 ago]  # buying drying up at the high
 ```
 The bull and bear sides are **symmetric**: each gets both a momentum (RSI) *and* a
-volume (CVD) divergence input. *(Table cols: `BullDiv` 🟢▲ / `BearDiv` 🔴▼ for RSI; `LL`,
-`HH`; and `CVDdiv` shows 🟢▲ for a bullish CVD divergence / 🔴▼ for a bearish one.)*
+volume (CVD) divergence input. *(Table cols: `BullDiv` 🟢▲ / `BearDiv` 🔴▼ for RSI;
+`CVDdiv` shows 🟢▲ for a bullish CVD divergence / 🔴▼ for a bearish one. The price
+lower-low / higher-high themselves are shown in the `Hi`/`Lo` swing columns — see B.8.)*
 
 ### B.7 Rejection wicks (who stepped in)
 ```
@@ -94,12 +96,24 @@ upper_wick_frac = (high − max(open, close)) / (high − low)  # long upper tai
 `> 0.4` = a long rejection tail. *(Table cols: `LWick`, `UWick`.)*
 
 ### B.8 Swing structure & persistence
+Four swing flags, compared to **6 candles earlier**, give a *symmetric* read of the
+trend skeleton — higher highs/lows = up, lower highs/lows = down:
 ```
-higher_low   = rolling-6 swing low is rising            # uptrend skeleton
-persist_below= 3 consecutive candles below VWAP         # a real down-leg, not a dip
-persist_above= 3 consecutive candles above VWAP         # holding above fair value
+higher_high = high > high[6 ago]        higher_low = rolling-6 swing low is rising
+lower_high  = high < high[6 ago]        lower_low  = low  < low[6 ago]
 ```
-*(Table cols: `HL`, `Persist` shown as ↑3 / ↓3.)*
+```
+persist_below = 3 consecutive candles below VWAP     # a real down-leg, not a dip
+persist_above = 3 consecutive candles above VWAP     # holding above fair value
+```
+**Display:** rather than three separate flags, the table shows **two arrow columns**:
+- `Hi` = the swing **high** direction — 🟢▲ higher-high or 🔴▼ lower-high;
+- `Lo` = the swing **low** direction — 🟢▲ higher-low or 🔴▼ lower-low.
+
+Read them as a pair for instant meaning: **▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding
+(outside bar) · ▼▲ inside (contracting)**. *(`lower_high` was added so the down-side has
+the same skeleton the up-side already had — previously only `higher_low` existed.)*
+*(Table cols: `Hi`, `Lo`, `Persist` shown as ↑3 / ↓3.)*
 
 ### B.9 Breadth (real vs fake)
 For all 50 Nifty-50 stocks: the % whose `close > their own session VWAP`, per

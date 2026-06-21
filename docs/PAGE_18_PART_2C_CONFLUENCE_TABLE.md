@@ -48,16 +48,19 @@ is computed — it just makes every number visible.
 
 **Column key** (signals lead; raw price/VWAP/CVD inputs are pushed to the far right)
 `Time` · `ΔVWAP` (close − fair value) · `RSI` `BullDiv` (🟢▲) `BearDiv` (🔴▼) · `CVD↑`
-`CVDdiv` (🟢▲ bull / 🔴▼ bear volume divergence) · `%B` `Str↑` `Str↓` `LWick` `UWick` ·
-`HL` `LL` `HH` `Persist` (↑3/↓3) · `Brd%` · **`Reversal` `Uptrend`** (🟢 bull pair) ·
-**`Downtr` `Topping`** (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree`
-`Oppose` `Conf%` · `State` · *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
+(🟢▲ buyers regaining) `CVDdiv` (🟢▲ bull / 🔴▼ bear volume divergence) · `%B` ·
+`Stretch` (one signed column — 🟢 + above fair value / 🔴 − below) · `LWick` `UWick` ·
+`Hi` `Lo` (swing-high / swing-low direction — 🟢▲ higher / 🔴▼ lower; read as a pair:
+▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside) · `Persist` (↑3/↓3) · `Brd%` ·
+**`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair) ·
+`P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` `Conf%` · `State` ·
+*then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns are **heat-shaded** (darker = louder), so scan
-across a row to see which side is winning; the divergence arrows are coloured 🟢 green
-(bull) / 🔴 red (bear); the `State` text colour matches the ▲★▼▽ chart marks; a fired
-marker should line up with its score crossing 55/60 in the reads panel and the pillar
-votes agreeing.
+across a row to see which side is winning; the arrow columns are coloured 🟢 green (up /
+bull) / 🔴 red (down / bear); the `State` text colour matches the ▲★▼▽ chart marks; a
+fired marker should line up with its score crossing 55/60 in the reads panel and the
+pillar votes agreeing.
 
 ➡️ **Next: Part 3 — two-sided view, dealer gamma & daily close quality**
 (`PAGE_18_PART_3_TWO_SIDED_AND_GAMMA.md`).

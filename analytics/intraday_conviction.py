@@ -140,6 +140,7 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     df["cvd_bear_div"] = px_hh & (df["cvd"] < df["cvd"].shift(DIV_LOOKBACK))   # buying drying up at the high
     df["lower_low"] = px_ll
     df["higher_high"] = px_hh
+    df["lower_high"] = df["high"] < df["high"].shift(DIV_LOOKBACK)   # mirror of lower_low (downtrend skeleton)
 
     # Swing structure: higher-lows = uptrend skeleton.
     rl = df["low"].rolling(DIV_LOOKBACK).min()
@@ -579,13 +580,16 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["CVDdiv"] = np.where(d["cvd_bull_div"].astype(bool), "▲",
                            np.where(d["cvd_bear_div"].astype(bool), "▼", ""))
     t["%B"] = d["pct_b"].round(2)
-    t["Str↑"] = d["stretch_up"].round(2)
-    t["Str↓"] = d["stretch_down"].round(2)
+    # One signed Stretch column: + = stretched ABOVE fair value, − = stretched BELOW.
+    t["Stretch"] = (d["stretch_up"] - d["stretch_down"]).round(2)
     t["LWick"] = d["lower_wick_frac"].round(2)
     t["UWick"] = d["upper_wick_frac"].round(2)
-    t["HL"] = _b("higher_low")
-    t["LL"] = _b("lower_low")
-    t["HH"] = _b("higher_high")
+    # Swing structure as two readable arrows: Hi = swing-high direction, Lo = swing-low
+    # direction. ▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding · ▼▲ inside.
+    t["Hi"] = np.where(d["higher_high"].astype(bool), "▲",
+                       np.where(d["lower_high"].astype(bool), "▼", ""))
+    t["Lo"] = np.where(d["lower_low"].astype(bool), "▼",
+                       np.where(d["higher_low"].astype(bool), "▲", ""))
     t["Persist"] = _persist()
     t["Brd%"] = d["breadth"].round(0)
     # ── the two sides, side by side ───────────────────────────────────────────

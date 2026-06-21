@@ -54,7 +54,8 @@ When a marker surprises you, open the table and read that candle's row:
 - **Did the pillars agree?** `P/M/V/B/S` should mostly point the same way; 2+ opposing
   arrows (`Conf%` low) is why a continuation mark was withheld.
 - **Which inputs fired?** e.g. a ▲ brewing with `BullDiv`, `CVDdiv`, a fat `LWick` and a
-  big `Str↓` is a high-quality exhaustion candle; one with only `Str↓` is thin.
+  deep red `Stretch` (well below fair value) is a high-quality exhaustion candle; one
+  with only a small `Stretch` is thin. Glance at `Hi`/`Lo` for the swing skeleton.
 
 This is the fastest way to build trust in (or healthy skepticism of) the signals.
 

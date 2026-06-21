@@ -492,9 +492,9 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = sty.map(lambda v: _heat(v, _BLUE), subset=["Uptrend"])
         sty = sty.map(lambda v: _heat(v, _RED), subset=["Downtr"])
         sty = sty.map(lambda v: _heat(v, _AMBER), subset=["Topping"])
-        sty = sty.map(_delta_css, subset=["ΔVWAP"])
+        sty = sty.map(_delta_css, subset=["ΔVWAP", "Stretch"])
         sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S",
-                                         "BullDiv", "BearDiv", "CVDdiv"])
+                                         "BullDiv", "BearDiv", "CVDdiv", "CVD↑", "Hi", "Lo"])
         sty = sty.map(_state_css, subset=["State"])
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
@@ -504,9 +504,11 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         st.markdown(
             "**Column key** — "
             "`ΔVWAP` close minus fair value · `BullDiv/BearDiv` RSI divergence (🟢▲/🔴▼) · "
-            "`CVDdiv` volume divergence (🟢▲/🔴▼) · `CVD↑` buyers regaining · "
-            "`%B` position in Bollinger band · `Str↑/Str↓` stretch above/below fair value (expected-moves) · "
-            "`LWick/UWick` rejection-wick fraction · `HL/LL/HH` higher-low / lower-low / higher-high · "
+            "`CVDdiv` volume divergence (🟢▲/🔴▼) · `CVD↑` buyers regaining (🟢▲) · "
+            "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
+            "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
+            "`Hi/Lo` swing-high / swing-low direction (🟢▲ higher · 🔴▼ lower) — read as a pair: "
+            "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
             "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
             "**`Reversal`** be-patient, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · `P/M/V/B/S` pillar votes (Price/Momentum/Volume/Breadth/"
