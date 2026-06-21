@@ -102,5 +102,19 @@ bear_read = topping  (if above VWAP)   else  downtrend
 ```
 The two-sided cards in Part 3 §A use the **raw four** so you never lose the other side.
 
+### F.1 Net — the single "final score" (one number to read)
+For an at-a-glance read, the table also shows one signed conviction number:
+```
+Net = bull_read − bear_read          # range −100 .. +100
+```
+- **Net > 0** → the bull case (stay / be patient / ride) outweighs the defend case.
+- **Net < 0** → the defend case (downtrend / topping) outweighs — manage the threatened leg.
+- **Net ≈ 0** → no clear edge.
+
+It's heat-shaded green (net-bull) / red (net-defend), darker as it gets more extreme, so
+you can scan the column and instantly see which way each candle leaned and how strongly.
+It does **not** replace the four raw scores (which tell you *why*) — it's the summary on
+top of them. *(Table col: `Net`.)*
+
 ➡️ **Next: Part 2c — confluence, metric cards & the behind-the-scenes table**
 (`PAGE_18_PART_2C_CONFLUENCE_TABLE.md`).

@@ -43,7 +43,9 @@ If the series has **no volume** (index fallback), VWAP becomes a running average
 ```
 RSI = 100 − 100 / (1 + avg_gain / avg_loss)
 ```
-*(Table col: `RSI`.)*
+In the table the `RSI` cell is **banded by regime** for instant reading:
+🟣 **capitulation** (< 30) · 🔴 **downtrend** (30–45) · ⚪ **neutral** (45–55) ·
+🟢 **uptrend** (55–70) · 🟠 **overbought** (> 70). *(Table col: `RSI`.)*
 
 ### B.3 Bollinger %B (stretch inside the bands)
 20-period basis `SMA20`, bands = `SMA20 ± 2 × std20`:
@@ -59,8 +61,17 @@ closes inside its range** (Close-Location-Value):
 CLV = ((close − low) − (high − close)) / (high − low)     # −1 .. +1
 CVD = cumulative( CLV × volume )                          # resets each day
 ```
-Close near the high → buyers won (+); near the low → sellers won (−). `cvd_up` = CVD
-higher than 6 candles ago. *(Table cols: `CVD`, `CVD↑`.)*
+Close near the high → buyers won (+); near the low → sellers won (−).
+
+Two CVD-direction reads, for two different jobs:
+- **`cvd_rising`** = CVD rose vs the **immediately previous candle** (a same-day diff).
+  This is the instant tick shown by the table's `CVD↑` arrow — "are buyers adding *right
+  now*".
+- **`cvd_up`** = CVD higher than **6 candles ago** — the smoother, less-noisy version
+  used inside the *scores* ("buyers regaining control over the swing"). Don't confuse the
+  two: the arrow is the fast read, the score uses the slow one.
+
+*(Table cols: `CVD` (raw, far right), `CVD↑` = `cvd_rising`.)*
 
 ### B.5 Expected move & Stretch (is the move over-extended?)
 ```
@@ -84,9 +95,11 @@ RSI bear div = price_higher_high AND RSI < RSI[6 ago]  # momentum not confirming
 CVD bear div = price_higher_high AND CVD < CVD[6 ago]  # buying drying up at the high
 ```
 The bull and bear sides are **symmetric**: each gets both a momentum (RSI) *and* a
-volume (CVD) divergence input. *(Table cols: `BullDiv` 🟢▲ / `BearDiv` 🔴▼ for RSI;
-`CVDdiv` shows 🟢▲ for a bullish CVD divergence / 🔴▼ for a bearish one. The price
-lower-low / higher-high themselves are shown in the `Hi`/`Lo` swing columns — see B.8.)*
+volume (CVD) divergence input. A candle can be a bull *or* a bear divergence but **never
+both** (bull needs RSI up, bear needs RSI down), so each is a single signed column.
+*(Table cols: `RSIdiv` 🟢▲ bull / 🔴▼ bear for the RSI divergence; `CVDdiv` 🟢▲ / 🔴▼ for
+the CVD one. The price lower-low / higher-high themselves show in the `Hi`/`Lo` swing
+columns — see B.8.)*
 
 ### B.7 Rejection wicks (who stepped in)
 ```

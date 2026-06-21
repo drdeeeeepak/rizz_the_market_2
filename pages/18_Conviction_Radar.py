@@ -445,10 +445,11 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
 # Behind the scenes — every per-candle calculation in one auditable table
 # ══════════════════════════════════════════════════════════════════════════════
 with st.expander("🔬 Behind the scenes — every calculation, candle by candle (newest first)"):
-    st.caption("One row per candle. Nothing is hidden: the four raw scores (🟢 bull pair · 🔴 bear pair) sit "
-               "side by side, with every input that feeds them. The score columns are heat-shaded (darker = "
-               "louder), the pillar votes show ▲ bull / ▼ bear / · flat, and the **State** column matches the "
-               "▲★▼▽ marks on the chart above. This is exactly what the engine 'saw' on each candle.")
+    st.caption("One row per candle. Nothing is hidden: the four raw scores (🟢 bull pair · 🔴 bear pair) plus a "
+               "single **Net** conviction (🟢 +bull / 🔴 −defend) sit beside every input that feeds them. Score "
+               "columns are heat-shaded (darker = louder), RSI is banded by regime "
+               "(capitulation→downtrend→neutral→uptrend→overbought), arrows are 🟢▲ up / 🔴▼ down, and the "
+               "**State** column matches the ▲★▼▽ marks on the chart. This is exactly what the engine 'saw'.")
 
     ct = ic.candle_table(df, newest_first=True)
     if ct.empty:
@@ -477,6 +478,33 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
                     else "color:#dc2626;font-weight:700;" if v == "▼"
                     else "color:#cbd5e1;")
 
+        # RSI momentum regimes — capitulation / downtrend / neutral / uptrend / overbought.
+        def _rsi_css(v):
+            try:
+                r = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if r >= 70:      bg, fg = "#fb923c", "#3a1500"   # overbought (caution at highs)
+            elif r >= 55:    bg, fg = "#86efac", "#064e3b"   # uptrend momentum
+            elif r >= 45:    bg, fg = "#e2e8f0", "#334155"   # neutral
+            elif r >= 30:    bg, fg = "#fca5a5", "#7f1d1d"   # downtrend momentum
+            else:            bg, fg = "#c4b5fd", "#3b0764"   # capitulation (extreme oversold)
+            return f"background-color:{bg};color:{fg};font-weight:600;"
+
+        # Net conviction (bull_read − bear_read): green if net-bull, red if net-defend.
+        def _net_css(v):
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                return ""
+            f = min(1.0, abs(n) / 100.0)
+            if f < 0.05:
+                return "color:#94a3b8;"
+            r, g, b = (22, 163, 74) if n > 0 else (220, 38, 38)
+            rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+            txt = "#ffffff" if f > 0.55 else "#0f172a"
+            return f"background-color:rgb({rr},{gg},{bb});color:{txt};font-weight:700;"
+
         def _delta_css(v):
             try:
                 return "color:#16a34a;font-weight:600;" if float(v) > 0 else \
@@ -492,9 +520,11 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = sty.map(lambda v: _heat(v, _BLUE), subset=["Uptrend"])
         sty = sty.map(lambda v: _heat(v, _RED), subset=["Downtr"])
         sty = sty.map(lambda v: _heat(v, _AMBER), subset=["Topping"])
+        sty = sty.map(_net_css, subset=["Net"])
+        sty = sty.map(_rsi_css, subset=["RSI"])
         sty = sty.map(_delta_css, subset=["ΔVWAP", "Stretch"])
         sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S",
-                                         "BullDiv", "BearDiv", "CVDdiv", "CVD↑", "Hi", "Lo"])
+                                         "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo"])
         sty = sty.map(_state_css, subset=["State"])
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
@@ -503,16 +533,19 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
 
         st.markdown(
             "**Column key** — "
-            "`ΔVWAP` close minus fair value · `BullDiv/BearDiv` RSI divergence (🟢▲/🔴▼) · "
-            "`CVDdiv` volume divergence (🟢▲/🔴▼) · `CVD↑` buyers regaining (🟢▲) · "
-            "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
-            "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
+            "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation <30 · "
+            "🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · "
+            "`RSIdiv` RSI divergence (🟢▲ bull / 🔴▼ bear) · `CVD↑` CVD rose vs the *previous* candle (🟢▲) · "
+            "`CVDdiv` 6-bar volume divergence (🟢▲/🔴▼) · "
             "`Hi/Lo` swing-high / swing-low direction (🟢▲ higher · 🔴▼ lower) — read as a pair: "
             "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
+            "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
+            "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
             "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
             "**`Reversal`** be-patient, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
-            "**`Topping`** defend-CALL (🔴 bear) · `P/M/V/B/S` pillar votes (Price/Momentum/Volume/Breadth/"
-            "Structure) · `Conf%` signal agreement · `State` the resulting call.")
+            "**`Topping`** defend-CALL (🔴 bear) · **`Net`** = bull-read − bear-read, the single "
+            "directional conviction (🟢 + stay / 🔴 − defend) · `P/M/V/B/S` pillar votes · "
+            "`Conf%` signal agreement · `State` the resulting call.")
 
 st.divider()
 

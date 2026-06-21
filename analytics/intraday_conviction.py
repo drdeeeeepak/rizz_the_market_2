@@ -146,8 +146,11 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     rl = df["low"].rolling(DIV_LOOKBACK).min()
     df["higher_low"] = rl > rl.shift(DIV_LOOKBACK)
 
-    # Buyers regaining control (CVD turning up) — the continuation tell.
+    # Buyers regaining control. `cvd_up` (vs 6 candles ago) is the smoother version used
+    # in the scores; `cvd_rising` (vs the PREVIOUS candle) is the instant tick shown in
+    # the table's CVD↑ arrow.
     df["cvd_up"] = df["cvd"] > df["cvd"].shift(DIV_LOOKBACK)
+    df["cvd_rising"] = df.groupby(df.index.normalize())["cvd"].diff() > 0
 
     # Persistence filters — kill single-candle noise.
     df["persist_below"] = df["below_vwap"].rolling(PERSIST).sum() >= PERSIST
@@ -566,37 +569,36 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
 
     t = pd.DataFrame(index=d.index)
     t["Time"] = [ix.strftime("%d-%b %H:%M") for ix in d.index]
-    t["Open"] = d["open"].round(1)
-    t["High"] = d["high"].round(1)
-    t["Low"] = d["low"].round(1)
-    t["Close"] = d["close"].round(1)
-    t["VWAP"] = d["vwap"].round(1)
     t["ΔVWAP"] = (d["close"] - d["vwap"]).round(1)
+    # Momentum + the two divergences. Bull/bear divergence are mutually exclusive
+    # (one needs RSI up, the other RSI down) → one signed column each.
     t["RSI"] = d["rsi"].round(1)
-    t["BullDiv"] = _b("rsi_bull_div", "▲")
-    t["BearDiv"] = _b("rsi_bear_div", "▼")
-    t["CVD"] = d["cvd"].round(0)
-    t["CVD↑"] = _b("cvd_up", "▲")
+    t["RSIdiv"] = np.where(d["rsi_bull_div"].astype(bool), "▲",
+                           np.where(d["rsi_bear_div"].astype(bool), "▼", ""))
+    # Volume: CVD↑ = CVD rose vs the PREVIOUS candle; CVDdiv = 6-bar volume divergence.
+    t["CVD↑"] = _b("cvd_rising", "▲")
     t["CVDdiv"] = np.where(d["cvd_bull_div"].astype(bool), "▲",
                            np.where(d["cvd_bear_div"].astype(bool), "▼", ""))
+    # Swing structure sits right beside the divergences (most meaningful read there):
+    # Hi = swing-high direction, Lo = swing-low direction.
+    # ▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding · ▼▲ inside.
+    t["Hi"] = np.where(d["higher_high"].astype(bool), "▲",
+                       np.where(d["lower_high"].astype(bool), "▼", ""))
+    t["Lo"] = np.where(d["lower_low"].astype(bool), "▼",
+                       np.where(d["higher_low"].astype(bool), "▲", ""))
     t["%B"] = d["pct_b"].round(2)
     # One signed Stretch column: + = stretched ABOVE fair value, − = stretched BELOW.
     t["Stretch"] = (d["stretch_up"] - d["stretch_down"]).round(2)
     t["LWick"] = d["lower_wick_frac"].round(2)
     t["UWick"] = d["upper_wick_frac"].round(2)
-    # Swing structure as two readable arrows: Hi = swing-high direction, Lo = swing-low
-    # direction. ▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding · ▼▲ inside.
-    t["Hi"] = np.where(d["higher_high"].astype(bool), "▲",
-                       np.where(d["lower_high"].astype(bool), "▼", ""))
-    t["Lo"] = np.where(d["lower_low"].astype(bool), "▼",
-                       np.where(d["higher_low"].astype(bool), "▲", ""))
     t["Persist"] = _persist()
     t["Brd%"] = d["breadth"].round(0)
-    # ── the two sides, side by side ───────────────────────────────────────────
+    # ── the four raw scores, then a single NET conviction for a clear read ──────
     t["Reversal"] = d["reversal_score"].astype(int)     # 🟢 be patient
     t["Uptrend"] = d["uptrend_score"].astype(int)       # 🟢 ride it
     t["Downtr"] = d["downtrend_score"].astype(int)      # 🔴 defend PUT
     t["Topping"] = d["topping_score"].astype(int)       # 🔴 defend CALL
+    t["Net"] = (d["bull_read"] - d["bear_read"]).astype(int)   # +bull / −bear (−100..+100)
     # ── pillar votes ──────────────────────────────────────────────────────────
     t["P"] = [_VOTE_ARROW.get(int(v), "·") for v in d["bias"]]
     t["M"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_mom"]]
@@ -607,10 +609,13 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["Oppose"] = d["oppose_count"].astype(int)
     t["Conf%"] = d["confidence"].astype(int)
     t["State"] = d["state"]
-
-    # Lead with the verdict-level signals; push the raw price/VWAP/CVD inputs to the end.
-    _tail = ["Open", "High", "Low", "Close", "VWAP", "CVD"]
-    t = t[[c for c in t.columns if c not in _tail] + _tail]
+    # Raw price/VWAP/CVD inputs pushed to the far right.
+    t["Open"] = d["open"].round(1)
+    t["High"] = d["high"].round(1)
+    t["Low"] = d["low"].round(1)
+    t["Close"] = d["close"].round(1)
+    t["VWAP"] = d["vwap"].round(1)
+    t["CVD"] = d["cvd"].round(0)
 
     return t.iloc[::-1] if newest_first else t
 

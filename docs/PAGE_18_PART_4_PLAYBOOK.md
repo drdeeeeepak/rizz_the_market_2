@@ -53,9 +53,10 @@ When a marker surprises you, open the table and read that candle's row:
   Downtrend ≥ 58 / Topping ≥ 55 for defend marks.)
 - **Did the pillars agree?** `P/M/V/B/S` should mostly point the same way; 2+ opposing
   arrows (`Conf%` low) is why a continuation mark was withheld.
-- **Which inputs fired?** e.g. a ▲ brewing with `BullDiv`, `CVDdiv`, a fat `LWick` and a
-  deep red `Stretch` (well below fair value) is a high-quality exhaustion candle; one
-  with only a small `Stretch` is thin. Glance at `Hi`/`Lo` for the swing skeleton.
+- **Which inputs fired?** e.g. a ▲ brewing with a 🟢▲ `RSIdiv`, a bull `CVDdiv`, a fat
+  `LWick` and a deep-red `Stretch` (well below fair value) is a high-quality exhaustion
+  candle; one with only a small `Stretch` is thin. Glance at `Hi`/`Lo` for the swing
+  skeleton and `Net` for the one-number lean.
 
 This is the fastest way to build trust in (or healthy skepticism of) the signals.
 
