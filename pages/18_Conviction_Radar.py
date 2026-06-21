@@ -33,14 +33,29 @@ st.caption("Plain-English answer to: *be patient on this fall, or get out?* · "
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
 
-# ── Full reference (renders docs/PAGE_18_CONVICTION_RADAR.md — one source of truth) ──
-with st.expander("📚 How to read this page — full reference (abbreviations + every calculation)"):
+# ── Full reference (split into 4 parts under docs/, shown as tabs) ─────────────
+with st.expander("📚 How to read this page — full reference (4 parts: overview · calculations · "
+                 "two-sided & gamma · playbook)"):
     from pathlib import Path as _Path
-    _ref = _Path(__file__).resolve().parent.parent / "docs" / "PAGE_18_CONVICTION_RADAR.md"
-    if _ref.exists():
-        st.markdown(_ref.read_text(encoding="utf-8"))
-    else:
-        st.info("Reference file docs/PAGE_18_CONVICTION_RADAR.md not found in this deployment.")
+    _docs = _Path(__file__).resolve().parent.parent / "docs"
+    _parts = [
+        ("① Overview & glossary", "PAGE_18_PART_1_OVERVIEW.md"),
+        ("② Every calculation", "PAGE_18_PART_2_CALCULATIONS.md"),
+        ("③ Two-sided · gamma · close", "PAGE_18_PART_3_TWO_SIDED_AND_GAMMA.md"),
+        ("④ How to act", "PAGE_18_PART_4_PLAYBOOK.md"),
+    ]
+    for _tab, (_, _fname) in zip(st.tabs([t for t, _ in _parts]), _parts):
+        with _tab:
+            _p = _docs / _fname
+            if _p.exists():
+                st.markdown(_p.read_text(encoding="utf-8"))
+            else:
+                # Fall back to the legacy single-file reference if the parts aren't deployed yet.
+                _legacy = _docs / "PAGE_18_CONVICTION_RADAR.md"
+                st.info(f"Reference part `{_fname}` not found." +
+                        ("" if not _legacy.exists() else " Showing the combined legacy reference below.") )
+                if _legacy.exists():
+                    st.markdown(_legacy.read_text(encoding="utf-8"))
 
 # Be LOUD about a missing spot rather than silently faking a price.
 if spot <= 0:
@@ -110,12 +125,18 @@ df = ic.enrich(df_idx, expected_move_pts=expected_move_pts,
                breadth=breadth if not breadth.empty else None)
 
 # Safety net: if the app was just updated, Streamlit may still hold an OLD cached
-# engine module in memory while running the NEW page. Detect the mismatch and ask
-# for a clean refresh instead of crashing with a raw KeyError.
+# engine module in memory while running the NEW page. Detect the mismatch — either
+# missing DataFrame columns OR a new engine function the stale module lacks — and
+# ask for a clean refresh instead of crashing with a raw KeyError / AttributeError.
 _REQUIRED = {"bull_read", "bear_read", "state", "vwap", "above_vwap", "confidence", "conflict"}
-if df.empty or not _REQUIRED.issubset(df.columns):
-    st.warning("🔄 The app was just updated. Press **↻** (top-right) or reload the page once to "
-               "load the new engine. (Streamlit kept an older version cached in memory.)")
+_REQUIRED_FUNCS = ("two_sided_verdict", "candle_table")
+_stale = (df.empty or not _REQUIRED.issubset(df.columns)
+          or any(not hasattr(ic, _fn) for _fn in _REQUIRED_FUNCS))
+if _stale:
+    st.warning("🔄 The app was just updated and Streamlit is still holding the **older engine** in "
+               "memory. A page refresh alone won't clear it — open the app menu (top-right ⋮) and "
+               "choose **Reboot app** once. After it restarts, this page loads the new two-sided "
+               "engine cleanly.")
     st.stop()
 
 verdict = ic.live_verdict(df, gex["regime"], gex.get("spot_vs_flip_pts"))
