@@ -34,13 +34,15 @@ sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
 
 # ── Full reference (split into 4 parts under docs/, shown as tabs) ─────────────
-with st.expander("📚 How to read this page — full reference (4 parts: overview · calculations · "
+with st.expander("📚 How to read this page — full reference (overview · calculations ×3 · "
                  "two-sided & gamma · playbook)"):
     from pathlib import Path as _Path
     _docs = _Path(__file__).resolve().parent.parent / "docs"
     _parts = [
         ("① Overview & glossary", "PAGE_18_PART_1_OVERVIEW.md"),
-        ("② Every calculation", "PAGE_18_PART_2_CALCULATIONS.md"),
+        ("②a Data & indicators", "PAGE_18_PART_2A_INDICATORS.md"),
+        ("②b Scores & states", "PAGE_18_PART_2B_SCORES.md"),
+        ("②c Confluence & table", "PAGE_18_PART_2C_CONFLUENCE_TABLE.md"),
         ("③ Two-sided · gamma · close", "PAGE_18_PART_3_TWO_SIDED_AND_GAMMA.md"),
         ("④ How to act", "PAGE_18_PART_4_PLAYBOOK.md"),
     ]
@@ -491,7 +493,8 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = sty.map(lambda v: _heat(v, _RED), subset=["Downtr"])
         sty = sty.map(lambda v: _heat(v, _AMBER), subset=["Topping"])
         sty = sty.map(_delta_css, subset=["ΔVWAP"])
-        sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S"])
+        sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S",
+                                         "BullDiv", "BearDiv", "CVDdiv"])
         sty = sty.map(_state_css, subset=["State"])
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
@@ -500,7 +503,8 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
 
         st.markdown(
             "**Column key** — "
-            "`Side` above/below VWAP · `BullDiv/BearDiv` momentum divergence · `CVD↑` buyers regaining · "
+            "`ΔVWAP` close minus fair value · `BullDiv/BearDiv` RSI divergence (🟢▲/🔴▼) · "
+            "`CVDdiv` volume divergence (🟢▲/🔴▼) · `CVD↑` buyers regaining · "
             "`%B` position in Bollinger band · `Str↑/Str↓` stretch above/below fair value (expected-moves) · "
             "`LWick/UWick` rejection-wick fraction · `HL/LL/HH` higher-low / lower-low / higher-high · "
             "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "

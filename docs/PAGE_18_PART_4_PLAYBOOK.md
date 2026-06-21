@@ -3,8 +3,8 @@
 > Putting it together for an Iron Condor seller. These are odds, not certainties —
 > keep your stop and size for the case where the signal is wrong.
 
-> **Reference map:** Part 1 — overview & glossary · Part 2 — every calculation · Part 3
-> — two-sided, gamma & close · Part 4 — playbook (this file).
+> **Reference map:** Part 1 — overview & glossary · Part 2a/2b/2c — every calculation ·
+> Part 3 — two-sided, gamma & close · Part 4 — playbook (this file).
 
 ---
 
@@ -84,5 +84,6 @@ This is the fastest way to build trust in (or healthy skepticism of) the signals
 
 *Files: `pages/18_Conviction_Radar.py`, `analytics/intraday_conviction.py`,
 `analytics/gamma_exposure.py`, fetchers in `data/live_fetcher.py`. Reference split:
-`PAGE_18_PART_1_OVERVIEW.md` · `PAGE_18_PART_2_CALCULATIONS.md` ·
+`PAGE_18_PART_1_OVERVIEW.md` · `PAGE_18_PART_2A_INDICATORS.md` ·
+`PAGE_18_PART_2B_SCORES.md` · `PAGE_18_PART_2C_CONFLUENCE_TABLE.md` ·
 `PAGE_18_PART_3_TWO_SIDED_AND_GAMMA.md` · `PAGE_18_PART_4_PLAYBOOK.md`.*

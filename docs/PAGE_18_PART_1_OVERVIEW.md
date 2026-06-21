@@ -4,9 +4,9 @@
 > This page answers both in plain English, draws the evidence on a candle chart, and
 > now exposes **every number behind the scenes** so you can audit it candle by candle.
 >
-> **Reference map:** Part 1 — overview & glossary (this file) · Part 2 — every
-> calculation · Part 3 — two-sided view, dealer gamma & daily close quality ·
-> Part 4 — how to act (playbook).
+> **Reference map:** Part 1 — overview & glossary (this file) · Part 2a — data &
+> indicators · Part 2b — scores & states · Part 2c — confluence & table · Part 3 —
+> two-sided view, dealer gamma & daily close quality · Part 4 — how to act (playbook).
 
 ---
 
@@ -31,7 +31,7 @@
    The lower **reads panel** plots all **four raw scores** together (both sides of
    both regimes), with the trigger thresholds drawn in.
 5. **🔬 Behind-the-scenes table** (collapsible, under the chart) = every calculation,
-   one row per candle, newest first. This is exactly what the engine "saw". (Part 2/3.)
+   one row per candle, newest first. This is exactly what the engine "saw". (Part 2c.)
 6. **Bottom table = close quality.** Grades each day's *close* HIGH / MEDIUM / LOW,
    and now shows the **score build-up** (`base 50 ± factors`). A LOW after a late
    bounce = likely short-cover = gap risk. Today's row is 🔴 LIVE.
@@ -46,11 +46,11 @@ not a guarantee. Always keep your hard stop.
 | Section | What it tells you | Detail |
 |---|---|---|
 | Headline verdict + market-mode cards | The one call now, gated by dealer gamma | Part 3 §C |
-| Bull/Bear metric cards | Bull-read, bear-read, gamma flip, signal agreement | Part 2 §H |
+| Bull/Bear metric cards | Bull-read, bear-read, gamma flip, signal agreement | Part 2c §H |
 | **Both sides, right now** | Both condor legs' live scores side by side | Part 3 §A |
-| Pillar scorecard | ✅/❌ which signals agree vs fight | Part 2 §G |
+| Pillar scorecard | ✅/❌ which signals agree vs fight | Part 2c §G |
 | Annotated chart | Candles + VWAP + bands + flip/walls + 4-state marks + 4-score reads | Part 2 |
-| **🔬 Behind the scenes** | Every per-candle number, auditable | Part 2 §I |
+| **🔬 Behind the scenes** | Every per-candle number, auditable | Part 2c §I |
 | Daily close quality | Was each day's close trustworthy, with score build-up | Part 3 §D |
 | Gamma walls detail | Where dealer gamma sits by strike | Part 3 §B |
 
@@ -61,7 +61,7 @@ not a guarantee. Always keep your hard stop.
 | Term | Plain meaning |
 |---|---|
 | **VWAP** | Volume-Weighted Average Price — the day's "fair price". Above it, buyers are in control; below it, sellers are. Resets each day. |
-| **CVD** | Cumulative Volume Delta — running tally of whether buyers or sellers are winning. (We use a *proxy*; Part 2 §D.) |
+| **CVD** | Cumulative Volume Delta — running tally of whether buyers or sellers are winning. (We use a *proxy*; Part 2a §B.4.) |
 | **GEX** | Gamma Exposure — how much the big option dealers must hedge as price moves. Drives whether the market mean-reverts or trends. |
 | **Gamma Flip** | The price where dealer hedging flips from *dampening* moves to *amplifying* them. The single most useful level on the page. |
 | **Call wall / Put wall** | The strikes with the strongest gamma "magnet" — price tends to get pinned or pulled toward/around them. |
@@ -78,7 +78,7 @@ not a guarantee. Always keep your hard stop.
 | **VIX** | India VIX — the market's 30-day expected volatility (the "fear gauge"). |
 | **Bull read** | 0–100, the case for *staying / long*: above VWAP it's the uptrend (ride-it) score; below VWAP it's the bounce-brewing (be-patient) score. |
 | **Bear read** | 0–100, the case for *defending*: above VWAP it's the topping (defend-CALL) score; below VWAP it's the downtrend (defend-PUT) score. |
-| **The 4 raw scores** | Reversal, Uptrend, Downtrend, Topping — the underlying 0–100 scores that Bull/Bear read are picked from (Part 2 §E). |
+| **The 4 raw scores** | Reversal, Uptrend, Downtrend, Topping — the underlying 0–100 scores that Bull/Bear read are picked from (Part 2b §C). |
 | **The 4 states** | BOUNCE_BREWING (▲), UPTREND/ride-it (★), DOWNTREND/defend-PUT (▼), TOPPING/defend-CALL (▽), or NEUTRAL. |
 | **Pillars / votes** | Five independent checks — Price vs VWAP, Momentum, Volume, Breadth, Structure — each votes ▲ bull / ▼ bear / · flat. |
 | **Signal agreement / Confidence** | 0–100: of the pillars, how many *agree* with the price direction. High = trustworthy; low = conflicted. |
@@ -97,4 +97,4 @@ not a guarantee. Always keep your hard stop.
 - **CVD is a proxy** (Kite gives no tick-level buy/sell aggressor data).
 - It **updates once per candle** (every 5 or 15 min) — not continuously.
 
-➡️ **Next: Part 2 — every calculation, explained** (`PAGE_18_PART_2_CALCULATIONS.md`).
+➡️ **Next: Part 2a — data & per-candle indicators** (`PAGE_18_PART_2A_INDICATORS.md`).

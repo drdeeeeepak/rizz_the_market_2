@@ -571,7 +571,6 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["Close"] = d["close"].round(1)
     t["VWAP"] = d["vwap"].round(1)
     t["ΔVWAP"] = (d["close"] - d["vwap"]).round(1)
-    t["Side"] = np.where(d["above_vwap"], "above", np.where(d["below_vwap"], "below", "at"))
     t["RSI"] = d["rsi"].round(1)
     t["BullDiv"] = _b("rsi_bull_div", "▲")
     t["BearDiv"] = _b("rsi_bear_div", "▼")

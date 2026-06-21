@@ -3,8 +3,8 @@
 > This part covers the parts that make Page 18 *two-sided* — both condor legs at once —
 > plus the dealer-gamma "market mode" and the daily close-quality grade.
 
-> **Reference map:** Part 1 — overview & glossary · Part 2 — every calculation · Part 3
-> — two-sided, gamma & close (this file) · Part 4 — playbook.
+> **Reference map:** Part 1 — overview & glossary · Part 2a/2b/2c — every calculation ·
+> Part 3 — two-sided, gamma & close (this file) · Part 4 — playbook.
 
 ---
 
@@ -31,12 +31,12 @@ score. Each card also notes the dealer-gamma tilt (does gamma help or weaken tha
 The lower chart panel plots `reversal` (green), `uptrend` (blue), `downtrend` (red) and
 `topping` (amber) **together**, with the **55/60 trigger lines**, so you watch both
 sides of both regimes build over the last ~7 days — not just the one winning line.
-(Full detail in Part 2 §E.)
+(Full detail in Part 2b §E.)
 
 ### A.3 🔬 Behind-the-scenes table
 One row per candle with **the four raw scores side by side** (heat-shaded), the five
 pillar votes, agreement %, and the resulting state. This is where you audit, candle by
-candle, why each side did or didn't fire. (Column key in Part 2 §I.)
+candle, why each side did or didn't fire. (Column key in Part 2c §I.)
 
 **Why two-sided matters for you:** when price is *below* VWAP your sold-PUT is the leg in
 focus (Reversal vs Downtrend), and when price is *above* VWAP your sold-CALL is in focus
@@ -78,7 +78,7 @@ back-painted onto the old candles. The ▲★▼▽ marks come only from price/v
 
 ## C. The headline verdict — how gamma gates the call
 
-The latest candle's state (Part 2 §D) is combined with **today's gamma regime**
+The latest candle's state (Part 2b §D) is combined with **today's gamma regime**
 (`cushioned = positive gamma OR spot above the flip`):
 - **UPTREND** + cushioned → **`RIDE THE UPTREND`** (bounce confirmed, PUT side safe).
 - **UPTREND** + accelerator → **`UPTREND — BUT THIN AIR`** (ride with a trailing stop).
@@ -130,7 +130,7 @@ while you can still act.
 
 It's an **early-warning / context** tool, not a crystal ball:
 - **Updates once per candle** (every 5 or 15 min) — a fresh read at each close.
-- The genuinely *leading* parts are the **divergences** (Part 2 §B.6) and the **gamma
+- The genuinely *leading* parts are the **divergences** (Part 2a §B.6) and the **gamma
   flip line** (known in advance) — typically 1–3 candles early.
 - **Before the close:** the 🔴 LIVE close-quality row grades *today* as it forms.
 - It **shifts the odds**; it does **not** guarantee the turn. Always keep your hard stop.
