@@ -86,8 +86,9 @@ only a fraction of that — so stretch is measured against `expected_move × 0.3
 move, which matches realistic intraday extension (the old ×0.5 needed a near-full-day
 move and so under-fired). A stretch of 1.0 ≈ 0.3 of a daily EM from fair value; 2.0 (the
 cap) ≈ 0.6. *(Table col: a single signed `Stretch` — positive 🟢 above fair value,
-negative 🔴 below. Note: the dotted expected-move **band on the chart** is still the full
-±EM envelope — read it as a full-day context, not an intraday trigger.)*
+negative 🔴 below. The dotted **Stretch band on the chart** is drawn at this same
+over-extension line — VWAP ± (EM × 0.3 × 2) ≈ ±0.6 of a daily move — so a candle poking
+outside it is exactly a maxed-out Stretch, not a full-day-away outlier.)*
 
 ### B.6 Divergences (the genuinely *leading* signal)
 Comparing each candle to **6 candles earlier** (`DIV_LOOKBACK = 6`):

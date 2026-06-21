@@ -25,6 +25,17 @@ from data.live_fetcher import (
 from analytics.gamma_exposure import compute_gex
 from analytics import intraday_conviction as ic
 
+# Streamlit Cloud hot-reloads this page on each git push but keeps already-imported
+# modules cached in memory, so a freshly-pushed engine can lag the page and crash
+# (e.g. the page styles a column the stale candle_table hasn't produced yet). Force a
+# reload of the per-candle engine so the page always runs against current code — no
+# manual "Reboot app" needed after a deploy. (Pure-function module → reload is safe.)
+import importlib
+try:
+    importlib.reload(ic)
+except Exception:
+    pass
+
 st.set_page_config(page_title="P18 · Conviction Radar", layout="wide")
 st.title("Page 18 — Conviction Radar")
 st.caption("Plain-English answer to: *be patient on this fall, or get out?* · "
@@ -298,12 +309,17 @@ fig.add_trace(go.Scatter(x=x, y=df["bb_lower"], mode="lines", line=dict(width=0)
                          fill="tonexty", fillcolor="rgba(100,116,139,0.10)",
                          name="Bollinger band", hoverinfo="skip"), row=1, col=1)
 
-# Expected-move envelope around fair value (VWAP ± today's VIX-implied move)
-if expected_move_pts:
+# Stretch envelope around fair value. The full-day VIX move is too wide for an intraday
+# read, so we draw the band at the over-extension line the engine actually uses: VWAP ±
+# (EM × STRETCH_EM_FRAC × 2) = the point where the Stretch score maxes out (≈0.6× a daily
+# move). Candles poking outside it are genuinely over-stretched (mean-revert zone).
+_stretch_frac = getattr(ic, "STRETCH_EM_FRAC", 0.3)
+band_pts = expected_move_pts * _stretch_frac * 2.0
+if band_pts:
     for sgn in (1, -1):
-        fig.add_trace(go.Scatter(x=x, y=df["vwap"] + sgn * expected_move_pts, mode="lines",
+        fig.add_trace(go.Scatter(x=x, y=df["vwap"] + sgn * band_pts, mode="lines",
                                  line=dict(color="#f59e0b", width=0.8, dash="dot"),
-                                 name="Expected-move band" if sgn == 1 else None,
+                                 name="Stretch band (over-extended)" if sgn == 1 else None,
                                  showlegend=(sgn == 1), hoverinfo="skip"), row=1, col=1)
 
 fig.add_trace(go.Candlestick(
@@ -426,8 +442,10 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
         "- **Amber ▽ 'Topping — defend CALL'** — above fair value but the up-move looks exhausted (overbought, "
         "stretched, fewer stocks confirming the high). Watch your sold-CALL leg.\n"
         "- **Grey Bollinger band** — normal price envelope. Candles poking outside it = stretched (snap-back risk).\n"
-        "- **Amber dotted 'Expected-move band'** — fair value ± the move VIX expects today. Price beyond it has "
-        "travelled more than the day 'should' — extension that often mean-reverts.\n"
+        "- **Amber dotted 'Stretch band'** — fair value ± the over-extension line the engine uses "
+        "(≈0.6× the full-day VIX move). It's intentionally tighter than the whole-day move so it tracks "
+        "*intraday* extension: a candle beyond it is maximally stretched (Stretch score capped) and often "
+        "mean-reverts.\n"
         "- **Purple dashed 'Gamma flip'** — today's line in the sand from option positioning. Above it the "
         "market tends to *mean-revert* (patience/continuation favoured); below it, it tends to *trend*.\n"
         "- **RSI panel** — momentum (0–100). The green/red dots are **divergences** (price makes a new "
@@ -515,17 +533,22 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         def _state_css(v):
             return f"color:{_STATE_TXT.get(v, '#0f172a')};font-weight:700;"
 
+        # Apply each styler only to the columns that actually exist — so a version
+        # mismatch (stale engine ↔ new page) degrades to "uncoloured" instead of crashing.
+        def _m(s, func, *names):
+            cols = [n for n in names if n in ct.columns]
+            return s.map(func, subset=cols) if cols else s
+
         sty = ct.style
-        sty = sty.map(lambda v: _heat(v, _GREEN), subset=["Reversal"])
-        sty = sty.map(lambda v: _heat(v, _BLUE), subset=["Uptrend"])
-        sty = sty.map(lambda v: _heat(v, _RED), subset=["Downtr"])
-        sty = sty.map(lambda v: _heat(v, _AMBER), subset=["Topping"])
-        sty = sty.map(_net_css, subset=["Net"])
-        sty = sty.map(_rsi_css, subset=["RSI"])
-        sty = sty.map(_delta_css, subset=["ΔVWAP", "Stretch"])
-        sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S",
-                                         "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo"])
-        sty = sty.map(_state_css, subset=["State"])
+        sty = _m(sty, lambda v: _heat(v, _GREEN), "Reversal")
+        sty = _m(sty, lambda v: _heat(v, _BLUE), "Uptrend")
+        sty = _m(sty, lambda v: _heat(v, _RED), "Downtr")
+        sty = _m(sty, lambda v: _heat(v, _AMBER), "Topping")
+        sty = _m(sty, _net_css, "Net")
+        sty = _m(sty, _rsi_css, "RSI")
+        sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
+        sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo")
+        sty = _m(sty, _state_css, "State")
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
 
