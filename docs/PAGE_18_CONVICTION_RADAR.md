@@ -22,6 +22,9 @@
    - **amber ▽** = topping, *defend CALL*
 4. **Bottom table = close quality.** Grades each day's *close* HIGH / MEDIUM / LOW.
    A LOW after a late bounce = likely short-cover = gap risk. Today's row is 🔴 LIVE.
+5. **Both legs at once.** The two "BULL CASE / BEAR CASE" cards show the live score for
+   *each* condor leg side by side, and the **🔬 behind-the-scenes table** lets you audit
+   every calculation, candle by candle. (See §4.16.)
 
 **Golden rule:** this *shifts the odds and stops panic at the worst moment*. It is
 not a guarantee. Always keep your hard stop.
@@ -239,6 +242,33 @@ conflict   = (2 or more pillars fighting the direction)
   the move, since that's their job.)
 - When conflicted with no clean turn, the verdict becomes **`MIXED — STAND ASIDE`**:
   the honest "no edge, don't initiate" call.
+
+### 4.16 Two-sided view & the behind-the-scenes table (see *both* legs + every number)
+Because an Iron Condor always carries a **sold-PUT and a sold-CALL at the same time**,
+the page no longer collapses everything into one badge. Three things now expose both
+sides and every intermediate calculation:
+
+1. **"Both sides, right now" cards** — under the headline verdict, two cards show the
+   **BULL CASE** (stay / be patient) and the **BEAR CASE** (defend) *simultaneously*,
+   each with its own raw 0–100 sub-score and a heat-bar. Above VWAP these read
+   *Uptrend / Topping*; below VWAP they read *Bounce-brewing / Downtrend*. So you see
+   the case for each leg even when one side dominates the single badge.
+2. **Reads panel = all four raw scores** — the lower chart panel plots `reversal`
+   (green, be patient), `uptrend` (blue, ride it), `downtrend` (red, defend PUT) and
+   `topping` (amber, defend CALL) together, with the **55/60 trigger lines** drawn in,
+   so you watch both sides of both regimes build over the last ~7 days — not just the
+   one winning line. The purple-dotted signal-agreement % is overlaid.
+3. **🔬 Behind-the-scenes table** (collapsible, under the chart) — **one row per
+   candle**, newest first, with *every* calculation in columns: VWAP/side, RSI +
+   divergences, CVD, %B, stretch, wicks, structure (HL/LL/HH), persistence, breadth,
+   the **four raw scores side by side**, the **five pillar votes** (▲/▼/·), agreement
+   %, and the resulting **State** (colour-matched to the ▲★▼▽ chart marks). The score
+   columns are heat-shaded so you can scan where each side fired. Nothing is computed
+   here that isn't already on the chart — it just makes every number auditable,
+   candle by candle.
+
+The daily close-quality rows (below) now also show their **score build-up**
+(`base 50 ± VWAP ± range ± short-cover ± breadth = grade`) so that grade is auditable too.
 
 ---
 

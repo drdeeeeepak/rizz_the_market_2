@@ -119,6 +119,7 @@ if df.empty or not _REQUIRED.issubset(df.columns):
     st.stop()
 
 verdict = ic.live_verdict(df, gex["regime"], gex.get("spot_vs_flip_pts"))
+two_sided = ic.two_sided_verdict(df, gex.get("regime", "UNKNOWN"), gex.get("spot_vs_flip_pts"))
 markers = ic.transition_markers(df)
 scorecard = ic.pillar_scorecard(df.iloc[-1], gex.get("regime", "UNKNOWN"), gex.get("spot_vs_flip_pts"))
 cc = ic.close_conviction(df_idx, breadth=breadth if not breadth.empty else None)
@@ -173,6 +174,39 @@ with m4:
     ui.metric_card("SIGNAL AGREEMENT", f"{_conf}%",
                    sub=f"{_agree} signals agree · {_oppose} fight — higher = more trustworthy",
                    color="green" if _conf >= 67 else "red" if verdict.get("conflict") else "amber")
+
+# ── Two-sided read — BOTH condor legs are live, so show BOTH cases at once ─────
+ui.section_header("Both sides, right now (your condor has a sold-PUT *and* a sold-CALL)",
+                  "Bull case = stay / be patient · Bear case = defend — each with its raw 0–100 score")
+
+def _side_card(d, kind):
+    score = d.get("score", 0)
+    bar_w = max(2, min(100, score))
+    icon = "🟢" if kind == "bull" else "🔴"
+    title = "BULL CASE — stay / be patient" if kind == "bull" else "BEAR CASE — defend"
+    st.markdown(
+        f"<div style='background:{d['color']}18;border-left:6px solid {d['color']};"
+        f"border-radius:8px;padding:12px 16px;'>"
+        f"<div style='font-size:13px;font-weight:800;letter-spacing:.4px;color:{d['color']};"
+        f"text-transform:uppercase;'>{icon} {title}</div>"
+        f"<div style='font-size:17px;font-weight:700;color:#0f172a;margin:5px 0 2px 0;'>{d['label']}"
+        f" <span style='font-size:14px;color:#475569;font-weight:600;'>· {d['leg']}</span></div>"
+        f"<div style='display:flex;align-items:center;gap:10px;margin:6px 0;'>"
+        f"<div style='font-size:20px;font-weight:800;color:{d['color']};min-width:54px;'>{score}/100</div>"
+        f"<div style='flex:1;background:#e2e8f0;border-radius:6px;height:10px;'>"
+        f"<div style='width:{bar_w}%;background:{d['color']};height:10px;border-radius:6px;'></div></div></div>"
+        f"<div style='font-size:14px;color:#475569;line-height:1.45;'>{d['detail']}<br>"
+        f"<span style='color:#64748b;'>↳ {d['gamma']}</span></div>"
+        f"</div>", unsafe_allow_html=True)
+
+bc, kc = st.columns(2)
+with bc:
+    _side_card(two_sided["bull"], "bull")
+with kc:
+    _side_card(two_sided["bear"], "bear")
+st.caption("These are the *raw* sub-scores behind the single badge above — so you can see the case for "
+           "each leg even when one side is dominating. The same four scores are plotted candle-by-candle "
+           "in the 'reads' panel of the chart, and itemised in the 🔬 behind-the-scenes table.")
 
 # ── Conflict scorecard — exactly which signals agree vs fight right now ────────
 ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
@@ -310,18 +344,27 @@ if not _rd.empty:
                   marker=dict(symbol="circle", size=7, color="#dc2626")), row=2, col=1)
 fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
 
-# Row 3 — bull vs bear read + signal-agreement (confidence)
-fig.add_trace(go.Scatter(x=x, y=df["bull_read"], mode="lines",
-                         name="Bull read (stay/long)", line=dict(color="#16a34a", width=1.2)),
+# Row 3 — all FOUR raw scores (both sides of both regimes) + signal-agreement.
+# Greens = the bull case (be-patient / ride); red+amber = the bear case (defend PUT / CALL).
+fig.add_trace(go.Scatter(x=x, y=df["reversal_score"], mode="lines",
+                         name="Reversal (be patient)", line=dict(color="#16a34a", width=1.3)),
               row=3, col=1)
-fig.add_trace(go.Scatter(x=x, y=df["bear_read"], mode="lines",
-                         name="Bear read (defend)", line=dict(color="#dc2626", width=1.2)),
+fig.add_trace(go.Scatter(x=x, y=df["uptrend_score"], mode="lines",
+                         name="Uptrend (ride it)", line=dict(color="#0ea5e9", width=1.3, dash="dash")),
+              row=3, col=1)
+fig.add_trace(go.Scatter(x=x, y=df["downtrend_score"], mode="lines",
+                         name="Downtrend (defend PUT)", line=dict(color="#dc2626", width=1.3)),
+              row=3, col=1)
+fig.add_trace(go.Scatter(x=x, y=df["topping_score"], mode="lines",
+                         name="Topping (defend CALL)", line=dict(color="#f59e0b", width=1.3, dash="dash")),
               row=3, col=1)
 fig.add_trace(go.Scatter(x=x, y=df["confidence"], mode="lines",
                          name="Signal agreement %", line=dict(color="#a855f7", width=1.0, dash="dot")),
               row=3, col=1)
-fig.add_hline(y=55, line=dict(color="#94a3b8", width=0.8, dash="dot"), row=3, col=1)
-fig.update_yaxes(title_text="reads / agree", range=[0, 100], row=3, col=1)
+# Trigger thresholds the engine uses to fire each state.
+for yv, cc_ in ((55, "#94a3b8"), (60, "#cbd5e1")):
+    fig.add_hline(y=yv, line=dict(color=cc_, width=0.7, dash="dot"), row=3, col=1)
+fig.update_yaxes(title_text="raw scores / agree", range=[0, 100], row=3, col=1)
 
 # Row 4 — breadth (optional)
 if has_breadth:
@@ -366,12 +409,83 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
         "market tends to *mean-revert* (patience/continuation favoured); below it, it tends to *trend*.\n"
         "- **RSI panel** — momentum (0–100). The green/red dots are **divergences** (price makes a new "
         "low/high but momentum doesn't) — the *earliest* warning a move is tiring, usually 1–3 candles ahead.\n"
-        "- **Reads panel** — green **Bull read** (case to stay/long), red **Bear read** (case to defend), and "
-        "the purple dotted **Signal-agreement %**: when agreement is high the move is trustworthy; when it dips "
-        "the pillars are fighting and continuation calls are withheld.\n"
+        "- **Reads panel** — all **four raw scores** plotted together so you see both sides at once: green "
+        "**Reversal** (be patient) and blue **Uptrend** (ride it) are the *bull* case; red **Downtrend** "
+        "(defend PUT) and amber **Topping** (defend CALL) are the *bear* case. A marker on the candles fires "
+        "when a line crosses its dotted threshold (55/60). The purple dotted **Signal-agreement %** shows how "
+        "many pillars agree — when it dips, the pillars are fighting and continuation calls are withheld.\n"
         "- **Breadth panel** — % of the 50 biggest stocks above their own fair price. A bounce on *low* breadth "
         "is narrow and fragile; a fall on *low* breadth is broad and real."
     )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Behind the scenes — every per-candle calculation in one auditable table
+# ══════════════════════════════════════════════════════════════════════════════
+with st.expander("🔬 Behind the scenes — every calculation, candle by candle (newest first)"):
+    st.caption("One row per candle. Nothing is hidden: the four raw scores (🟢 bull pair · 🔴 bear pair) sit "
+               "side by side, with every input that feeds them. The score columns are heat-shaded (darker = "
+               "louder), the pillar votes show ▲ bull / ▼ bear / · flat, and the **State** column matches the "
+               "▲★▼▽ marks on the chart above. This is exactly what the engine 'saw' on each candle.")
+
+    ct = ic.candle_table(df, newest_first=True)
+    if ct.empty:
+        st.info("No candles to show.")
+    else:
+        _GREEN, _RED, _AMBER = (22, 163, 74), (220, 38, 38), (245, 158, 11)
+        _BLUE = (14, 165, 233)
+
+        def _heat(val, base):
+            try:
+                f = max(0.0, min(1.0, float(val) / 100.0))
+            except (TypeError, ValueError):
+                return ""
+            if f <= 0:
+                return "color:#94a3b8;"
+            r, g, b = base
+            rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+            txt = "#ffffff" if f > 0.55 else "#0f172a"
+            return f"background-color:rgb({rr},{gg},{bb});color:{txt};font-weight:600;"
+
+        _STATE_TXT = {"BOUNCE_BREWING": "#16a34a", "UPTREND": "#0ea5e9",
+                      "DOWNTREND": "#dc2626", "TOPPING": "#d97706", "NEUTRAL": "#94a3b8"}
+
+        def _vote_css(v):
+            return ("color:#16a34a;font-weight:700;" if v == "▲"
+                    else "color:#dc2626;font-weight:700;" if v == "▼"
+                    else "color:#cbd5e1;")
+
+        def _delta_css(v):
+            try:
+                return "color:#16a34a;font-weight:600;" if float(v) > 0 else \
+                       "color:#dc2626;font-weight:600;" if float(v) < 0 else ""
+            except (TypeError, ValueError):
+                return ""
+
+        def _state_css(v):
+            return f"color:{_STATE_TXT.get(v, '#0f172a')};font-weight:700;"
+
+        sty = ct.style
+        sty = sty.map(lambda v: _heat(v, _GREEN), subset=["Reversal"])
+        sty = sty.map(lambda v: _heat(v, _BLUE), subset=["Uptrend"])
+        sty = sty.map(lambda v: _heat(v, _RED), subset=["Downtr"])
+        sty = sty.map(lambda v: _heat(v, _AMBER), subset=["Topping"])
+        sty = sty.map(_delta_css, subset=["ΔVWAP"])
+        sty = sty.map(_vote_css, subset=["P", "M", "V", "B", "S"])
+        sty = sty.map(_state_css, subset=["State"])
+        sty = sty.set_properties(**{"font-size": "13px"})
+        sty = sty.format(na_rep="—", precision=1)
+
+        st.dataframe(sty, use_container_width=True, height=460, hide_index=True)
+
+        st.markdown(
+            "**Column key** — "
+            "`Side` above/below VWAP · `BullDiv/BearDiv` momentum divergence · `CVD↑` buyers regaining · "
+            "`%B` position in Bollinger band · `Str↑/Str↓` stretch above/below fair value (expected-moves) · "
+            "`LWick/UWick` rejection-wick fraction · `HL/LL/HH` higher-low / lower-low / higher-high · "
+            "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
+            "**`Reversal`** be-patient, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
+            "**`Topping`** defend-CALL (🔴 bear) · `P/M/V/B/S` pillar votes (Price/Momentum/Volume/Breadth/"
+            "Structure) · `Conf%` signal agreement · `State` the resulting call.")
 
 st.divider()
 
@@ -395,14 +509,33 @@ else:
         is_today = r["date"] == today_ist
         day_label = f"{r['date']} 🔴 LIVE" if is_today else str(r["date"])
         live_hint = (" <i>(in progress — firms up toward 3:30)</i>" if is_today else "")
+        # Score build-up so the grade is auditable (base 50 ± each factor).
+        def _chip(lbl, val):
+            if not val:
+                return ""
+            c = "#16a34a" if val > 0 else "#dc2626"
+            return (f"<span style='font-size:13px;color:{c};background:{c}14;border-radius:4px;"
+                    f"padding:1px 6px;margin-right:4px;white-space:nowrap;'>{lbl} {val:+d}</span>")
+        breakdown = ("".join([
+            "<span style='font-size:13px;color:#64748b;margin-right:4px;'>base 50</span>",
+            _chip("VWAP", int(r.get("c_vwap", 0))),
+            _chip("range", int(r.get("c_loc", 0))),
+            _chip("short-cover", int(r.get("c_shortcover", 0))),
+            _chip("breadth", int(r.get("c_breadth", 0))),
+            f"<span style='font-size:13px;color:{col};font-weight:700;margin-left:2px;'>"
+            f"= {int(r.get('score', 0))}/100</span>",
+        ]))
         st.markdown(
-            f"<div style='display:flex;gap:14px;align-items:center;padding:8px 12px;"
-            f"border-left:5px solid {col};background:{col}10;border-radius:6px;margin-bottom:6px;'>"
+            f"<div style='border-left:5px solid {col};background:{col}10;border-radius:6px;"
+            f"margin-bottom:6px;padding:8px 12px;'>"
+            f"<div style='display:flex;gap:14px;align-items:center;'>"
             f"<div style='font-size:16px;font-weight:800;color:{col};min-width:70px;'>{r['grade']}</div>"
             f"<div style='font-size:16px;min-width:130px;color:#0f172a;font-weight:600;'>{day_label}</div>"
             f"<div style='font-size:16px;min-width:80px;color:#334155;'>close {r['close']:,}</div>"
             f"<div style='color:#475569;font-size:16px;'>"
             f"closed {r['close_location']}% up the day's range · {vwap_txt} · {bounce_txt}{extra}{live_hint}</div>"
+            f"</div>"
+            f"<div style='margin-top:6px;'>{breakdown}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )

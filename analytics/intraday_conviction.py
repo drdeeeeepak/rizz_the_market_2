@@ -475,6 +475,137 @@ def live_verdict(df: pd.DataFrame, gamma_regime: str, spot_vs_flip: float) -> di
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Two-sided verdict — BOTH legs of the condor are always live, so show BOTH cases
+# ══════════════════════════════════════════════════════════════════════════════
+# The live_verdict() above collapses everything into ONE badge (the dominant
+# state). But an Iron Condor seller always carries a sold-PUT *and* a sold-CALL,
+# so the honest read is two-sided: how loud is the BULL case (stay / be patient)
+# vs the BEAR case (defend) right now — using the raw sub-scores, not the merge.
+
+def two_sided_verdict(df: pd.DataFrame, gamma_regime: str = "UNKNOWN",
+                      spot_vs_flip=None) -> dict:
+    """
+    Return {'bull': {...}, 'bear': {...}} for the latest candle, each with a
+    plain-English label + 0-100 score, so both sides are visible at once.
+      bull  = the case for staying / patience  (above VWAP → uptrend/ride,
+                                                 below VWAP → bounce-brewing/be-patient)
+      bear  = the case for defending           (above VWAP → topping/defend-CALL,
+                                                 below VWAP → downtrend/defend-PUT)
+    """
+    if df is None or df.empty:
+        z = {"label": "—", "leg": "", "score": 0, "color": "#64748b", "detail": "No data."}
+        return {"bull": dict(z), "bear": dict(z)}
+
+    last = df.iloc[-1]
+    above = bool(last.get("above_vwap", False))
+    rev = int(last.get("reversal_score", 0))
+    up = int(last.get("uptrend_score", 0))
+    down = int(last.get("downtrend_score", 0))
+    top = int(last.get("topping_score", 0))
+
+    def _intensity(base_hex_dark, base_hex_light, score):
+        # brighter / more saturated as the score climbs (visual heat)
+        return base_hex_dark if score >= 60 else base_hex_light
+
+    if above:
+        bull = {"label": "Uptrend — ride it", "leg": "sold-PUT safer", "score": up,
+                "color": _intensity("#16a34a", "#86efac", up),
+                "detail": "Holding above fair value with higher lows / buyers."}
+        bear = {"label": "Topping — defend CALL", "leg": "sold-CALL at risk", "score": top,
+                "color": _intensity("#f59e0b", "#fcd34d", top),
+                "detail": "Above fair value but the up-move looks tired."}
+    else:
+        bull = {"label": "Bounce brewing — be patient", "leg": "sold-PUT relief", "score": rev,
+                "color": _intensity("#10b981", "#6ee7b7", rev),
+                "detail": "Below fair value but the fall looks stretched / tired."}
+        bear = {"label": "Downtrend — defend PUT", "leg": "sold-PUT at risk", "score": down,
+                "color": _intensity("#ef4444", "#fca5a5", down),
+                "detail": "Persistent below fair value — a real trend down."}
+
+    # Dealer-gamma context tilts which side to trust more (today-only).
+    cushioned = (gamma_regime == "POSITIVE") or ((spot_vs_flip or 0) >= 0)
+    bull["gamma"] = "dealers cushion dips (helps the bull case)" if cushioned \
+        else "dealers in accelerator mode (bull case weaker)"
+    bear["gamma"] = "dealers amplify moves (helps the bear case)" if not cushioned \
+        else "dealers cushion moves (bear case weaker)"
+    return {"bull": bull, "bear": bear, "above_vwap": above}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Behind-the-scenes — every per-candle calculation as one tidy table
+# ══════════════════════════════════════════════════════════════════════════════
+# Nothing new is computed here: we only RE-EXPOSE the columns enrich() already
+# produced so a trader can audit, candle by candle, exactly why a marker did or
+# did not fire — both the BULL sub-scores and the BEAR sub-scores side by side.
+
+_VOTE_ARROW = {1: "▲", -1: "▼", 0: "·"}
+
+
+def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
+    """
+    Build a display DataFrame: one row per candle, every calculation in columns,
+    grouped Price → Momentum → Volume → Stretch → Structure → Breadth →
+    the 4 raw scores (bull pair / bear pair) → pillar votes → confidence → state.
+    Returns plain values (the page applies the colour heat-map).
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    d = df.copy()
+
+    def _b(col, mark="●"):
+        return np.where(d.get(col, False).astype(bool), mark, "") if col in d else ""
+
+    def _persist():
+        out = np.where(d.get("persist_above", False), "↑3",
+                       np.where(d.get("persist_below", False), "↓3", ""))
+        return out
+
+    t = pd.DataFrame(index=d.index)
+    t["Time"] = [ix.strftime("%d-%b %H:%M") for ix in d.index]
+    t["Open"] = d["open"].round(1)
+    t["High"] = d["high"].round(1)
+    t["Low"] = d["low"].round(1)
+    t["Close"] = d["close"].round(1)
+    t["VWAP"] = d["vwap"].round(1)
+    t["ΔVWAP"] = (d["close"] - d["vwap"]).round(1)
+    t["Side"] = np.where(d["above_vwap"], "above", np.where(d["below_vwap"], "below", "at"))
+    t["RSI"] = d["rsi"].round(1)
+    t["BullDiv"] = _b("rsi_bull_div", "▲")
+    t["BearDiv"] = _b("rsi_bear_div", "▼")
+    t["CVD"] = d["cvd"].round(0)
+    t["CVD↑"] = _b("cvd_up", "▲")
+    t["CVDdiv"] = _b("cvd_bull_div", "▲")
+    t["%B"] = d["pct_b"].round(2)
+    t["Str↑"] = d["stretch_up"].round(2)
+    t["Str↓"] = d["stretch_down"].round(2)
+    t["LWick"] = d["lower_wick_frac"].round(2)
+    t["UWick"] = d["upper_wick_frac"].round(2)
+    t["HL"] = _b("higher_low")
+    t["LL"] = _b("lower_low")
+    t["HH"] = _b("higher_high")
+    t["Persist"] = _persist()
+    t["Brd%"] = d["breadth"].round(0)
+    # ── the two sides, side by side ───────────────────────────────────────────
+    t["Reversal"] = d["reversal_score"].astype(int)     # 🟢 be patient
+    t["Uptrend"] = d["uptrend_score"].astype(int)       # 🟢 ride it
+    t["Downtr"] = d["downtrend_score"].astype(int)      # 🔴 defend PUT
+    t["Topping"] = d["topping_score"].astype(int)       # 🔴 defend CALL
+    # ── pillar votes ──────────────────────────────────────────────────────────
+    t["P"] = [_VOTE_ARROW.get(int(v), "·") for v in d["bias"]]
+    t["M"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_mom"]]
+    t["V"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_vol"]]
+    t["B"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_brd"]]
+    t["S"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_str"]]
+    t["Agree"] = d["agree_count"].astype(int)
+    t["Oppose"] = d["oppose_count"].astype(int)
+    t["Conf%"] = d["confidence"].astype(int)
+    t["State"] = d["state"]
+
+    return t.iloc[::-1] if newest_first else t
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Close Conviction — was the LATE-DAY move trustworthy? (per trading day)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -518,17 +649,18 @@ def close_conviction(df: pd.DataFrame, breadth: pd.Series = None) -> pd.DataFram
 
         late_bounce = last_ret > 0 and close_loc > 0.55 and (close - open_) >= 0
 
-        # Score the trustworthiness of an up-close.
-        score = 50
-        score += 18 if close_vs_vwap > 0 else -18             # closed above/below fair value
-        score += 12 if close_loc > 0.7 else (-12 if close_loc < 0.4 else 0)
-        if late_bounce and vol_backloaded and close_vs_vwap < 0:
-            score -= 25                                       # classic short-cover into the close
+        # Score the trustworthiness of an up-close (keep each contribution so the
+        # page can show exactly how the grade was built).
+        c_base = 50
+        c_vwap = 18 if close_vs_vwap > 0 else -18            # closed above/below fair value
+        c_loc = 12 if close_loc > 0.7 else (-12 if close_loc < 0.4 else 0)
+        c_shortcover = -25 if (late_bounce and vol_backloaded and close_vs_vwap < 0) else 0
+        c_breadth = 0
         if breadth is not None and not breadth.empty:
             br_close = breadth.reindex(g.index, method="nearest").iloc[-1]
             if pd.notna(br_close):
-                score += 10 if br_close > 55 else (-10 if br_close < 40 else 0)
-        score = int(np.clip(score, 0, 100))
+                c_breadth = 10 if br_close > 55 else (-10 if br_close < 40 else 0)
+        score = int(np.clip(c_base + c_vwap + c_loc + c_shortcover + c_breadth, 0, 100))
 
         if score >= 65:
             grade, gtext = "HIGH", "Strong, trustworthy close — backed by fair-value & participation."
@@ -550,6 +682,11 @@ def close_conviction(df: pd.DataFrame, breadth: pd.Series = None) -> pd.DataFram
             "vol_backloaded": vol_backloaded,
             "grade": grade,
             "score": score,
+            "c_base": c_base,
+            "c_vwap": c_vwap,
+            "c_loc": c_loc,
+            "c_shortcover": c_shortcover,
+            "c_breadth": c_breadth,
             "plain": gtext,
             "note": note,
         })
