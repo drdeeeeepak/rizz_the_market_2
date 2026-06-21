@@ -75,14 +75,19 @@ Two CVD-direction reads, for two different jobs:
 
 ### B.5 Expected move & Stretch (is the move over-extended?)
 ```
-expected_move = spot × (VIX / 100) / 16        # one-day move, in points
+expected_move = spot × (VIX / 100) / 16        # FULL-DAY one-sigma move, in points
                 (fallback = 0.6% of spot if VIX is missing)
-stretch_down  = (VWAP − close) / (expected_move × 0.5)   # only when below VWAP
-stretch_up    = (close − VWAP) / (expected_move × 0.5)   # only when above VWAP
+stretch_down  = (VWAP − close) / (expected_move × 0.3)   # only when below VWAP
+stretch_up    = (close − VWAP) / (expected_move × 0.3)   # only when above VWAP
 ```
-A stretch of 1.0 = half an expected-move from fair value; 2.0+ is very stretched
-(mean-reversion odds rise). Stretch is capped at 2 in the scoring. *(Table col: a single
-signed `Stretch` — positive 🟢 when above fair value, negative 🔴 when below.)*
+The `expected_move` is a **full-day** move, but price's deviation *from VWAP* intraday is
+only a fraction of that — so stretch is measured against `expected_move × 0.3`
+(`STRETCH_EM_FRAC`). That means stretch reaches its cap of 2 at ~0.6 of a daily expected
+move, which matches realistic intraday extension (the old ×0.5 needed a near-full-day
+move and so under-fired). A stretch of 1.0 ≈ 0.3 of a daily EM from fair value; 2.0 (the
+cap) ≈ 0.6. *(Table col: a single signed `Stretch` — positive 🟢 above fair value,
+negative 🔴 below. Note: the dotted expected-move **band on the chart** is still the full
+±EM envelope — read it as a full-day context, not an intraday trigger.)*
 
 ### B.6 Divergences (the genuinely *leading* signal)
 Comparing each candle to **6 candles earlier** (`DIV_LOOKBACK = 6`):

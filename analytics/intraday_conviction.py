@@ -39,6 +39,11 @@ RSI_PERIOD = 14
 BB_PERIOD = 20
 DIV_LOOKBACK = 6        # candles back to compare for divergence / swing structure
 PERSIST = 3             # consecutive candles needed to call a move "persistent"
+# Stretch denominator as a fraction of the full-day expected move. The EM is a *full-day*
+# 1-sigma move, but intraday deviation from VWAP is a fraction of that, so we measure
+# stretch against EM × this factor (0.3 ⇒ stretch hits its cap at ~0.6 of a daily EM,
+# which matches realistic intraday extension). Lower = stretch fires more readily.
+STRETCH_EM_FRAC = 0.3
 REVERSAL_THRESH = 60    # below VWAP + tired → bounce brewing (be patient)
 DOWNTREND_THRESH = 58   # below VWAP + persistent → defend PUT
 UPTREND_THRESH = 55     # above VWAP + continuation confirmed → ride it
@@ -122,9 +127,9 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     df["above_vwap"] = df["close"] > df["vwap"]
 
     # Stretch above/below VWAP, measured in "expected daily moves".
-    em_half = max(expected_move_pts * 0.5, 1.0)
-    df["stretch_down"] = ((df["vwap"] - df["close"]) / em_half).clip(lower=0)
-    df["stretch_up"] = ((df["close"] - df["vwap"]) / em_half).clip(lower=0)
+    em_unit = max(expected_move_pts * STRETCH_EM_FRAC, 1.0)
+    df["stretch_down"] = ((df["vwap"] - df["close"]) / em_unit).clip(lower=0)
+    df["stretch_up"] = ((df["close"] - df["vwap"]) / em_unit).clip(lower=0)
 
     # Rejection wicks: long lower wick = buyers stepping in; long upper wick = sellers.
     rng = (df["high"] - df["low"]).replace(0, np.nan)
