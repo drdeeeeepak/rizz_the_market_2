@@ -605,6 +605,10 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["Conf%"] = d["confidence"].astype(int)
     t["State"] = d["state"]
 
+    # Lead with the verdict-level signals; push the raw price/VWAP/CVD inputs to the end.
+    _tail = ["Open", "High", "Low", "Close", "VWAP", "CVD"]
+    t = t[[c for c in t.columns if c not in _tail] + _tail]
+
     return t.iloc[::-1] if newest_first else t
 
 

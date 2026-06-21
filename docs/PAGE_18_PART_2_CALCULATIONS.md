@@ -238,12 +238,12 @@ A collapsible table under the chart, **one row per candle, newest first**, re-ex
 the columns above so you can audit exactly why a marker did or did not fire. Nothing new
 is computed — it just makes every number visible.
 
-**Column key**
-`Time · O/H/L/C` · `VWAP` `ΔVWAP` `Side` (above/below) · `RSI` `BullDiv` `BearDiv` ·
-`CVD` `CVD↑` `CVDdiv` (▲ bull / ▼ bear volume divergence) · `%B` `Str↑` `Str↓` `LWick`
-`UWick` · `HL` `LL` `HH` `Persist`
-(↑3/↓3) · `Brd%` · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`**
-(🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` `Conf%` · `State`.
+**Column key** (signals lead; raw price/VWAP/CVD inputs are pushed to the far right)
+`Time` · `ΔVWAP` `Side` (above/below) · `RSI` `BullDiv` `BearDiv` · `CVD↑` `CVDdiv`
+(▲ bull / ▼ bear volume divergence) · `%B` `Str↑` `Str↓` `LWick` `UWick` · `HL` `LL`
+`HH` `Persist` (↑3/↓3) · `Brd%` · **`Reversal` `Uptrend`** (🟢 bull pair) ·
+**`Downtr` `Topping`** (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree`
+`Oppose` `Conf%` · `State` · *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns are **heat-shaded** (darker = louder), so scan
 across a row to see which side is winning; the `State` text colour matches the
