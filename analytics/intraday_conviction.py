@@ -137,6 +137,7 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     df["rsi_bull_div"] = px_ll & (df["rsi"] > df["rsi"].shift(DIV_LOOKBACK))
     df["cvd_bull_div"] = px_ll & (df["cvd"] > df["cvd"].shift(DIV_LOOKBACK))
     df["rsi_bear_div"] = px_hh & (df["rsi"] < df["rsi"].shift(DIV_LOOKBACK))
+    df["cvd_bear_div"] = px_hh & (df["cvd"] < df["cvd"].shift(DIV_LOOKBACK))   # buying drying up at the high
     df["lower_low"] = px_ll
     df["higher_high"] = px_hh
 
@@ -306,6 +307,7 @@ def _topping_score(df: pd.DataFrame) -> pd.Series:
     s += np.where(df["rsi"] > 70, 25, 0)                                      # overbought
     s += np.where(df["stretch_up"] > 1.2, 20, 0)                              # stretched far above fair value
     s += np.where(df["rsi_bear_div"], 18, 0)                                  # higher high, momentum fading
+    s += np.where(df["cvd_bear_div"], 18, 0)                                  # buying drying up (mirror of cvd_bull_div)
     s += np.where(df["breadth_div_down"], 17, 0)                              # fewer stocks confirming the high
     s += np.where(df["upper_wick_frac"] > 0.4, 12, 0)                         # rejection wick at the top
     return s.clip(0, 100).round()
@@ -575,7 +577,8 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["BearDiv"] = _b("rsi_bear_div", "▼")
     t["CVD"] = d["cvd"].round(0)
     t["CVD↑"] = _b("cvd_up", "▲")
-    t["CVDdiv"] = _b("cvd_bull_div", "▲")
+    t["CVDdiv"] = np.where(d["cvd_bull_div"].astype(bool), "▲",
+                           np.where(d["cvd_bear_div"].astype(bool), "▼", ""))
     t["%B"] = d["pct_b"].round(2)
     t["Str↑"] = d["stretch_up"].round(2)
     t["Str↓"] = d["stretch_down"].round(2)

@@ -79,8 +79,11 @@ price_higher_high= high > high[6 bars ago]
 RSI bull div = price_lower_low  AND RSI > RSI[6 ago]   # momentum not confirming the low
 CVD bull div = price_lower_low  AND CVD > CVD[6 ago]   # selling drying up
 RSI bear div = price_higher_high AND RSI < RSI[6 ago]  # momentum not confirming the high
+CVD bear div = price_higher_high AND CVD < CVD[6 ago]  # buying drying up at the high
 ```
-*(Table cols: `BullDiv`, `BearDiv`, `CVDdiv`, `LL`, `HH`.)*
+The bull and bear sides are **symmetric**: each gets both a momentum (RSI) *and* a
+volume (CVD) divergence input. *(Table cols: `BullDiv`, `BearDiv`, `LL`, `HH`, and
+`CVDdiv` shows ▲ for a bullish CVD divergence / ▼ for a bearish one.)*
 
 ### B.7 Rejection wicks (who stepped in)
 ```
@@ -151,8 +154,12 @@ The **strict** continuation signal: a bounce only counts as *continuing* when re
 | Overbought (RSI > 70) | +25 |
 | Stretched far above fair value (stretch-up > 1.2) | +20 |
 | Higher high but momentum fading (bearish RSI divergence) | +18 |
+| Higher high but **buying drying up** (bearish CVD divergence) | +18 |
 | Fewer stocks confirming the high (breadth diverging down) | +17 |
 | Long upper rejection wick (>0.4) | +12 |
+
+This mirrors the Reversal side (§C.1), which gets both an RSI **and** a CVD bullish
+divergence — so neither leg is better-confirmed than the other.
 
 ---
 
@@ -233,7 +240,8 @@ is computed — it just makes every number visible.
 
 **Column key**
 `Time · O/H/L/C` · `VWAP` `ΔVWAP` `Side` (above/below) · `RSI` `BullDiv` `BearDiv` ·
-`CVD` `CVD↑` `CVDdiv` · `%B` `Str↑` `Str↓` `LWick` `UWick` · `HL` `LL` `HH` `Persist`
+`CVD` `CVD↑` `CVDdiv` (▲ bull / ▼ bear volume divergence) · `%B` `Str↑` `Str↓` `LWick`
+`UWick` · `HL` `LL` `HH` `Persist`
 (↑3/↓3) · `Brd%` · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`**
 (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` `Conf%` · `State`.
 
