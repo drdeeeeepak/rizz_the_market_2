@@ -533,6 +533,28 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         def _state_css(v):
             return f"color:{_STATE_TXT.get(v, '#0f172a')};font-weight:700;"
 
+        # Conf% coloured by whether the prevailing lean is bull (green) or bear (red) —
+        # driven by the sign of Net — with intensity = the confidence value. Needs the
+        # row (two columns), so it's a row-wise apply rather than a per-cell map.
+        def _conf_row(row):
+            out = pd.Series("", index=row.index)
+            if "Conf%" not in row.index:
+                return out
+            try:
+                conf = float(row["Conf%"])
+                net = float(row["Net"]) if "Net" in row.index else 0.0
+            except (TypeError, ValueError):
+                return out
+            f = min(1.0, conf / 100.0)
+            if f < 0.05 or net == 0:
+                out["Conf%"] = "color:#94a3b8;"
+                return out
+            r, g, b = (22, 163, 74) if net > 0 else (220, 38, 38)
+            rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+            txt = "#ffffff" if f > 0.55 else "#0f172a"
+            out["Conf%"] = f"background-color:rgb({rr},{gg},{bb});color:{txt};font-weight:700;"
+            return out
+
         # Apply each styler only to the columns that actually exist — so a version
         # mismatch (stale engine ↔ new page) degrades to "uncoloured" instead of crashing.
         def _m(s, func, *names):
@@ -549,26 +571,30 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo")
         sty = _m(sty, _state_css, "State")
+        if {"Conf%", "Net"}.issubset(ct.columns):
+            sty = sty.apply(_conf_row, axis=1)
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
 
         st.dataframe(sty, use_container_width=True, height=460, hide_index=True)
 
         st.markdown(
-            "**Column key** — "
+            "**Column key** (results lead, then the inputs that produced them) — "
+            "**`State`** the resulting call · **`Net`** = bull-read − bear-read, the single directional "
+            "conviction (🟢 + stay / 🔴 − defend) · **`Conf%`** signal agreement, tinted 🟢 when the lean is "
+            "bullish / 🔴 when bearish (darker = stronger) · "
             "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation <30 · "
             "🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · "
             "`RSIdiv` RSI divergence (🟢▲ bull / 🔴▼ bear) · `CVD↑` CVD rose vs the *previous* candle (🟢▲) · "
             "`CVDdiv` 6-bar volume divergence (🟢▲/🔴▼) · "
             "`Hi/Lo` swing-high / swing-low direction (🟢▲ higher · 🔴▼ lower) — read as a pair: "
             "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
+            "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
+            "**`Topping`** defend-CALL (🔴 bear) · "
             "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
             "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
             "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
-            "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
-            "**`Topping`** defend-CALL (🔴 bear) · **`Net`** = bull-read − bear-read, the single "
-            "directional conviction (🟢 + stay / 🔴 − defend) · `P/M/V/B/S` pillar votes · "
-            "`Conf%` signal agreement · `State` the resulting call.")
+            "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
 
 st.divider()
 

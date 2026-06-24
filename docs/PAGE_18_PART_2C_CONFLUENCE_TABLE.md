@@ -46,18 +46,20 @@ A collapsible table under the chart, **one row per candle, newest first**, re-ex
 the columns above so you can audit exactly why a marker did or did not fire. Nothing new
 is computed — it just makes every number visible.
 
-**Column key** (signals lead; raw price/VWAP/CVD inputs are pushed to the far right)
-`Time` · `ΔVWAP` (close − fair value) · `RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend
-30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲ bull /
-🔴▼ bear RSI divergence) · `CVD↑` (🟢▲ CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲
-bull / 🔴▼ bear 6-bar volume divergence) · `Hi` `Lo` (swing-high / swing-low direction —
-🟢▲ higher / 🔴▼ lower; read as a pair: ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside)
+**Column key** — the **results lead**, then the inputs that produced them, raw price last:
+
+`Time` · **`State`** (the resulting call) · **`Net`** (bull-read − bear-read, the single
+directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Conf%`** (signal
+agreement, tinted 🟢 when the prevailing lean is bullish / 🔴 when bearish, darker =
+stronger) · `ΔVWAP` (close − fair value) · `RSI` (banded: 🟣 capitulation <30 · 🔴
+downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲
+bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲ CVD rose vs the *previous* candle) · `CVDdiv`
+(🟢▲ bull / 🔴▼ bear 6-bar volume divergence) · `Hi` `Lo` (swing-high / swing-low direction
+— 🟢▲ higher / 🔴▼ lower; read as a pair: ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲
+inside) · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair)
 · `%B` · `Stretch` (one signed column — 🟢 + above fair value / 🔴 − below) · `LWick`
-`UWick` · `Persist` (↑3/↓3) · `Brd%` · **`Reversal` `Uptrend`** (🟢 bull pair) ·
-**`Downtr` `Topping`** (🔴 bear pair) · **`Net`** (bull-read − bear-read, the single
-directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · `P/M/V/B/S` pillar votes
-(▲/▼/·) · `Agree` `Oppose` `Conf%` · `State` · *then at the end:* `Open` `High` `Low`
-`Close` `VWAP` `CVD`.
+`UWick` · `Persist` (↑3/↓3) · `Brd%` · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose`
+· *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns and `Net` are **heat-shaded** (darker = louder),
 so scan a row to see which side is winning and how strongly; the arrow columns are
