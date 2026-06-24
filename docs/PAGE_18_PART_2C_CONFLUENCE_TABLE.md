@@ -58,8 +58,9 @@ bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲ CVD rose vs the *previo
 — 🟢▲ higher / 🔴▼ lower; read as a pair: ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲
 inside) · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair)
 · `%B` (band position — 🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` (signed — 🟢 +
-above fair value / 🔴 − below) · `LWick` (lower wick = buyers, 🟢) `UWick` (upper wick =
-sellers, 🔴) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · `Brd%` (🟢 >55 broad / 🔴 <45
+above fair value / 🔴 − below) · `LWick` (🟢 bullish lower side — long lower wick *or*
+green body with no lower wick) `UWick` (🔴 bearish upper side — long upper wick *or* red
+body with no upper wick) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · `Brd%` (🟢 >55 broad / 🔴 <45
 weak) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` · *then at the end:* `Open`
 `High` `Low` `Close` `VWAP` `CVD`.
 

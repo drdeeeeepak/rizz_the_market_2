@@ -544,16 +544,33 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             txt = "#ffffff" if f > 0.55 else "#0f172a"
             return f"background-color:rgb({rr},{gg},{bb});color:{txt};font-weight:600;"
 
-        # Rejection wicks (0..1): long lower wick = buyers (green), long upper = sellers
-        # (red). Below ~0.25 it isn't a meaningful tail → leave grey.
-        def _wick_css(v, base, lo=0.25):
+        # Wick columns coloured by who controlled that side of the candle — combining
+        # wick size AND body direction, so each captures TWO bullish/bearish reads:
+        #   LWick 🟢 = long lower wick (buyers rejected the low)  OR  green body with a
+        #             small lower wick (opened low, rose = bullish momentum/marubozu).
+        #   UWick 🔴 = long upper wick (sellers rejected the high) OR  red body with a
+        #             small upper wick (opened high, fell = bearish momentum/marubozu).
+        # Needs the body (open/close), so it's a row-wise apply, not a per-cell map.
+        # Note: the displayed number is still the wick fraction, so a green-momentum
+        # candle shows a SMALL LWick number but a green fill (that's the point).
+        def _wick_row(row):
+            out = pd.Series("", index=row.index)
             try:
-                x = float(v)
-            except (TypeError, ValueError):
-                return ""
-            if x < lo:
-                return "color:#94a3b8;"
-            return _bg(base, (x - lo) / (1.0 - lo))
+                o, h, l, c = (float(row[k]) for k in ("Open", "High", "Low", "Close"))
+            except (TypeError, ValueError, KeyError):
+                return out
+            rng = h - l
+            if rng <= 0:
+                return out
+            lw, uw = (min(o, c) - l) / rng, (h - max(o, c)) / rng
+            body = abs(c - o) / rng
+            if "LWick" in row.index:
+                f = lw if lw >= 0.25 else (body if (c > o and lw < 0.15) else 0.0)
+                out["LWick"] = _bg(_GREEN, f) if f >= 0.1 else "color:#94a3b8;"
+            if "UWick" in row.index:
+                f = uw if uw >= 0.25 else (body if (c < o and uw < 0.15) else 0.0)
+                out["UWick"] = _bg(_RED, f) if f >= 0.1 else "color:#94a3b8;"
+            return out
 
         # Breadth %: >55 broad strength (green), <45 broad weakness (red), 45–55 neutral.
         def _brd_css(v):
@@ -616,14 +633,15 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _net_css, "Net")
         sty = _m(sty, _rsi_css, "RSI")
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
-        sty = _m(sty, lambda v: _wick_css(v, _GREEN), "LWick")
-        sty = _m(sty, lambda v: _wick_css(v, _RED), "UWick")
         sty = _m(sty, _brd_css, "Brd%")
         sty = _m(sty, _pctb_css, "%B")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo", "Persist")
         sty = _m(sty, _state_css, "State")
         if {"Conf%", "Net"}.issubset(ct.columns):
             sty = sty.apply(_conf_row, axis=1)
+        if {"Open", "High", "Low", "Close"}.issubset(ct.columns) and \
+                ({"LWick", "UWick"} & set(ct.columns)):
+            sty = sty.apply(_wick_row, axis=1)
         sty = sty.set_properties(**{"font-size": "13px"})
         sty = sty.format(na_rep="—", precision=1)
 
@@ -643,8 +661,10 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · "
             "`%B` band position (🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` signed stretch from fair "
-            "value (🟢 + above / 🔴 − below, in expected-moves) · `LWick` lower-wick = buyers (🟢) / `UWick` "
-            "upper-wick = sellers (🔴) · `Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
+            "value (🟢 + above / 🔴 − below, in expected-moves) · `LWick` 🟢 bullish lower side — long lower "
+            "wick (buyers rejected the low) *or* a green body with no lower wick (rose from the open) · "
+            "`UWick` 🔴 bearish upper side — long upper wick (sellers) *or* a red body with no upper wick · "
+            "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
             "`Brd%` breadth (🟢 >55 broad / 🔴 <45 weak) · "
             "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
 

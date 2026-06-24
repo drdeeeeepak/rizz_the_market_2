@@ -107,12 +107,24 @@ both** (bull needs RSI up, bear needs RSI down), so each is a single signed colu
 the CVD one. The price lower-low / higher-high themselves show in the `Hi`/`Lo` swing
 columns — see B.8.)*
 
-### B.7 Rejection wicks (who stepped in)
+### B.7 Wicks — who controlled each side (rejection *and* momentum)
 ```
 lower_wick_frac = (min(open, close) − low) / (high − low)   # long lower tail = buyers
 upper_wick_frac = (high − max(open, close)) / (high − low)  # long upper tail = sellers
 ```
-`> 0.4` = a long rejection tail. *(Table cols: `LWick`, `UWick`.)*
+`> 0.4` = a long rejection tail. The **scores** use the rejection reading
+(`lower_wick_frac > 0.4` → buyers; `upper_wick_frac > 0.4` → sellers).
+
+The **table colour** goes one step further and pairs the wick with the *body direction*,
+so each column captures **two** bullish/bearish candle shapes:
+- `LWick` 🟢 = a **long lower wick** (buyers rejected the low) *or* a **green body with no
+  lower wick** (opened on its low and rose — a bullish momentum / marubozu candle).
+- `UWick` 🔴 = a **long upper wick** (sellers rejected the high) *or* a **red body with no
+  upper wick** (opened on its high and fell — a bearish momentum candle).
+
+So a clean green marubozu shows a *small* `LWick` number but a green fill (the colour
+reflects body-confirmed control, not just tail size). A red candle that closes on its low
+shows a small `LWick` left grey and a red `UWick`. *(Table cols: `LWick` 🟢, `UWick` 🔴.)*
 
 ### B.8 Swing structure & persistence
 Four swing flags, compared to **6 candles earlier**, give a *symmetric* read of the
