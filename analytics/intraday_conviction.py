@@ -461,7 +461,7 @@ def live_verdict(df: pd.DataFrame, gamma_regime: str, spot_vs_flip: float) -> di
                   "watch now — tighten it or be ready if price rolls back under VWAP.")
     elif state == "BOUNCE_BREWING":
         if cushioned:
-            badge, color = "BE PATIENT", "#10b981"
+            badge, color = "BOUNCE BREWING", "#10b981"
             headline = "Falling, but the move looks tired AND dealers cushion dips."
             detail = (f"Bull-read {bull}/100. Stretched, momentum fading, big players in shock-absorber mode. "
                       "Booking the loss right at the low is usually the worst moment — wait for a VWAP reclaim "
@@ -526,7 +526,7 @@ def two_sided_verdict(df: pd.DataFrame, gamma_regime: str = "UNKNOWN",
                 "color": _intensity("#f59e0b", "#fcd34d", top),
                 "detail": "Above fair value but the up-move looks tired."}
     else:
-        bull = {"label": "Bounce brewing — be patient", "leg": "sold-PUT relief", "score": rev,
+        bull = {"label": "Bounce brewing", "leg": "sold-PUT relief", "score": rev,
                 "color": _intensity("#10b981", "#6ee7b7", rev),
                 "detail": "Below fair value but the fall looks stretched / tired."}
         bear = {"label": "Downtrend — defend PUT", "leg": "sold-PUT at risk", "score": down,

@@ -16,7 +16,7 @@ Each is 0–100, summed from the Part 2a inputs, then capped. **These are the he
 two-sided view** — Part 1's Bull/Bear cards and the chart's reads panel are just these
 four lines. *(Table cols: `Reversal`, `Uptrend`, `Downtr`, `Topping`.)*
 
-### C.1 Reversal — "be patient" (🟢 bull, only meaningful **below** VWAP)
+### C.1 Reversal — "bounce brewing" (🟢 bull, only meaningful **below** VWAP)
 | Condition | Points |
 |---|---|
 | Stretched below fair value | `min(stretch, 2) × 18`  (max 36) |
@@ -84,7 +84,7 @@ confirmed uptrend** — fixing the "defend arrows all over a rally" problem. *(T
 
 Instead of two collapsed lines, the panel plots **all four raw scores together** so you
 watch both sides of both regimes build over ~7 days:
-- green **Reversal** (be patient) and blue **Uptrend** (ride it) = the *bull* case;
+- green **Reversal** (bounce brewing) and blue **Uptrend** (ride it) = the *bull* case;
 - red **Downtrend** (defend PUT) and amber **Topping** (defend CALL) = the *bear* case.
 
 The dotted lines at **55** and **60** are the trigger thresholds; a chart marker fires

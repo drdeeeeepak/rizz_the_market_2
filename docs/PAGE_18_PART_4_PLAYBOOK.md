@@ -10,7 +10,7 @@
 
 ## 1. You're short a PUT and the market is falling
 
-1. **Headline card.** `BE PATIENT` → don't book at the low; wait for a VWAP reclaim.
+1. **Headline card.** `BOUNCE BREWING` → don't book at the low; wait for a VWAP reclaim.
    `DEFEND PUT — real downtrend` → manage the leg, no V coming.
 2. **Both-sides cards (Part 3 §A).** Watch the 🟢 BULL CASE *Reversal* score vs the
    🔴 BEAR CASE *Downtrend* score. Reversal climbing while Downtrend stalls = the fall
@@ -66,7 +66,7 @@ This is the fastest way to build trust in (or healthy skepticism of) the signals
 
 | Mark | State | Plain meaning | Your leg |
 |---|---|---|---|
-| green **▲** | BOUNCE_BREWING | fall looks tired — be patient | sold-PUT relief building |
+| green **▲** | BOUNCE_BREWING | fall looks tired — bounce brewing | sold-PUT relief building |
 | blue **★** | UPTREND | bounce confirmed continuing — ride it | sold-PUT safe; watch CALL if it runs |
 | red **▼** | DOWNTREND | persistent below fair value — defend | sold-PUT at risk |
 | amber **▽** | TOPPING | up-move exhausted — defend | sold-CALL at risk |

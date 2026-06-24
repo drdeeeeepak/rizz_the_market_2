@@ -20,7 +20,7 @@ each with its own **raw 0–100 sub-score** and a heat-bar:
 
 | Card | Above VWAP it reads | Below VWAP it reads | Score used |
 |---|---|---|---|
-| 🟢 **BULL CASE** — stay / be patient | *Uptrend — ride it* (sold-PUT safer) | *Bounce brewing — be patient* (sold-PUT relief) | `uptrend` / `reversal` |
+| 🟢 **BULL CASE** — stay / be patient | *Uptrend — ride it* (sold-PUT safer) | *Bounce brewing* (sold-PUT relief) | `uptrend` / `reversal` |
 | 🔴 **BEAR CASE** — defend | *Topping — defend CALL* (sold-CALL at risk) | *Downtrend — defend PUT* (sold-PUT at risk) | `topping` / `downtrend` |
 
 So even when the headline is dominated by one side, you still see the other leg's
@@ -83,7 +83,7 @@ The latest candle's state (Part 2b §D) is combined with **today's gamma regime*
 - **UPTREND** + cushioned → **`RIDE THE UPTREND`** (bounce confirmed, PUT side safe).
 - **UPTREND** + accelerator → **`UPTREND — BUT THIN AIR`** (ride with a trailing stop).
 - **TOPPING** → **`DEFEND CALL — upside tiring`**.
-- **BOUNCE_BREWING** + cushioned → **`BE PATIENT`** (a VWAP reclaim flips it to RIDE).
+- **BOUNCE_BREWING** + cushioned → **`BOUNCE BREWING`** (a VWAP reclaim flips it to RIDE).
 - **BOUNCE_BREWING** + accelerator → **`WAIT — BUT STAY ALERT`** (bounce may be shallow).
 - **DOWNTREND** → **`DEFEND PUT — real downtrend`** (don't wait for a V-recovery).
 - **Conflicted + no clean turn** → **`MIXED — STAND ASIDE`**.

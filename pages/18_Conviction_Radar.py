@@ -286,7 +286,7 @@ st.divider()
 # ══════════════════════════════════════════════════════════════════════════════
 
 ui.section_header("Last %d sessions — with the signals drawn on" % days,
-                  "▲ green = bounce brewing (be patient) · ★ blue = uptrend, ride it (bounce continuing) · "
+                  "▲ green = bounce brewing · ★ blue = uptrend, ride it (bounce continuing) · "
                   "▼ red = downtrend, defend PUT · ▽ amber = topping, defend CALL · "
                   "blue line = VWAP · dashed = gamma flip")
 
@@ -350,7 +350,7 @@ for wall, col, lbl, pos in [(gex.get("call_wall"), "#ef4444", "Call wall", "top 
 # Four marker types (drawn only when the state flips).
 #   below candle = bullish-case markers · above candle = defend markers
 _MARKER_SPECS = [
-    ("brewing",   "low",  0.9985, "triangle-up",      "#16a34a", "#065f46", "Bounce brewing (be patient)"),
+    ("brewing",   "low",  0.9985, "triangle-up",      "#16a34a", "#065f46", "Bounce brewing"),
     ("uptrend",   "low",  0.9970, "star-triangle-up", "#0ea5e9", "#075985", "Uptrend — ride it (bounce continuing)"),
     ("downtrend", "high", 1.0015, "triangle-down",    "#dc2626", "#7f1d1d", "Downtrend — defend PUT"),
     ("topping",   "high", 1.0030, "triangle-down-open", "#f59e0b", "#92400e", "Topping — defend CALL"),
@@ -386,7 +386,7 @@ fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
 # Row 3 — all FOUR raw scores (both sides of both regimes) + signal-agreement.
 # Greens = the bull case (be-patient / ride); red+amber = the bear case (defend PUT / CALL).
 fig.add_trace(go.Scatter(x=x, y=df["reversal_score"], mode="lines",
-                         name="Reversal (be patient)", line=dict(color="#16a34a", width=1.3)),
+                         name="Reversal (bounce brewing)", line=dict(color="#16a34a", width=1.3)),
               row=3, col=1)
 fig.add_trace(go.Scatter(x=x, y=df["uptrend_score"], mode="lines",
                          name="Uptrend (ride it)", line=dict(color="#0ea5e9", width=1.3, dash="dash")),
@@ -433,7 +433,7 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
         "- **Blue VWAP line** — the day's *fair price*. Above it, buyers are winning; below it, sellers are. "
         "Reclaiming this line is the first real sign a bounce has legs.\n"
         "- **Green ▲ 'Bounce brewing'** — below fair value but the fall looks *tired* (stretched, momentum no "
-        "longer making new lows, selling drying up). The early 'be patient' nudge — a turn may be near.\n"
+        "longer making new lows, selling drying up). The early 'bounce brewing' nudge — a turn may be near.\n"
         "- **Blue ★ 'Uptrend — ride it'** — the bounce is now *confirmed continuing*: price reclaimed and is "
         "holding above fair value, making higher lows, with breadth and buyers (CVD) behind it. **This is the "
         "uptrend / stay-in-it signal.** Counter-trend red marks are suppressed while this is active.\n"
@@ -451,7 +451,7 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
         "- **RSI panel** — momentum (0–100). The green/red dots are **divergences** (price makes a new "
         "low/high but momentum doesn't) — the *earliest* warning a move is tiring, usually 1–3 candles ahead.\n"
         "- **Reads panel** — all **four raw scores** plotted together so you see both sides at once: green "
-        "**Reversal** (be patient) and blue **Uptrend** (ride it) are the *bull* case; red **Downtrend** "
+        "**Reversal** (bounce brewing) and blue **Uptrend** (ride it) are the *bull* case; red **Downtrend** "
         "(defend PUT) and amber **Topping** (defend CALL) are the *bear* case. A marker on the candles fires "
         "when a line crosses its dotted threshold (55/60). The purple dotted **Signal-agreement %** shows how "
         "many pillars agree — when it dips, the pillars are fighting and continuation calls are withheld.\n"
@@ -565,7 +565,7 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
             "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
             "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
-            "**`Reversal`** be-patient, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
+            "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · **`Net`** = bull-read − bear-read, the single "
             "directional conviction (🟢 + stay / 🔴 − defend) · `P/M/V/B/S` pillar votes · "
             "`Conf%` signal agreement · `State` the resulting call.")

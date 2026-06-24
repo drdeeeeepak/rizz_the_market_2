@@ -13,7 +13,7 @@
 ## 1. Read it in 30 seconds
 
 1. **Top-left card = the single headline call right now.** It reads `RIDE THE
-   UPTREND`, `BE PATIENT`, `WAIT — BUT STAY ALERT`, `DEFEND PUT — real downtrend`,
+   UPTREND`, `BOUNCE BREWING`, `WAIT — BUT STAY ALERT`, `DEFEND PUT — real downtrend`,
    `DEFEND CALL — upside tiring`, `MIXED — STAND ASIDE`, or `NEUTRAL`.
 2. **Top-right card = the market's mood (dealer gamma).** `Shock-absorber` = dips
    tend to get bought back (patience pays). `Accelerator` = falls can snowball
@@ -23,7 +23,7 @@
    its own raw 0–100 score and heat-bar — so you see the case for the sold-PUT *and*
    the sold-CALL even when one side dominates the single headline. (Detail in Part 3.)
 4. **Chart = the proof.** Four marks show where the engine fired over the last ~7 days:
-   - **green ▲** = bounce *brewing* (early, be patient)
+   - **green ▲** = bounce *brewing* (early — don't book the low)
    - **blue ★** = uptrend, *ride it* (bounce **continuing** — the stay-in-it signal)
    - **red ▼** = downtrend, *defend PUT*
    - **amber ▽** = topping, *defend CALL*
@@ -76,7 +76,7 @@ not a guarantee. Always keep your hard stop.
 | **IV** | Implied Volatility — the option market's expected volatility, used to price gamma. |
 | **DTE** | Days To Expiry of the option chain used for gamma. |
 | **VIX** | India VIX — the market's 30-day expected volatility (the "fear gauge"). |
-| **Bull read** | 0–100, the case for *staying / long*: above VWAP it's the uptrend (ride-it) score; below VWAP it's the bounce-brewing (be-patient) score. |
+| **Bull read** | 0–100, the case for *staying / long*: above VWAP it's the uptrend (ride-it) score; below VWAP it's the bounce-brewing score. |
 | **Bear read** | 0–100, the case for *defending*: above VWAP it's the topping (defend-CALL) score; below VWAP it's the downtrend (defend-PUT) score. |
 | **The 4 raw scores** | Reversal, Uptrend, Downtrend, Topping — the underlying 0–100 scores that Bull/Bear read are picked from (Part 2b §C). |
 | **The 4 states** | BOUNCE_BREWING (▲), UPTREND/ride-it (★), DOWNTREND/defend-PUT (▼), TOPPING/defend-CALL (▽), or NEUTRAL. |
