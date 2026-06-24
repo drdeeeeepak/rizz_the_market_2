@@ -622,12 +622,12 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["VWAP"] = d["vwap"].round(1)
     t["CVD"] = d["cvd"].round(0)
 
-    # Results lead (State · Net · Conf%), then the key reads, then the rest, raw last.
+    # Results lead (State · Net · Brd% · Conf%), then the key reads, then the rest, raw last.
     order = [
-        "Time", "State", "Net", "Conf%",
-        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "Hi", "Lo",
+        "Time", "State", "Net", "Brd%", "Conf%",
+        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "Hi", "Lo", "LWick", "UWick",
         "Reversal", "Uptrend", "Downtr", "Topping",
-        "%B", "Stretch", "LWick", "UWick", "Persist", "Brd%",
+        "%B", "Stretch", "Persist",
         "P", "M", "V", "B", "S", "Agree", "Oppose",
         "Open", "High", "Low", "Close", "VWAP", "CVD",
     ]

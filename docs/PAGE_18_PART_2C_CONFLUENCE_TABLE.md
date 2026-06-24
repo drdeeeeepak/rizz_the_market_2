@@ -49,20 +49,20 @@ is computed — it just makes every number visible.
 **Column key** — the **results lead**, then the inputs that produced them, raw price last:
 
 `Time` · **`State`** (the resulting call) · **`Net`** (bull-read − bear-read, the single
-directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Conf%`** (signal
-agreement, tinted 🟢 when the prevailing lean is bullish / 🔴 when bearish, darker =
-stronger) · `ΔVWAP` (close − fair value) · `RSI` (banded: 🟣 capitulation <30 · 🔴
-downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲
-bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲ CVD rose vs the *previous* candle) · `CVDdiv`
-(🟢▲ bull / 🔴▼ bear 6-bar volume divergence) · `Hi` `Lo` (swing-high / swing-low direction
-— 🟢▲ higher / 🔴▼ lower; read as a pair: ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲
-inside) · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair)
-· `%B` (band position — 🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` (signed — 🟢 +
-above fair value / 🔴 − below) · `LWick` (🟢 bullish lower side — long lower wick *or*
-green body with no lower wick) `UWick` (🔴 bearish upper side — long upper wick *or* red
-body with no upper wick) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · `Brd%` (🟢 >55 broad / 🔴 <45
-weak) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` · *then at the end:* `Open`
-`High` `Low` `Close` `VWAP` `CVD`.
+directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Brd%`** (breadth — 🟢
+>55 broad / 🔴 <45 weak) · **`Conf%`** (signal agreement, tinted 🟢 when the prevailing
+lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair value) ·
+`RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend
+55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲ bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲
+CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲ bull / 🔴▼ bear 6-bar volume divergence)
+· `Hi` `Lo` (swing-high / swing-low direction — 🟢▲ higher / 🔴▼ lower; read as a pair:
+▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside) · `LWick` (🟢 bullish lower side — long
+lower wick *or* green body with no lower wick) `UWick` (🔴 bearish upper side — long upper
+wick *or* red body with no upper wick) · **`Reversal` `Uptrend`** (🟢 bull pair) ·
+**`Downtr` `Topping`** (🔴 bear pair) · `%B` (band position — 🟢 oversold ≤0.2 / 🔴
+overbought ≥0.8) · `Stretch` (signed — 🟢 + above fair value / 🔴 − below) · `Persist`
+(↑3 🟢 above / ↓3 🔴 below VWAP) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` ·
+*then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns and `Net` are **heat-shaded** (darker = louder),
 so scan a row to see which side is winning and how strongly; the arrow columns are
