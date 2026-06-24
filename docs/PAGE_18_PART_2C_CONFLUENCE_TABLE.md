@@ -58,7 +58,9 @@ CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲ bull / 🔴▼ bear 6-ba
 · `Hi` `Lo` (swing-high / swing-low direction — 🟢▲ higher / 🔴▼ lower; read as a pair:
 ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside) · `LWick` (🟢 bullish lower side — long
 lower wick *or* green body with no lower wick) `UWick` (🔴 bearish upper side — long upper
-wick *or* red body with no upper wick) · **`Reversal` `Uptrend`** (🟢 bull pair) ·
+wick *or* red body with no upper wick) · `Candle` (single close-location read: 🟢 +1 closed
+at high / 🔴 −1 at low — momentum *and* rejection in one column; on trial alongside the
+two-column LWick/UWick split) · **`Reversal` `Uptrend`** (🟢 bull pair) ·
 **`Downtr` `Topping`** (🔴 bear pair) · `%B` (band position — 🟢 oversold ≤0.2 / 🔴
 overbought ≥0.8) · `Stretch` (signed — 🟢 + above fair value / 🔴 − below) · `Persist`
 (↑3 🟢 above / ↓3 🔴 below VWAP) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` ·

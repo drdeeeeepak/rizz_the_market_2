@@ -572,6 +572,16 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
                 out["UWick"] = _bg(_RED, f) if f >= 0.1 else "color:#94a3b8;"
             return out
 
+        # Candle close-location (−1..+1): +1 closed at high (bulls, green), −1 at low (red).
+        def _clv_css(v):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if abs(x) < 0.05:
+                return "color:#94a3b8;"
+            return _bg(_GREEN if x > 0 else _RED, abs(x))
+
         # Breadth %: >55 broad strength (green), <45 broad weakness (red), 45–55 neutral.
         def _brd_css(v):
             try:
@@ -634,6 +644,7 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _rsi_css, "RSI")
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
         sty = _m(sty, _brd_css, "Brd%")
+        sty = _m(sty, _clv_css, "Candle")
         sty = _m(sty, _pctb_css, "%B")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo", "Persist")
         sty = _m(sty, _state_css, "State")
@@ -660,7 +671,8 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
             "`LWick` 🟢 bullish lower side — long lower wick (buyers rejected the low) *or* a green body with "
             "no lower wick (rose from the open) · `UWick` 🔴 bearish upper side — long upper wick (sellers) "
-            "*or* a red body with no upper wick · "
+            "*or* a red body with no upper wick · `Candle` single close-location read (🟢 +1 closed at high / "
+            "🔴 −1 at low) — captures momentum *and* rejection in one column (trial; compare vs LWick/UWick) · "
             "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · "
             "`%B` band position (🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` signed stretch from fair "

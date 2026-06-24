@@ -126,6 +126,16 @@ So a clean green marubozu shows a *small* `LWick` number but a green fill (the c
 reflects body-confirmed control, not just tail size). A red candle that closes on its low
 shows a small `LWick` left grey and a red `UWick`. *(Table cols: `LWick` 🟢, `UWick` 🔴.)*
 
+**Trial — the single `Candle` column.** Alongside the two-column split there's now one
+bidirectional column using **close-location-value**:
+```
+Candle = ((close − low) − (high − close)) / (high − low)     # −1 .. +1
+```
++1 = closed at the high (bulls won), −1 = at the low (bears won). It captures *both* the
+momentum and rejection reads in a single 🟢/🔴 cell (a hammer closes near its high → green;
+a shooting star near its low → red; a marubozu → ±1). It's on trial next to `LWick`/`UWick`
+so you can compare and decide which to keep. *(Table col: `Candle`.)*
+
 ### B.8 Swing structure & persistence
 Four swing flags, compared to **6 candles earlier**, give a *symmetric* read of the
 trend skeleton — higher highs/lows = up, lower highs/lows = down:

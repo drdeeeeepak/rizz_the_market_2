@@ -596,6 +596,10 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["Stretch"] = (d["stretch_up"] - d["stretch_down"]).round(2)
     t["LWick"] = d["lower_wick_frac"].round(2)
     t["UWick"] = d["upper_wick_frac"].round(2)
+    # Single bidirectional candle-strength read (close-location-value): +1 = closed at the
+    # high (bulls won), −1 = at the low (bears won). Captures momentum AND rejection in one.
+    _rng = (d["high"] - d["low"]).replace(0, np.nan)
+    t["Candle"] = (((d["close"] - d["low"]) - (d["high"] - d["close"])) / _rng).fillna(0).round(2)
     t["Persist"] = _persist()
     t["Brd%"] = d["breadth"].round(0)
     # ── the four raw scores, then a single NET conviction for a clear read ──────
@@ -625,7 +629,7 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     # Results lead (State · Net · Brd% · Conf%), then the key reads, then the rest, raw last.
     order = [
         "Time", "State", "Net", "Brd%", "Conf%",
-        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "Hi", "Lo", "LWick", "UWick",
+        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "Hi", "Lo", "LWick", "UWick", "Candle",
         "Reversal", "Uptrend", "Downtr", "Topping",
         "%B", "Stretch", "Persist",
         "P", "M", "V", "B", "S", "Agree", "Oppose",
