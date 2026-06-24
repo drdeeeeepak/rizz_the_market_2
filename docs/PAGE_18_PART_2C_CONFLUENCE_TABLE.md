@@ -57,9 +57,11 @@ bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲ CVD rose vs the *previo
 (🟢▲ bull / 🔴▼ bear 6-bar volume divergence) · `Hi` `Lo` (swing-high / swing-low direction
 — 🟢▲ higher / 🔴▼ lower; read as a pair: ▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲
 inside) · **`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair)
-· `%B` · `Stretch` (one signed column — 🟢 + above fair value / 🔴 − below) · `LWick`
-`UWick` · `Persist` (↑3/↓3) · `Brd%` · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose`
-· *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
+· `%B` (band position — 🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` (signed — 🟢 +
+above fair value / 🔴 − below) · `LWick` (lower wick = buyers, 🟢) `UWick` (upper wick =
+sellers, 🔴) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · `Brd%` (🟢 >55 broad / 🔴 <45
+weak) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` · *then at the end:* `Open`
+`High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns and `Net` are **heat-shaded** (darker = louder),
 so scan a row to see which side is winning and how strongly; the arrow columns are

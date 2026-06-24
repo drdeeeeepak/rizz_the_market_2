@@ -492,9 +492,12 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
                       "DOWNTREND": "#dc2626", "TOPPING": "#d97706", "NEUTRAL": "#94a3b8"}
 
         def _vote_css(v):
-            return ("color:#16a34a;font-weight:700;" if v == "▲"
-                    else "color:#dc2626;font-weight:700;" if v == "▼"
-                    else "color:#cbd5e1;")
+            s = str(v)
+            if "▲" in s or "↑" in s:
+                return "color:#16a34a;font-weight:700;"
+            if "▼" in s or "↓" in s:
+                return "color:#dc2626;font-weight:700;"
+            return "color:#cbd5e1;"
 
         # RSI momentum regimes — capitulation / downtrend / neutral / uptrend / overbought.
         def _rsi_css(v):
@@ -533,6 +536,50 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         def _state_css(v):
             return f"color:{_STATE_TXT.get(v, '#0f172a')};font-weight:700;"
 
+        # Shared background blend: white → base as f goes 0→1.
+        def _bg(base, f):
+            f = max(0.0, min(1.0, f))
+            r, g, b = base
+            rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+            txt = "#ffffff" if f > 0.55 else "#0f172a"
+            return f"background-color:rgb({rr},{gg},{bb});color:{txt};font-weight:600;"
+
+        # Rejection wicks (0..1): long lower wick = buyers (green), long upper = sellers
+        # (red). Below ~0.25 it isn't a meaningful tail → leave grey.
+        def _wick_css(v, base, lo=0.25):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if x < lo:
+                return "color:#94a3b8;"
+            return _bg(base, (x - lo) / (1.0 - lo))
+
+        # Breadth %: >55 broad strength (green), <45 broad weakness (red), 45–55 neutral.
+        def _brd_css(v):
+            try:
+                b = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if 45 <= b <= 55:
+                return "color:#94a3b8;"
+            if b > 55:
+                return _bg((22, 163, 74), (b - 55) / 45.0)
+            return _bg((220, 38, 38), (45 - b) / 45.0)
+
+        # Bollinger %B (band position): ≤0.2 oversold / below band → bullish reversal
+        # context (green); ≥0.8 overbought / above band → topping context (red); mid grey.
+        def _pctb_css(v):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if x <= 0.2:
+                return _bg((22, 163, 74), (0.2 - x) / 0.7)
+            if x >= 0.8:
+                return _bg((220, 38, 38), (x - 0.8) / 0.7)
+            return "color:#94a3b8;"
+
         # Conf% coloured by whether the prevailing lean is bull (green) or bear (red) —
         # driven by the sign of Net — with intensity = the confidence value. Needs the
         # row (two columns), so it's a row-wise apply rather than a per-cell map.
@@ -569,7 +616,11 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _net_css, "Net")
         sty = _m(sty, _rsi_css, "RSI")
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
-        sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo")
+        sty = _m(sty, lambda v: _wick_css(v, _GREEN), "LWick")
+        sty = _m(sty, lambda v: _wick_css(v, _RED), "UWick")
+        sty = _m(sty, _brd_css, "Brd%")
+        sty = _m(sty, _pctb_css, "%B")
+        sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo", "Persist")
         sty = _m(sty, _state_css, "State")
         if {"Conf%", "Net"}.issubset(ct.columns):
             sty = sty.apply(_conf_row, axis=1)
@@ -591,9 +642,10 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
             "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · "
-            "`%B` position in Bollinger band · `Stretch` signed stretch from fair value "
-            "(🟢 + above / 🔴 − below, in expected-moves) · `LWick/UWick` rejection-wick fraction · "
-            "`Persist` ↑3/↓3 = 3 candles the same side of VWAP · `Brd%` breadth · "
+            "`%B` band position (🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` signed stretch from fair "
+            "value (🟢 + above / 🔴 − below, in expected-moves) · `LWick` lower-wick = buyers (🟢) / `UWick` "
+            "upper-wick = sellers (🔴) · `Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
+            "`Brd%` breadth (🟢 >55 broad / 🔴 <45 weak) · "
             "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
 
 st.divider()
