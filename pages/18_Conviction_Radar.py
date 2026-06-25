@@ -594,25 +594,32 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
                 return _bg((22, 163, 74), (b - 55) / 45.0)
             return _bg((220, 38, 38), (45 - b) / 45.0)
 
-        # Bollinger %B carries BOTH reads at once:
-        #   • INSIDE the bands → MOMENTUM PHASE: 🟢 bullish (upper half) / 🔴 bearish
-        #     (lower half), intensity rising toward each band; ~0.5 = at the mean, grey.
-        #   • BEYOND a band (%B>1 or %B<0) → 🟠 amber = over-stretched = mean-reversion /
-        #     REVERSAL watch (direction read from the value's sign). Walking the band in a
-        #     strong trend also lands here — confirm with RSIdiv / Topping / Reversal.
-        def _pctb_css(v):
+        # %B = momentum (gated by structure) + reversal, in one cell (option 1):
+        #   needs the *position* (%B) AND fast 2–3 bar price structure, because a high
+        #   %B alone is only a location — real momentum requires price actually advancing.
+        #     upper half + NEW high → 🟢 confirmed up-momentum (bold)
+        #     upper half + holding (no lower low) but no new high → pale green (unconfirmed)
+        #     upper half + stalling (lower low) → grey
+        #     beyond upper band (>1) + new high → 🟢 riding the band; else 🟠 amber = stretched/reversal
+        #   (mirror for the downside). hold_up = not making lower lows · hold_dn = not making higher highs.
+        def _pctb_state_css(v, new_hi, new_lo, hold_up, hold_dn):
             try:
                 x = float(v)
             except (TypeError, ValueError):
                 return ""
-            if x > 1.0 or x < 0.0:
-                over = (x - 1.0) if x > 1.0 else (0.0 - x)     # how far beyond the band (0..0.5)
-                return _bg(_AMBER, 0.4 + min(over / 0.5, 1.0) * 0.6)
-            if 0.45 <= x <= 0.55:
-                return "color:#94a3b8;"
+            if x > 1.0:
+                return _bg(_GREEN, 0.9) if new_hi else _bg(_AMBER, 0.7)
             if x > 0.55:
-                return _bg(_GREEN, (x - 0.55) / 0.45)
-            return _bg(_RED, (0.45 - x) / 0.45)
+                if new_hi:
+                    return _bg(_GREEN, 0.45 + (x - 0.55) / 0.45 * 0.55)
+                return _bg(_GREEN, 0.16) if hold_up else "color:#94a3b8;"
+            if x < 0.0:
+                return _bg(_RED, 0.9) if new_lo else _bg(_AMBER, 0.7)
+            if x < 0.45:
+                if new_lo:
+                    return _bg(_RED, 0.45 + (0.45 - x) / 0.45 * 0.55)
+                return _bg(_RED, 0.16) if hold_dn else "color:#94a3b8;"
+            return "color:#94a3b8;"
 
         # Conf% coloured by whether the prevailing lean is bull (green) or bear (red) —
         # driven by the sign of Net — with intensity = the confidence value. Needs the
@@ -652,9 +659,26 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
         sty = _m(sty, _brd_css, "Brd%")
         sty = _m(sty, _clv_css, "Candle")
-        sty = _m(sty, _pctb_css, "%B")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo", "Persist")
         sty = _m(sty, _state_css, "State")
+        # %B coloured by position + fast 2–3 bar structure (precomputed chronologically,
+        # since momentum needs neighbouring candles; then mapped back to the table order).
+        if {"High", "Low", "%B"}.issubset(ct.columns):
+            _ch = ct.iloc[::-1]                                  # oldest-first
+            _hi = pd.to_numeric(_ch["High"], errors="coerce")
+            _lo = pd.to_numeric(_ch["Low"], errors="coerce")
+            _ph = _hi.shift(1).rolling(3, min_periods=1).max()   # highest high of prior ~3 candles
+            _pl = _lo.shift(1).rolling(3, min_periods=1).min()   # lowest low of prior ~3 candles
+            _new_hi = (_hi > _ph).reindex(ct.index)
+            _new_lo = (_lo < _pl).reindex(ct.index)
+            _hold_up = (_lo >= _pl).reindex(ct.index)            # not making lower lows
+            _hold_dn = (_hi <= _ph).reindex(ct.index)            # not making higher highs
+            _pb_map = {ix: _pctb_state_css(ct.at[ix, "%B"],
+                                           bool(_new_hi.get(ix, False)), bool(_new_lo.get(ix, False)),
+                                           bool(_hold_up.get(ix, True)), bool(_hold_dn.get(ix, True)))
+                       for ix in ct.index}
+            sty = sty.apply(lambda col: [_pb_map.get(ix, "") for ix in col.index],
+                            subset=["%B"], axis=0)
         if {"Conf%", "Net"}.issubset(ct.columns):
             sty = sty.apply(_conf_row, axis=1)
         if {"Open", "High", "Low", "Close"}.issubset(ct.columns) and \
@@ -682,9 +706,10 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "🔴 −1 at low) — captures momentum *and* rejection in one column (trial; compare vs LWick/UWick) · "
             "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · "
-            "`%B` momentum *and* reversal: inside the bands → 🟢 bullish / 🔴 bearish momentum (~0.5 neutral); "
-            "beyond a band (>1 or <0) → 🟠 amber = over-stretched, mean-reversion watch (direction from the "
-            "value) · `Stretch` signed stretch from fair "
+            "`%B` momentum (position **confirmed by fast price structure**) + reversal: high %B *and* a fresh "
+            "high → 🟢 up-momentum (pale green = high but no new high yet); low %B *and* a fresh low → 🔴 "
+            "down-momentum; beyond a band but **not** making new highs/lows → 🟠 amber = stretched, "
+            "mean-reversion watch; ~0.5 neutral · `Stretch` signed stretch from fair "
             "value (🟢 + above / 🔴 − below, in expected-moves) · "
             "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
             "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")

@@ -54,19 +54,27 @@ In the table the `RSI` cell is **banded by regime** for instant reading:
 ```
 `%B < 0.05` = stabbed below the lower band (over-stretched down).
 
-**Table colour carries BOTH a momentum *and* a reversal read** (they only conflict at the
-extremes, so we split by zone):
-- **Inside the bands** (`0 ≤ %B ≤ 1`) → **momentum phase**: upper half is **bullish
-  momentum** (🟢 green, stronger toward the upper band), lower half is **bearish momentum**
-  (🔴 red), `~0.5` (at the mean) is neutral grey.
-- **Beyond a band** (`%B > 1` or `%B < 0`) → **🟠 amber = over-stretched / mean-reversion
-  watch** (the reversal read). Direction is read from the value's sign (`1.2` = stretched
-  up, `−0.2` = stretched down). Caveat: *walking the band* in a strong trend also sits
-  here, so amber means "reversion risk is rising," not "reverse now" — confirm with the
-  `RSIdiv`, `Topping`/`Reversal` scores.
+**Table colour = momentum *gated by structure* + reversal** — because a high `%B` on its
+own is only a *location* (price can sit high in the band on a volatility squeeze or while
+stalling under a flat/rolling-over upper band). Real momentum needs price to actually be
+**advancing**, so the colour confirms `%B` with a **fast 2–3 bar high/low check**
+(`new high` = high above the prior ~3 highs; `new low` = below the prior ~3 lows):
 
-So one column tells you the momentum bias while price is inside its envelope, and flags the
-stretched/exhaustion zone the moment it pokes outside. *(Table col: `%B`.)*
+| `%B` | Structure | Read | Colour |
+|---|---|---|---|
+| upper half (0.55–1) | **new high** | confirmed up-momentum | 🟢 green (bold) |
+| upper half | holding (no lower low) but no new high | momentum *unconfirmed* | pale green |
+| upper half | making lower lows (stalling) | high position, no momentum | grey |
+| **> 1** (above band) | new high | riding the band — real momentum | 🟢 green |
+| **> 1** | no new high (rolling over) | over-stretched → **reversal watch** | 🟠 amber |
+| lower half (0–0.45) | new low | confirmed down-momentum | 🔴 red |
+| **< 0** (below band) | no new low (turning up) | oversold → **bounce watch** | 🟠 amber |
+| ~0.5 | — | at the mean | grey |
+
+So the cell only goes bold green/red when *position **and** price progress agree*; it
+flags amber when price is stretched beyond a band but **not** confirming with a new
+extreme (the "blown off the band / about to revert" case), and stays pale/grey when `%B`
+is high but momentum isn't there. *(Table col: `%B`, placed just before the four scores.)*
 
 ### B.4 CVD proxy (are sellers still hitting it?)
 True buy/sell aggressor data isn't on Kite, so we infer it from **where each candle
