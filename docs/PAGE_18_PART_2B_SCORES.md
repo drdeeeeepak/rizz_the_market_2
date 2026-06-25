@@ -123,9 +123,14 @@ edge → stand aside · **−15…−35** = real but unconfirmed bear → cautio
 leg · **−35 or less** = strong, agreed bear → defend (manage the leg / sell-CALL).
 
 Both are heat-shaded green (bull) / red (defend), darker as they get more extreme. Neither
-replaces the four raw scores (which tell you *why*). The **dealer-gamma backdrop is shown
-as a tilt note on the bull/bear cards**, not multiplied into `Final` — gamma is today-only,
-so it can't be applied per past candle (see Part 3 §B). *(Table cols: `Final`, `Bull−Bear`.)*
+replaces the four raw scores (which tell you *why*).
+
+**Gamma tilt:** the **live Final *card*** multiplies in today's dealer gamma — `× 1.15` if
+the regime backs the direction (cushioned + bull, or accelerator + bear), `× 0.85` if it
+fights it — so the headline number is as real as possible *now*. The **table `Final`
+column omits gamma**, because gamma is a daily value with no history before we began
+logging it, so it can't be applied candle-by-candle to the past (see Part 3 §B for how the
+stored daily gamma could be folded in where available). *(Table cols: `Final`, `Bull−Bear`.)*
 
 ➡️ **Next: Part 2c — confluence, metric cards & the behind-the-scenes table**
 (`PAGE_18_PART_2C_CONFLUENCE_TABLE.md`).

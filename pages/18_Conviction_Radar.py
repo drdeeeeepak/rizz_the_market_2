@@ -257,9 +257,9 @@ def _mini_card(title, value, color, label, detail):
         f"<div style='font-size:14px;color:#475569;line-height:1.45;'>{detail}</div>"
         f"</div>", unsafe_allow_html=True)
 
-def _final_card(final):
-    # Trust-adjusted conviction: Bull−Bear discounted by signal agreement. Full spectrum,
-    # both sides.
+def _final_card(final, gnote=""):
+    # Trust-adjusted conviction: Bull−Bear discounted by signal agreement AND tilted by
+    # today's dealer gamma. Full spectrum, both sides.
     if final >= 35:
         color, label = "#15803d", "STRONG BULL — act (stay / roll PUT up)"
     elif final >= 15:
@@ -271,8 +271,9 @@ def _final_card(final):
     else:
         color, label = "#b91c1c", "STRONG BEAR — defend (leg / sell-CALL)"
     _mini_card("🎯 FINAL CONVICTION", final, color, label,
-               "Bull−Bear × signal-agreement — the headline number, discounted when the "
-               "pillars don't line up. ±35 agreed = act-worthy; near 0 = no edge.")
+               "Bull−Bear × signal-agreement × today's gamma — the headline number. "
+               "±35 agreed = act-worthy; near 0 = no edge."
+               + (f"<br><span style='color:#64748b;'>↳ {gnote}</span>" if gnote else ""))
 
 def _net_card(net):
     if net > 8:
@@ -287,23 +288,36 @@ def _net_card(net):
 
 _net_val = int(two_sided["bull"].get("score", 0)) - int(two_sided["bear"].get("score", 0))
 _conf_now = int(verdict.get("confidence", 0))
-_final_val = int(round(_net_val * _conf_now / 100.0))
-bc, kc, fc, nc = st.columns(4)
+# Today's dealer-gamma tilt on the LIVE Final card (gamma is real only for today):
+# cushioned regime backs the bull case, accelerator backs the bear case.
+_cushioned = (gex.get("regime") == "POSITIVE") or ((gex.get("spot_vs_flip_pts") or 0) >= 0)
+_gamma_known = gex.get("regime") in ("POSITIVE", "NEGATIVE")
+_dir = 1 if _net_val > 0 else (-1 if _net_val < 0 else 0)
+if _gamma_known and _dir:
+    _aligned = _cushioned if _dir > 0 else (not _cushioned)
+    _gtilt = 1.15 if _aligned else 0.85
+    _gnote = (f"×{_gtilt:.2f} gamma " + ("✓ backs this direction" if _aligned else "✗ fights it"))
+else:
+    _gtilt, _gnote = 1.0, "gamma n/a today"
+_final_val = int(round(max(-100, min(100, _net_val * _conf_now / 100.0 * _gtilt))))
+bc, kc, nc, fc = st.columns(4)
 with bc:
     _side_card(two_sided["bull"], "bull")
 with kc:
     _side_card(two_sided["bear"], "bear")
-with fc:
-    _final_card(_final_val)
 with nc:
     _net_card(_net_val)
+with fc:
+    _final_card(_final_val, _gnote)
 st.caption("**Reading the Final conviction (both ways):** "
            "**+35 or more** = strong, agreed, regime-backed *bull* → act (stay / roll the sold-PUT up) · "
            "**+15…+35** = real but unconfirmed bull → wait for a clean state · "
            "**−15…+15** = no edge → stand aside · "
            "**−15…−35** = real but unconfirmed *bear* → caution, watch the threatened leg · "
            "**−35 or less** = strong, agreed *bear* → defend (manage the leg / sell-CALL). "
-           "Final = Bull−Bear × Conf%; gamma backdrop is the tilt noted on the bull/bear cards.")
+           "The **live Final card** = Bull−Bear × Conf% × today's gamma tilt (×1.15 if gamma backs the "
+           "direction, ×0.85 if it fights it); the table `Final` column omits gamma since it can't be "
+           "applied to past candles.")
 
 # ── Conflict scorecard — exactly which signals agree vs fight right now ────────
 ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
