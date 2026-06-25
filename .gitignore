@@ -206,3 +206,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Ephemeral intraday gamma log (rebuilt live each day, never committed)
+data/gamma_today.json

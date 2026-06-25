@@ -95,6 +95,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/signals.json data/breach_levels.json data/rolled_positions.json \
+                  data/gamma_history.json \
                   data/watchlists/ data/parquet/ data/nifty500_tokens.json
           git diff --cached --quiet && echo "No changes to commit" || \
             git commit -m "chore: EOD compute + geo scan $(date -u '+%Y-%m-%d %H:%M UTC')"

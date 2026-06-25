@@ -48,6 +48,22 @@ def main():
     )
     save_signals(sig)
 
+    # Dealer-gamma daily snapshot → builds a forward gamma history (Kite has no
+    # historical OI, so this is the only way to accumulate one). Missing on no-login days.
+    if spot > 0:
+        try:
+            import datetime as _dt_g, pytz as _pytz_g
+            import pandas as _pd_g
+            from analytics.gamma_exposure import compute_gex
+            from data.gamma_history import append_daily_snapshot
+            _today_g = _dt_g.datetime.now(_pytz_g.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+            _near_g = chains.get("near", _pd_g.DataFrame())
+            _atm_iv_g = float(sig.get("atm_iv", 12.0) or 12.0)
+            _gex_g = compute_gex(_near_g, spot, chains.get("near_dte", 7), iv_fallback_pct=_atm_iv_g)
+            append_daily_snapshot(_today_g, _gex_g, spot)
+        except Exception as _e_g:
+            log.warning("Gamma daily snapshot failed: %s", _e_g)
+
     # Update rolled positions from EOD close (only if we got a valid spot)
     if spot > 0:
         import datetime as _dt

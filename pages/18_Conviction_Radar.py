@@ -133,6 +133,15 @@ if near_df is None or near_df.empty:
                "computed right now. The price/volume/breadth signals below still work.")
 gex = compute_gex(near_df, spot, near_dte, iv_fallback_pct=atm_iv)
 
+# Log a forward gamma history — daily snapshots come from the EOD job; here we append
+# an intraday point each load so the flip line's migration through TODAY is recorded
+# (Kite has no historical OI, so gamma can only be accumulated going forward).
+try:
+    from data.gamma_history import log_intraday_snapshot
+    log_intraday_snapshot(gex, spot)
+except Exception:
+    pass
+
 # Per-candle enrichment + verdicts.
 df = ic.enrich(df_idx, expected_move_pts=expected_move_pts,
                breadth=breadth if not breadth.empty else None)
@@ -859,6 +868,66 @@ with st.expander("🔎 Where the gamma walls sit (option positioning detail)"):
         st.plotly_chart(bar, use_container_width=True)
         st.caption("Green bars = strikes where dealers DAMP moves (price gets pinned / pulled back). "
                    "Red bars = strikes where dealers AMPLIFY moves. The flip is where green turns to red.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Dealer-gamma history — accumulated forward (Kite has no historical OI)
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Dealer-gamma history (built forward — no back-fill possible)",
+                  "Daily regime strip from the EOD job · today's flip-line migration from live loads")
+try:
+    from data.gamma_history import load_daily_history, load_intraday_today
+    _g_daily = load_daily_history()
+    _g_today = load_intraday_today()
+
+    if not _g_daily and not _g_today:
+        st.info("No gamma history yet. The EOD job logs one snapshot per trading day, and this page logs "
+                "intraday points as you view it — both start accumulating from today. Days you don't log in "
+                "(no Kite token) will show as gaps, never guessed.")
+    else:
+        # ── Daily regime strip — green = shock-absorber (POSITIVE), red = accelerator ──
+        if _g_daily:
+            _cells = ""
+            for r in _g_daily[-30:]:
+                _reg = r.get("regime", "UNKNOWN")
+                _c = "#16a34a" if _reg == "POSITIVE" else "#dc2626" if _reg == "NEGATIVE" else "#cbd5e1"
+                _flip = r.get("flip")
+                _flip_s = f"{_flip:,.0f}" if isinstance(_flip, (int, float)) else "—"
+                _d = str(r.get("date", ""))[5:]   # MM-DD
+                _cells += (f"<div title='{r.get('date','')} · {_reg} · flip {_flip_s}' "
+                           f"style='flex:1;min-width:34px;background:{_c};border-radius:4px;"
+                           f"padding:6px 2px;text-align:center;'>"
+                           f"<div style='color:#fff;font-size:9px;font-weight:700;'>{_d}</div>"
+                           f"<div style='color:#fff;font-size:10px;font-weight:800;'>{_flip_s}</div></div>")
+            st.markdown(
+                f"<div style='display:flex;gap:3px;flex-wrap:wrap;margin-bottom:4px;'>{_cells}</div>",
+                unsafe_allow_html=True)
+            st.caption("🟢 shock-absorber (dips bought back · patience pays) · 🔴 accelerator "
+                       "(moves snowball · defend) · grey/missing = no login that day. Number = gamma flip level.")
+        else:
+            st.caption("Daily history starts after the next EOD run.")
+
+        # ── Today's intraday flip-line migration ──────────────────────────────
+        if len(_g_today) >= 2:
+            _ts = [p.get("time", "") for p in _g_today]
+            _fl = [p.get("flip") for p in _g_today]
+            _sp = [p.get("spot") for p in _g_today]
+            gh = go.Figure()
+            gh.add_trace(go.Scatter(x=_ts, y=_fl, mode="lines+markers", name="Gamma flip",
+                                    line=dict(color="#7c3aed", width=1.6)))
+            gh.add_trace(go.Scatter(x=_ts, y=_sp, mode="lines", name="Spot",
+                                    line=dict(color="#2563eb", width=1.2, dash="dot")))
+            gh.update_layout(height=240, margin=dict(l=10, r=10, t=24, b=10), plot_bgcolor="white",
+                             font=dict(size=13), legend=dict(orientation="h", y=1.02, x=0),
+                             title=dict(text="Today — flip line vs spot through the session", font=dict(size=13)))
+            gh.update_xaxes(showgrid=True, gridcolor="#eef2f7")
+            gh.update_yaxes(showgrid=True, gridcolor="#eef2f7")
+            st.plotly_chart(gh, use_container_width=True)
+            st.caption("Spot crossing BELOW the flip = entering trend/accelerator territory; reclaiming "
+                       "ABOVE = back to mean-revert/patience. Built from your live loads today.")
+        elif _g_today:
+            st.caption("Today's intraday flip path will draw once a few more live points are logged.")
+except Exception as _e_gh:
+    st.caption(f"Gamma history unavailable: {_e_gh}")
 
 st.caption("Notes: Candles are the near-month **future** (real volume); the gamma flip/walls are on the "
            "**spot** option chain, so they sit a few points off the futures price (basis) — read them as "

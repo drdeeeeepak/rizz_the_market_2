@@ -74,6 +74,21 @@ is where green turns to red).
 as today's *context* and as a sixth pillar in the live verdict — it is **not**
 back-painted onto the old candles. The ▲★▼▽ marks come only from price/volume/breadth.
 
+### B.1 Gamma history — built *forward* (`data/gamma_history.py`)
+Because the past can't be reconstructed, gamma is instead **logged going forward**:
+- **Daily strip** — the EOD job writes one snapshot per trading day (`regime`, `flip`,
+  `net_GEX`, walls) into `data/gamma_history.json` (committed). The page shows it as a
+  **regime strip**: 🟢 shock-absorber (POSITIVE) · 🔴 accelerator (NEGATIVE) · grey =
+  **missing** (days you didn't log in → no token → the EOD job couldn't fetch the chain;
+  never guessed). Each cell labels that day's flip level.
+- **Today's intraday path** — each live page load appends a timestamped point to an
+  ephemeral `data/gamma_today.json` (gitignored), drawn as **flip-line vs spot through
+  the session**, so you can watch the flip migrate and see spot cross it. It only covers
+  the minutes the page was open today, and resets each day.
+
+Over a few weeks the daily strip becomes a real gamma history you can eyeball against
+outcomes (did NEGATIVE-regime days trend? did POSITIVE days mean-revert?).
+
 ---
 
 ## C. The headline verdict — how gamma gates the call
