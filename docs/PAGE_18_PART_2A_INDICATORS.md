@@ -169,6 +169,9 @@ lower_high  = high < high[6 ago]        lower_low  = low  < low[6 ago]
 persist_below = 3 consecutive candles below VWAP     # a real down-leg, not a dip
 persist_above = 3 consecutive candles above VWAP     # holding above fair value
 ```
+The table's `Persist` column shows the **actual run length** (not just ≥3): `↑N` = N
+candles in a row above VWAP, `↓N` = N below — so you can see exactly how entrenched the
+side is.
 **Display:** the swing high-char and low-char are shown **side by side in one `HiLo`
 column** (to save width) — high direction first, then low direction, each 🟢▲ higher /
 🔴▼ lower / `·` none. The cell is colour-coded by the pair for instant meaning:

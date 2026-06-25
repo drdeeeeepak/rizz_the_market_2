@@ -60,7 +60,8 @@ directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Brd
 >55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
 the prevailing lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair
 value) · `RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢
-uptrend 55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲ bull / 🔴▼ bear RSI divergence) · `CVD↑`
+uptrend 55–70 · 🟠 overbought >70; **text red when RSI fell vs the previous candle**) ·
+`RSIdiv` (🟢▲ bull / 🔴▼ bear RSI divergence) · `CVD↑`
 (🟢▲ CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲ bull / 🔴▼ bear 6-bar volume
 divergence) · `HiLo` (swing high+low in one cell — 🟢 ▲▲ uptrend · 🔴 ▼▼ downtrend · 🟠 ▲▼
 expanding/outside · ▼▲ inside) · `LWick` (🟢 bullish lower side — long lower wick *or* green
@@ -69,8 +70,9 @@ no upper wick) · `Candle` (single close-location read: 🟢 +1 closed at high /
 momentum *and* rejection in one column; on trial alongside the two-column LWick/UWick split)
 · `%B` (momentum **gated by fast structure** + reversal: high %B *with* a new high → 🟢
 up-momentum / pale if no new high; low %B with a new low → 🔴; stretched beyond a band but
-no new extreme → 🟠 amber reversal-watch; ~0.5 grey) · `Stretch` (signed — 🟢 + above fair
-value / 🔴 − below) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · **`Reversal` `Uptrend`**
+no new extreme → 🟠 amber reversal-watch; ~0.5 grey) · `Stretch` (signed heat-gradient —
+🟢 + above fair value / 🔴 − below) · `Persist` (↑N 🟢 / ↓N 🔴 = N candles in a row
+above / below VWAP) · **`Reversal` `Uptrend`**
 (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) ·
 `Agree` `Oppose` · *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 

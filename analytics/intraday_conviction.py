@@ -571,9 +571,13 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
         return np.where(d.get(col, False).astype(bool), mark, "") if col in d else ""
 
     def _persist():
-        out = np.where(d.get("persist_above", False), "↑3",
-                       np.where(d.get("persist_below", False), "↓3", ""))
-        return out
+        # Actual run length of consecutive candles on the same side of VWAP (not just ≥3):
+        # e.g. ↑5 = 5 candles in a row above fair value, ↓2 = 2 below.
+        side = pd.Series(np.where(d["above_vwap"], 1, np.where(d["below_vwap"], -1, 0)),
+                         index=d.index)
+        run = side.groupby((side != side.shift()).cumsum()).cumcount() + 1
+        return [f"↑{n}" if s > 0 else (f"↓{n}" if s < 0 else "")
+                for s, n in zip(side, run)]
 
     t = pd.DataFrame(index=d.index)
     t["Time"] = [ix.strftime("%d-%b %H:%M") for ix in d.index]

@@ -538,7 +538,9 @@ with st.container():
             return base + "text-align:center;"
 
         # RSI momentum regimes — capitulation / downtrend / neutral / uptrend / overbought.
-        def _rsi_css(v):
+        # `falling` (RSI < the previous candle's RSI) overrides the text to red, keeping
+        # the regime background band — so a fading reading is obvious even inside green.
+        def _rsi_css(v, falling=False):
             try:
                 r = float(v)
             except (TypeError, ValueError):
@@ -548,7 +550,21 @@ with st.container():
             elif r >= 45:    bg, fg = "#e2e8f0", "#334155"   # neutral
             elif r >= 30:    bg, fg = "#fca5a5", "#7f1d1d"   # downtrend momentum
             else:            bg, fg = "#c4b5fd", "#3b0764"   # capitulation (extreme oversold)
-            return f"background-color:{bg};color:{fg};font-weight:600;"
+            if falling:
+                fg = "#dc2626"
+            return f"background-color:{bg};color:{fg};font-weight:{'800' if falling else '600'};"
+
+        # Stretch — signed heat-gradient: 🟢 above fair value / 🔴 below, intensity by
+        # |stretch| (caps at 2, the scoring cap).
+        def _stretch_css(v):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                return ""
+            f = min(1.0, abs(x) / 2.0)
+            if f < 0.05:
+                return "color:#94a3b8;"
+            return _bg(_GREEN if x > 0 else _RED, f)
 
         # Net conviction (bull_read − bear_read): green if net-bull, red if net-defend.
         def _net_css(v):
@@ -693,13 +709,22 @@ with st.container():
         sty = _m(sty, lambda v: _heat(v, _RED), "Downtr")
         sty = _m(sty, lambda v: _heat(v, _AMBER), "Topping")
         sty = _m(sty, _net_css, "Net")
-        sty = _m(sty, _rsi_css, "RSI")
-        sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
+        sty = _m(sty, _delta_css, "ΔVWAP")
+        sty = _m(sty, _stretch_css, "Stretch")
         sty = _m(sty, _brd_css, "Brd%")
         sty = _m(sty, _clv_css, "Candle")
         sty = _m(sty, _hilo_css, "HiLo")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Persist")
         sty = _m(sty, _state_css, "State")
+        # RSI banded by regime, with red text when it fell vs the previous candle (needs
+        # neighbouring rows → precompute chronologically, then map to table order).
+        if "RSI" in ct.columns:
+            _rsi_ch = pd.to_numeric(ct.iloc[::-1]["RSI"], errors="coerce")
+            _rsi_fall = (_rsi_ch < _rsi_ch.shift(1)).reindex(ct.index)
+            _rsi_map = {ix: _rsi_css(ct.at[ix, "RSI"], bool(_rsi_fall.get(ix, False)))
+                        for ix in ct.index}
+            sty = sty.apply(lambda col: [_rsi_map.get(ix, "") for ix in col.index],
+                            subset=["RSI"], axis=0)
         # %B coloured by position + fast 2–3 bar structure (precomputed chronologically,
         # since momentum needs neighbouring candles; then mapped back to the table order).
         if {"High", "Low", "%B"}.issubset(ct.columns):
@@ -736,7 +761,8 @@ with st.container():
                 "**`Conf%`** = net of the 4 pillars (agree − oppose) ÷ 4, tinted 🟢 when the lean is bullish / "
                 "🔴 when bearish (darker = stronger; so 4-agree = 100%, 3-agree/1-neutral = 75%) · "
                 "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation "
-                "<30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · "
+                "<30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70; **text "
+                "turns red when RSI fell vs the previous candle**) · "
                 "`RSIdiv` RSI divergence (🟢▲ bull / 🔴▼ bear) · `CVD↑` CVD rose vs the *previous* candle (🟢▲) · "
                 "`CVDdiv` 6-bar volume divergence (🟢▲/🔴▼) · "
                 "`HiLo` swing-high+low in one cell (🟢 ▲▲ uptrend · 🔴 ▼▼ downtrend · 🟠 ▲▼ expanding · ▼▲ inside) · "
@@ -748,8 +774,8 @@ with st.container():
                 "high → 🟢 up-momentum (pale green = high but no new high yet); low %B *and* a fresh low → 🔴 "
                 "down-momentum; beyond a band but **not** making new highs/lows → 🟠 amber = stretched, "
                 "mean-reversion watch; ~0.5 neutral · "
-                "`Stretch` signed stretch from fair value (🟢 + above / 🔴 − below, in expected-moves) · "
-                "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
+                "`Stretch` signed stretch from fair value, heat-gradient (🟢 + above / 🔴 − below, in "
+                "expected-moves) · `Persist` ↑N 🟢 / ↓N 🔴 = N candles in a row above / below VWAP · "
                 "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
                 "**`Topping`** defend-CALL (🔴 bear) · "
                 "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
