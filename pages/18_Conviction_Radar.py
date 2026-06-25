@@ -211,7 +211,7 @@ with m4:
 
 # ── Two-sided read — BOTH condor legs are live, so show BOTH cases at once ─────
 ui.section_header("Both sides, right now (your condor has a sold-PUT *and* a sold-CALL)",
-                  "Bull case = stay / be patient · Bear case = defend — each with its raw 0–100 score")
+                  "Bull case · Bear case · and their Net — the single directional conviction")
 
 def _side_card(d, kind):
     score = d.get("score", 0)
@@ -233,14 +233,39 @@ def _side_card(d, kind):
         f"<span style='color:#64748b;'>↳ {d['gamma']}</span></div>"
         f"</div>", unsafe_allow_html=True)
 
-bc, kc = st.columns(2)
+def _net_card(net):
+    if net > 8:
+        color, lean = "#16a34a", "Lean BULLISH — stay / be patient"
+    elif net < -8:
+        color, lean = "#dc2626", "Lean BEARISH — defend the threatened leg"
+    else:
+        color, lean = "#64748b", "No clear edge — stand aside"
+    mag = max(2, min(100, abs(net)))
+    st.markdown(
+        f"<div style='background:{color}18;border-left:6px solid {color};"
+        f"border-radius:8px;padding:12px 16px;'>"
+        f"<div style='font-size:13px;font-weight:800;letter-spacing:.4px;color:{color};"
+        f"text-transform:uppercase;'>⚖️ NET CONVICTION</div>"
+        f"<div style='font-size:17px;font-weight:700;color:#0f172a;margin:5px 0 2px 0;'>{lean}</div>"
+        f"<div style='display:flex;align-items:center;gap:10px;margin:6px 0;'>"
+        f"<div style='font-size:20px;font-weight:800;color:{color};min-width:54px;'>{net:+d}</div>"
+        f"<div style='flex:1;background:#e2e8f0;border-radius:6px;height:10px;'>"
+        f"<div style='width:{mag}%;background:{color};height:10px;border-radius:6px;'></div></div></div>"
+        f"<div style='font-size:14px;color:#475569;line-height:1.45;'>bull-read − bear-read — the single "
+        f"number behind the two cards. &gt; +40 with a confirmed state is act-worthy; near 0 = no edge.</div>"
+        f"</div>", unsafe_allow_html=True)
+
+_net_val = int(two_sided["bull"].get("score", 0)) - int(two_sided["bear"].get("score", 0))
+bc, kc, nc = st.columns(3)
 with bc:
     _side_card(two_sided["bull"], "bull")
 with kc:
     _side_card(two_sided["bear"], "bear")
+with nc:
+    _net_card(_net_val)
 st.caption("These are the *raw* sub-scores behind the single badge above — so you can see the case for "
-           "each leg even when one side is dominating. The same four scores are plotted candle-by-candle "
-           "in the 'reads' panel of the chart, and itemised in the 🔬 behind-the-scenes table.")
+           "each leg even when one side is dominating, plus their **Net**. The same four scores are plotted "
+           "candle-by-candle in the 'reads' panel of the chart, and itemised in the 🔬 behind-the-scenes table.")
 
 # ── Conflict scorecard — exactly which signals agree vs fight right now ────────
 ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
@@ -498,21 +523,19 @@ with st.container():
         # Combined swing column (Hi char + Lo char): ▲▲ uptrend (green) · ▼▼ downtrend
         # (red) · ▲▼ expanding/outside (amber) · ▼▲ inside (slate) · partial = light.
         def _hilo_css(v):
-            s = str(v)
+            s = str(v).replace(" ", "")
             up, dn = s.count("▲"), s.count("▼")
             if up == 2:
-                return _bg(_GREEN, 0.6)
+                return _bg(_GREEN, 0.6) + "text-align:center;"
             if dn == 2:
-                return _bg(_RED, 0.6)
+                return _bg(_RED, 0.6) + "text-align:center;"
             if s == "▲▼":
-                return _bg(_AMBER, 0.45)
-            if up and dn:
-                return "color:#475569;font-weight:700;"
-            if up:
-                return "color:#16a34a;font-weight:700;"
-            if dn:
-                return "color:#dc2626;font-weight:700;"
-            return "color:#cbd5e1;"
+                return _bg(_AMBER, 0.45) + "text-align:center;"
+            base = ("color:#475569;font-weight:700;" if (up and dn)
+                    else "color:#16a34a;font-weight:700;" if up
+                    else "color:#dc2626;font-weight:700;" if dn
+                    else "color:#cbd5e1;")
+            return base + "text-align:center;"
 
         # RSI momentum regimes — capitulation / downtrend / neutral / uptrend / overbought.
         def _rsi_css(v):

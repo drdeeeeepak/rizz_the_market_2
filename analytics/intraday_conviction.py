@@ -593,7 +593,7 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
                      np.where(d["lower_high"].astype(bool), "▼", "·"))
     _lo_c = np.where(d["lower_low"].astype(bool), "▼",
                      np.where(d["higher_low"].astype(bool), "▲", "·"))
-    t["HiLo"] = [f"{a}{b}" for a, b in zip(_hi_c, _lo_c)]
+    t["HiLo"] = [f"{a} {b}" for a, b in zip(_hi_c, _lo_c)]
     t["%B"] = d["pct_b"].round(2)
     # One signed Stretch column: + = stretched ABOVE fair value, − = stretched BELOW.
     t["Stretch"] = (d["stretch_up"] - d["stretch_down"]).round(2)
