@@ -594,18 +594,25 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
                 return _bg((22, 163, 74), (b - 55) / 45.0)
             return _bg((220, 38, 38), (45 - b) / 45.0)
 
-        # Bollinger %B (band position): ≤0.2 oversold / below band → bullish reversal
-        # context (green); ≥0.8 overbought / above band → topping context (red); mid grey.
+        # Bollinger %B carries BOTH reads at once:
+        #   • INSIDE the bands → MOMENTUM PHASE: 🟢 bullish (upper half) / 🔴 bearish
+        #     (lower half), intensity rising toward each band; ~0.5 = at the mean, grey.
+        #   • BEYOND a band (%B>1 or %B<0) → 🟠 amber = over-stretched = mean-reversion /
+        #     REVERSAL watch (direction read from the value's sign). Walking the band in a
+        #     strong trend also lands here — confirm with RSIdiv / Topping / Reversal.
         def _pctb_css(v):
             try:
                 x = float(v)
             except (TypeError, ValueError):
                 return ""
-            if x <= 0.2:
-                return _bg((22, 163, 74), (0.2 - x) / 0.7)
-            if x >= 0.8:
-                return _bg((220, 38, 38), (x - 0.8) / 0.7)
-            return "color:#94a3b8;"
+            if x > 1.0 or x < 0.0:
+                over = (x - 1.0) if x > 1.0 else (0.0 - x)     # how far beyond the band (0..0.5)
+                return _bg(_AMBER, 0.4 + min(over / 0.5, 1.0) * 0.6)
+            if 0.45 <= x <= 0.55:
+                return "color:#94a3b8;"
+            if x > 0.55:
+                return _bg(_GREEN, (x - 0.55) / 0.45)
+            return _bg(_RED, (0.45 - x) / 0.45)
 
         # Conf% coloured by whether the prevailing lean is bull (green) or bear (red) —
         # driven by the sign of Net — with intensity = the confidence value. Needs the
@@ -675,7 +682,9 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             "🔴 −1 at low) — captures momentum *and* rejection in one column (trial; compare vs LWick/UWick) · "
             "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
             "**`Topping`** defend-CALL (🔴 bear) · "
-            "`%B` band position (🟢 oversold ≤0.2 / 🔴 overbought ≥0.8) · `Stretch` signed stretch from fair "
+            "`%B` momentum *and* reversal: inside the bands → 🟢 bullish / 🔴 bearish momentum (~0.5 neutral); "
+            "beyond a band (>1 or <0) → 🟠 amber = over-stretched, mean-reversion watch (direction from the "
+            "value) · `Stretch` signed stretch from fair "
             "value (🟢 + above / 🔴 − below, in expected-moves) · "
             "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
             "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")

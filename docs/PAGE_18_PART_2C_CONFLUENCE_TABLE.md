@@ -61,8 +61,9 @@ lower wick *or* green body with no lower wick) `UWick` (🔴 bearish upper side 
 wick *or* red body with no upper wick) · `Candle` (single close-location read: 🟢 +1 closed
 at high / 🔴 −1 at low — momentum *and* rejection in one column; on trial alongside the
 two-column LWick/UWick split) · **`Reversal` `Uptrend`** (🟢 bull pair) ·
-**`Downtr` `Topping`** (🔴 bear pair) · `%B` (band position — 🟢 oversold ≤0.2 / 🔴
-overbought ≥0.8) · `Stretch` (signed — 🟢 + above fair value / 🔴 − below) · `Persist`
+**`Downtr` `Topping`** (🔴 bear pair) · `%B` (momentum **and** reversal — inside the bands
+🟢 bullish / 🔴 bearish momentum; beyond a band 🟠 amber = over-stretched, mean-reversion
+watch) · `Stretch` (signed — 🟢 + above fair value / 🔴 − below) · `Persist`
 (↑3 🟢 above / ↓3 🔴 below VWAP) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` ·
 *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 

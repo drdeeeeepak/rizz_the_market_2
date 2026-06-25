@@ -29,6 +29,17 @@ def bootstrap_signals() -> tuple[dict, float, str]:
 
     Always fetches a fresh spot price independently (60s TTL cache).
     """
+    # ── 0. Authenticate FIRST, in normal (non-cached) script context ────────────
+    # The Kite login screen and the Zerodha OAuth callback MUST run outside an
+    # @st.cache_data function, or Streamlit won't render the login button / handle
+    # the redirect. (That's why an expired midnight token left the page stuck with
+    # no way to re-login.) get_kite() returns instantly when already authenticated.
+    try:
+        from data.kite_client import get_kite
+        get_kite()
+    except ImportError:
+        pass
+
     from data.live_fetcher import get_nifty_spot
 
     # ── 1. Try session_state ────────────────────────────────────────────────

@@ -48,6 +48,14 @@ from data.live_fetcher import (
 from analytics.compute_signals import compute_all_signals, load_saved_signals, save_signals
 import ui.components as ui
 
+# Authenticate FIRST, in normal (non-cached) script context — so the Kite login
+# screen and the Zerodha OAuth callback render properly. Triggering login from inside
+# a cached fetcher (as happened before) silently fails, which is why an expired
+# midnight token left the page stuck with no login button. Returns instantly once
+# authenticated; shows the Login UI + st.stop() when the token is missing/expired.
+from data.kite_client import get_kite
+get_kite()
+
 with st.spinner("Computing all signals…"):
     spot      = get_nifty_spot()
     nifty_df  = get_nifty_daily()

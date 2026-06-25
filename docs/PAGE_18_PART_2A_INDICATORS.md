@@ -52,7 +52,21 @@ In the table the `RSI` cell is **banded by regime** for instant reading:
 ```
 %B = (close − lower_band) / (upper_band − lower_band)
 ```
-`%B < 0.05` = stabbed below the lower band (over-stretched down). *(Table col: `%B`.)*
+`%B < 0.05` = stabbed below the lower band (over-stretched down).
+
+**Table colour carries BOTH a momentum *and* a reversal read** (they only conflict at the
+extremes, so we split by zone):
+- **Inside the bands** (`0 ≤ %B ≤ 1`) → **momentum phase**: upper half is **bullish
+  momentum** (🟢 green, stronger toward the upper band), lower half is **bearish momentum**
+  (🔴 red), `~0.5` (at the mean) is neutral grey.
+- **Beyond a band** (`%B > 1` or `%B < 0`) → **🟠 amber = over-stretched / mean-reversion
+  watch** (the reversal read). Direction is read from the value's sign (`1.2` = stretched
+  up, `−0.2` = stretched down). Caveat: *walking the band* in a strong trend also sits
+  here, so amber means "reversion risk is rising," not "reverse now" — confirm with the
+  `RSIdiv`, `Topping`/`Reversal` scores.
+
+So one column tells you the momentum bias while price is inside its envelope, and flags the
+stretched/exhaustion zone the moment it pokes outside. *(Table col: `%B`.)*
 
 ### B.4 CVD proxy (are sellers still hitting it?)
 True buy/sell aggressor data isn't on Kite, so we infer it from **where each candle
