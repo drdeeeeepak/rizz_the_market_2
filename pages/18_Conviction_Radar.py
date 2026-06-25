@@ -242,39 +242,68 @@ def _side_card(d, kind):
         f"<span style='color:#64748b;'>↳ {d['gamma']}</span></div>"
         f"</div>", unsafe_allow_html=True)
 
-def _net_card(net):
-    if net > 8:
-        color, lean = "#16a34a", "Lean BULLISH — stay / be patient"
-    elif net < -8:
-        color, lean = "#dc2626", "Lean BEARISH — defend the threatened leg"
-    else:
-        color, lean = "#64748b", "No clear edge — stand aside"
-    mag = max(2, min(100, abs(net)))
+def _mini_card(title, value, color, label, detail):
+    mag = max(2, min(100, abs(value)))
     st.markdown(
         f"<div style='background:{color}18;border-left:6px solid {color};"
         f"border-radius:8px;padding:12px 16px;'>"
         f"<div style='font-size:13px;font-weight:800;letter-spacing:.4px;color:{color};"
-        f"text-transform:uppercase;'>⚖️ NET CONVICTION</div>"
-        f"<div style='font-size:17px;font-weight:700;color:#0f172a;margin:5px 0 2px 0;'>{lean}</div>"
+        f"text-transform:uppercase;'>{title}</div>"
+        f"<div style='font-size:16px;font-weight:700;color:#0f172a;margin:5px 0 2px 0;'>{label}</div>"
         f"<div style='display:flex;align-items:center;gap:10px;margin:6px 0;'>"
-        f"<div style='font-size:20px;font-weight:800;color:{color};min-width:54px;'>{net:+d}</div>"
+        f"<div style='font-size:20px;font-weight:800;color:{color};min-width:54px;'>{value:+d}</div>"
         f"<div style='flex:1;background:#e2e8f0;border-radius:6px;height:10px;'>"
         f"<div style='width:{mag}%;background:{color};height:10px;border-radius:6px;'></div></div></div>"
-        f"<div style='font-size:14px;color:#475569;line-height:1.45;'>bull-read − bear-read — the single "
-        f"number behind the two cards. &gt; +40 with a confirmed state is act-worthy; near 0 = no edge.</div>"
+        f"<div style='font-size:14px;color:#475569;line-height:1.45;'>{detail}</div>"
         f"</div>", unsafe_allow_html=True)
 
+def _final_card(final):
+    # Trust-adjusted conviction: Bull−Bear discounted by signal agreement. Full spectrum,
+    # both sides.
+    if final >= 35:
+        color, label = "#15803d", "STRONG BULL — act (stay / roll PUT up)"
+    elif final >= 15:
+        color, label = "#16a34a", "Mild bull — real but unconfirmed, wait"
+    elif final > -15:
+        color, label = "#64748b", "No edge — stand aside"
+    elif final > -35:
+        color, label = "#dc2626", "Mild bear — caution on the threatened leg"
+    else:
+        color, label = "#b91c1c", "STRONG BEAR — defend (leg / sell-CALL)"
+    _mini_card("🎯 FINAL CONVICTION", final, color, label,
+               "Bull−Bear × signal-agreement — the headline number, discounted when the "
+               "pillars don't line up. ±35 agreed = act-worthy; near 0 = no edge.")
+
+def _net_card(net):
+    if net > 8:
+        color, lean = "#16a34a", "Bull case ahead"
+    elif net < -8:
+        color, lean = "#dc2626", "Bear case ahead"
+    else:
+        color, lean = "#64748b", "Balanced"
+    _mini_card("⚖️ BULL − BEAR (raw)", net, color, lean,
+               "bull-read − bear-read before the agreement discount — the raw lean of the "
+               "two case scores. The Final card discounts this by Conf%.")
+
 _net_val = int(two_sided["bull"].get("score", 0)) - int(two_sided["bear"].get("score", 0))
-bc, kc, nc = st.columns(3)
+_conf_now = int(verdict.get("confidence", 0))
+_final_val = int(round(_net_val * _conf_now / 100.0))
+bc, kc, fc, nc = st.columns(4)
 with bc:
     _side_card(two_sided["bull"], "bull")
 with kc:
     _side_card(two_sided["bear"], "bear")
+with fc:
+    _final_card(_final_val)
 with nc:
     _net_card(_net_val)
-st.caption("These are the *raw* sub-scores behind the single badge above — so you can see the case for "
-           "each leg even when one side is dominating, plus their **Net**. The same four scores are plotted "
-           "candle-by-candle in the 'reads' panel of the chart, and itemised in the 🔬 behind-the-scenes table.")
+st.caption("**Reading the Final conviction (both ways):** "
+           "**+35 or more** = strong, agreed, regime-backed *bull* → act (stay / roll the sold-PUT up) · "
+           "**+15…+35** = real but unconfirmed bull → wait for a clean state · "
+           "**−15…+15** = no edge → stand aside · "
+           "**−15…−35** = real but unconfirmed *bear* → caution, watch the threatened leg · "
+           "**−35 or less** = strong, agreed *bear* → defend (manage the leg / sell-CALL). "
+           "Final = Bull−Bear × Conf%; gamma backdrop is the tilt noted on the bull/bear cards.")
 
 # ── Conflict scorecard — exactly which signals agree vs fight right now ────────
 ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
@@ -460,6 +489,15 @@ step = max(1, len(x) // 14)
 fig.update_xaxes(tickmode="array", tickvals=x[::step], tickangle=-40,
                  showgrid=True, gridcolor="#eef2f7")
 fig.update_yaxes(showgrid=True, gridcolor="#eef2f7")
+# Headroom on the price panel: in x-unified mode the combined hover box anchors to the
+# TOP of the panel, so giving the candles ~22% empty space above keeps the box off them.
+_ph = [float(df["low"].min()), float(df["high"].max())]
+for _lv in (flip, gex.get("call_wall"), gex.get("put_wall")):
+    if isinstance(_lv, (int, float)):
+        _ph.append(float(_lv))
+_lo_p, _hi_p = min(_ph), max(_ph)
+_rng_p = (_hi_p - _lo_p) or 1.0
+fig.update_yaxes(range=[_lo_p - 0.04 * _rng_p, _hi_p + 0.22 * _rng_p], row=1, col=1)
 st.plotly_chart(fig, use_container_width=True)
 
 with st.expander("📖 What each thing on the chart means (plain English)"):
@@ -693,7 +731,7 @@ with st.container():
                 return out
             try:
                 conf = float(row["Conf%"])
-                net = float(row["Net"]) if "Net" in row.index else 0.0
+                net = float(row["Bull−Bear"]) if "Bull−Bear" in row.index else 0.0
             except (TypeError, ValueError):
                 return out
             f = min(1.0, conf / 100.0)
@@ -717,7 +755,7 @@ with st.container():
         sty = _m(sty, lambda v: _heat(v, _BLUE), "Uptrend")
         sty = _m(sty, lambda v: _heat(v, _RED), "Downtr")
         sty = _m(sty, lambda v: _heat(v, _AMBER), "Topping")
-        sty = _m(sty, _net_css, "Net")
+        sty = _m(sty, _net_css, "Final", "Bull−Bear")
         sty = _m(sty, _delta_css, "ΔVWAP")
         sty = _m(sty, _stretch_css, "Stretch")
         sty = _m(sty, _brd_css, "Brd%")
@@ -752,7 +790,7 @@ with st.container():
                        for ix in ct.index}
             sty = sty.apply(lambda col: [_pb_map.get(ix, "") for ix in col.index],
                             subset=["%B"], axis=0)
-        if {"Conf%", "Net"}.issubset(ct.columns):
+        if {"Conf%", "Bull−Bear"}.issubset(ct.columns):
             sty = sty.apply(_conf_row, axis=1)
         if {"Open", "High", "Low", "Close"}.issubset(ct.columns) and \
                 ({"LWick", "UWick"} & set(ct.columns)):
@@ -765,8 +803,10 @@ with st.container():
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(
                 "**Column key** (results lead, then the inputs that produced them) — "
-                "**`State`** the resulting call · **`Net`** = bull-read − bear-read, the single directional "
-                "conviction (🟢 + stay / 🔴 − defend) · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
+                "**`State`** the resulting call · **`Final`** = Bull−Bear × signal-agreement — the "
+                "trust-adjusted headline conviction (🟢 + bull / 🔴 − defend; ±35 agreed = act-worthy, "
+                "near 0 = no edge) · **`Bull−Bear`** = bull-read − bear-read, the raw lean *before* the "
+                "agreement discount · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
                 "**`Conf%`** = net of the 4 pillars (agree − oppose) ÷ 4, tinted 🟢 when the lean is bullish / "
                 "🔴 when bearish (darker = stronger; so 4-agree = 100%, 3-agree/1-neutral = 75%) · "
                 "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation "

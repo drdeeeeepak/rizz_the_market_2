@@ -614,7 +614,11 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["Uptrend"] = d["uptrend_score"].astype(int)       # 🟢 ride it
     t["Downtr"] = d["downtrend_score"].astype(int)      # 🔴 defend PUT
     t["Topping"] = d["topping_score"].astype(int)       # 🔴 defend CALL
-    t["Net"] = (d["bull_read"] - d["bear_read"]).astype(int)   # +bull / −bear (−100..+100)
+    # Bull−Bear = raw lean of the case scores (bull_read − bear_read).
+    _bb = (d["bull_read"] - d["bear_read"])
+    t["Bull−Bear"] = _bb.astype(int)                    # +bull / −bear (−100..+100)
+    # Final = Bull−Bear discounted by signal agreement (Conf%) → trust-adjusted conviction.
+    t["Final"] = (_bb * d["confidence"] / 100.0).round().astype(int)
     # ── pillar votes ──────────────────────────────────────────────────────────
     t["P"] = [_VOTE_ARROW.get(int(v), "·") for v in d["bias"]]
     t["M"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_mom"]]
@@ -635,7 +639,7 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
 
     # Results lead (State · Net · Brd% · Conf%), then the key reads, then the rest, raw last.
     order = [
-        "Time", "State", "Net", "Brd%", "Conf%",
+        "Time", "State", "Final", "Bull−Bear", "Brd%", "Conf%",
         "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "HiLo", "LWick", "UWick", "Candle", "%B", "Stretch", "Persist",
         "Reversal", "Uptrend", "Downtr", "Topping",
         "P", "M", "V", "B", "S", "Agree", "Oppose",

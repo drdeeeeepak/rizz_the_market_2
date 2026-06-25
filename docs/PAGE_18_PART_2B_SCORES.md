@@ -102,19 +102,30 @@ bear_read = topping  (if above VWAP)   else  downtrend
 ```
 The two-sided cards in Part 3 §A use the **raw four** so you never lose the other side.
 
-### F.1 Net — the single "final score" (one number to read)
-For an at-a-glance read, the table also shows one signed conviction number:
-```
-Net = bull_read − bear_read          # range −100 .. +100
-```
-- **Net > 0** → the bull case (stay / be patient / ride) outweighs the defend case.
-- **Net < 0** → the defend case (downtrend / topping) outweighs — manage the threatened leg.
-- **Net ≈ 0** → no clear edge.
+### F.1 Bull−Bear and Final — the two summary numbers
+Two layers sit on top of the four scores (see also the card row in Part 3 §A):
 
-It's heat-shaded green (net-bull) / red (net-defend), darker as it gets more extreme, so
-you can scan the column and instantly see which way each candle leaned and how strongly.
-It does **not** replace the four raw scores (which tell you *why*) — it's the summary on
-top of them. *(Table col: `Net`.)*
+```
+Bull−Bear = bull_read − bear_read                  # raw lean, −100 .. +100
+Final     = Bull−Bear × (Conf% / 100)              # trust-adjusted, −100 .. +100
+```
+
+- **`Bull−Bear`** (renamed from "Net") is the *raw* directional lean of the two case
+  scores: >0 bull (stay / ride), <0 defend, ≈0 no edge.
+- **`Final`** discounts that lean by **signal agreement** (`Conf%`, Part 2c §G) — so a
+  strong-but-conflicted read shrinks (e.g. Bull−Bear +60 at 50% agreement → Final +30),
+  exactly the "looks like a move but the pillars fight it" trap. This is the **headline**
+  number; `Bull−Bear` is kept beside it so you can see how much the discount cost.
+
+**Reading `Final` (both directions):** **+35 or more** = strong, agreed bull → act (stay /
+roll the sold-PUT up) · **+15…+35** = real but unconfirmed bull → wait · **−15…+15** = no
+edge → stand aside · **−15…−35** = real but unconfirmed bear → caution on the threatened
+leg · **−35 or less** = strong, agreed bear → defend (manage the leg / sell-CALL).
+
+Both are heat-shaded green (bull) / red (defend), darker as they get more extreme. Neither
+replaces the four raw scores (which tell you *why*). The **dealer-gamma backdrop is shown
+as a tilt note on the bull/bear cards**, not multiplied into `Final` — gamma is today-only,
+so it can't be applied per past candle (see Part 3 §B). *(Table cols: `Final`, `Bull−Bear`.)*
 
 ➡️ **Next: Part 2c — confluence, metric cards & the behind-the-scenes table**
 (`PAGE_18_PART_2C_CONFLUENCE_TABLE.md`).

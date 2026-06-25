@@ -55,9 +55,10 @@ is computed — it just makes every number visible.
 
 **Column key** — the **results lead**, then the inputs that produced them, raw price last:
 
-`Time` · **`State`** (the resulting call) · **`Net`** (bull-read − bear-read, the single
-directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Brd%`** (breadth — 🟢
->55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
+`Time` · **`State`** (the resulting call) · **`Final`** (Bull−Bear × signal-agreement — the
+trust-adjusted headline conviction, 🟢 + bull / 🔴 − defend; ±35 agreed = act-worthy) ·
+**`Bull−Bear`** (bull-read − bear-read, the raw lean *before* the agreement discount,
+heat-shaded) · **`Brd%`** (breadth — 🟢 >55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
 the prevailing lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair
 value) · `RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢
 uptrend 55–70 · 🟠 overbought >70; **text red when RSI fell vs the previous candle**) ·
@@ -76,7 +77,7 @@ above / below VWAP) · **`Reversal` `Uptrend`**
 (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) ·
 `Agree` `Oppose` · *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
-**Reading it:** the four score columns and `Net` are **heat-shaded** (darker = louder),
+**Reading it:** the four score columns, `Final` and `Bull−Bear` are **heat-shaded** (darker = louder),
 so scan a row to see which side is winning and how strongly; the arrow columns are
 coloured 🟢 green (up / bull) / 🔴 red (down / bear); `RSI` is banded by regime; the
 `State` text colour matches the ▲★▼▽ chart marks; a fired marker should line up with its
