@@ -462,13 +462,9 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
 # ══════════════════════════════════════════════════════════════════════════════
 # Behind the scenes — every per-candle calculation in one auditable table
 # ══════════════════════════════════════════════════════════════════════════════
-with st.expander("🔬 Behind the scenes — every calculation, candle by candle (newest first)"):
-    st.caption("One row per candle. Nothing is hidden: the four raw scores (🟢 bull pair · 🔴 bear pair) plus a "
-               "single **Net** conviction (🟢 +bull / 🔴 −defend) sit beside every input that feeds them. Score "
-               "columns are heat-shaded (darker = louder), RSI is banded by regime "
-               "(capitulation→downtrend→neutral→uptrend→overbought), arrows are 🟢▲ up / 🔴▼ down, and the "
-               "**State** column matches the ▲★▼▽ marks on the chart. This is exactly what the engine 'saw'.")
-
+ui.section_header("🔬 Behind the scenes — every calculation, candle by candle",
+                  "Always on · newest candle first · column key in the expander below the table")
+with st.container():
     ct = ic.candle_table(df, newest_first=True)
     if ct.empty:
         st.info("No candles to show.")
@@ -496,6 +492,25 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
             if "▲" in s or "↑" in s:
                 return "color:#16a34a;font-weight:700;"
             if "▼" in s or "↓" in s:
+                return "color:#dc2626;font-weight:700;"
+            return "color:#cbd5e1;"
+
+        # Combined swing column (Hi char + Lo char): ▲▲ uptrend (green) · ▼▼ downtrend
+        # (red) · ▲▼ expanding/outside (amber) · ▼▲ inside (slate) · partial = light.
+        def _hilo_css(v):
+            s = str(v)
+            up, dn = s.count("▲"), s.count("▼")
+            if up == 2:
+                return _bg(_GREEN, 0.6)
+            if dn == 2:
+                return _bg(_RED, 0.6)
+            if s == "▲▼":
+                return _bg(_AMBER, 0.45)
+            if up and dn:
+                return "color:#475569;font-weight:700;"
+            if up:
+                return "color:#16a34a;font-weight:700;"
+            if dn:
                 return "color:#dc2626;font-weight:700;"
             return "color:#cbd5e1;"
 
@@ -659,7 +674,8 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
         sty = _m(sty, _delta_css, "ΔVWAP", "Stretch")
         sty = _m(sty, _brd_css, "Brd%")
         sty = _m(sty, _clv_css, "Candle")
-        sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Hi", "Lo", "Persist")
+        sty = _m(sty, _hilo_css, "HiLo")
+        sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Persist")
         sty = _m(sty, _state_css, "State")
         # %B coloured by position + fast 2–3 bar structure (precomputed chronologically,
         # since momentum needs neighbouring candles; then mapped back to the table order).
@@ -689,30 +705,31 @@ with st.expander("🔬 Behind the scenes — every calculation, candle by candle
 
         st.dataframe(sty, use_container_width=True, height=460, hide_index=True)
 
-        st.markdown(
-            "**Column key** (results lead, then the inputs that produced them) — "
-            "**`State`** the resulting call · **`Net`** = bull-read − bear-read, the single directional "
-            "conviction (🟢 + stay / 🔴 − defend) · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
-            "**`Conf%`** signal agreement, tinted 🟢 when the lean is bullish / 🔴 when bearish (darker = "
-            "stronger) · `ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation "
-            "<30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · "
-            "`RSIdiv` RSI divergence (🟢▲ bull / 🔴▼ bear) · `CVD↑` CVD rose vs the *previous* candle (🟢▲) · "
-            "`CVDdiv` 6-bar volume divergence (🟢▲/🔴▼) · "
-            "`Hi/Lo` swing-high / swing-low direction (🟢▲ higher · 🔴▼ lower) — read as a pair: "
-            "▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside · "
-            "`LWick` 🟢 bullish lower side — long lower wick (buyers rejected the low) *or* a green body with "
-            "no lower wick (rose from the open) · `UWick` 🔴 bearish upper side — long upper wick (sellers) "
-            "*or* a red body with no upper wick · `Candle` single close-location read (🟢 +1 closed at high / "
-            "🔴 −1 at low) — captures momentum *and* rejection in one column (trial; compare vs LWick/UWick) · "
-            "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
-            "**`Topping`** defend-CALL (🔴 bear) · "
-            "`%B` momentum (position **confirmed by fast price structure**) + reversal: high %B *and* a fresh "
-            "high → 🟢 up-momentum (pale green = high but no new high yet); low %B *and* a fresh low → 🔴 "
-            "down-momentum; beyond a band but **not** making new highs/lows → 🟠 amber = stretched, "
-            "mean-reversion watch; ~0.5 neutral · `Stretch` signed stretch from fair "
-            "value (🟢 + above / 🔴 − below, in expected-moves) · "
-            "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
-            "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
+        with st.expander("📋 Column key — what each column & colour means"):
+            st.markdown(
+                "**Column key** (results lead, then the inputs that produced them) — "
+                "**`State`** the resulting call · **`Net`** = bull-read − bear-read, the single directional "
+                "conviction (🟢 + stay / 🔴 − defend) · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
+                "**`Conf%`** = net of the 4 pillars (agree − oppose) ÷ 4, tinted 🟢 when the lean is bullish / "
+                "🔴 when bearish (darker = stronger; so 4-agree = 100%, 3-agree/1-neutral = 75%) · "
+                "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation "
+                "<30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend 55–70 · 🟠 overbought >70) · "
+                "`RSIdiv` RSI divergence (🟢▲ bull / 🔴▼ bear) · `CVD↑` CVD rose vs the *previous* candle (🟢▲) · "
+                "`CVDdiv` 6-bar volume divergence (🟢▲/🔴▼) · "
+                "`HiLo` swing-high+low in one cell (🟢 ▲▲ uptrend · 🔴 ▼▼ downtrend · 🟠 ▲▼ expanding · ▼▲ inside) · "
+                "`LWick` 🟢 bullish lower side — long lower wick (buyers rejected the low) *or* a green body with "
+                "no lower wick (rose from the open) · `UWick` 🔴 bearish upper side — long upper wick (sellers) "
+                "*or* a red body with no upper wick · `Candle` single close-location read (🟢 +1 closed at high / "
+                "🔴 −1 at low) — captures momentum *and* rejection in one column (trial; compare vs LWick/UWick) · "
+                "`%B` momentum (position **confirmed by fast price structure**) + reversal: high %B *and* a fresh "
+                "high → 🟢 up-momentum (pale green = high but no new high yet); low %B *and* a fresh low → 🔴 "
+                "down-momentum; beyond a band but **not** making new highs/lows → 🟠 amber = stretched, "
+                "mean-reversion watch; ~0.5 neutral · "
+                "`Stretch` signed stretch from fair value (🟢 + above / 🔴 − below, in expected-moves) · "
+                "`Persist` ↑3 🟢 above / ↓3 🔴 below VWAP (3 candles) · "
+                "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
+                "**`Topping`** defend-CALL (🔴 bear) · "
+                "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
 
 st.divider()
 

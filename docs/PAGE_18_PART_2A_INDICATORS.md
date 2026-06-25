@@ -169,14 +169,13 @@ lower_high  = high < high[6 ago]        lower_low  = low  < low[6 ago]
 persist_below = 3 consecutive candles below VWAP     # a real down-leg, not a dip
 persist_above = 3 consecutive candles above VWAP     # holding above fair value
 ```
-**Display:** rather than three separate flags, the table shows **two arrow columns**:
-- `Hi` = the swing **high** direction — 🟢▲ higher-high or 🔴▼ lower-high;
-- `Lo` = the swing **low** direction — 🟢▲ higher-low or 🔴▼ lower-low.
-
-Read them as a pair for instant meaning: **▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding
-(outside bar) · ▼▲ inside (contracting)**. *(`lower_high` was added so the down-side has
-the same skeleton the up-side already had — previously only `higher_low` existed.)*
-*(Table cols: `Hi`, `Lo`, `Persist` shown as ↑3 / ↓3.)*
+**Display:** the swing high-char and low-char are shown **side by side in one `HiLo`
+column** (to save width) — high direction first, then low direction, each 🟢▲ higher /
+🔴▼ lower / `·` none. The cell is colour-coded by the pair for instant meaning:
+**🟢 ▲▲ uptrend · 🔴 ▼▼ downtrend · 🟠 ▲▼ expanding (outside bar) · ▼▲ inside
+(contracting)**. *(`lower_high` was added so the down-side has the same skeleton the
+up-side already had — previously only `higher_low` existed.)* *(Table cols: `HiLo`,
+`Persist` shown as ↑3 / ↓3.)*
 
 ### B.9 Breadth (real vs fake)
 For all 50 Nifty-50 stocks: the % whose `close > their own session VWAP`, per

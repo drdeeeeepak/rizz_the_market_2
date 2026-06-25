@@ -13,11 +13,18 @@
 
 Five independent **pillars** each vote bull (+1) / bear (−1) / neutral (0):
 *Price vs VWAP · Momentum (RSI) · Volume (CVD) · Breadth · Structure (higher/lower lows)*
-(plus *Dealer gamma* as a today-only sixth pillar in the live verdict).
+(plus *Dealer gamma* as a today-only sixth pillar in the live verdict). Price-vs-VWAP is
+the **reference direction (the bias)**, so the four that actually *vote* are Momentum,
+Volume, Breadth, Structure.
 ```
-confidence = agree / (agree + oppose) × 100
+confidence = clip( (agree − oppose) / 4 , 0..1 ) × 100      # net of the 4 voting pillars
 conflict   = (2 or more pillars fighting the price direction)
 ```
+**Why net-of-4 (not `agree / (agree+oppose)`):** the old ratio scored *3-agree/0-oppose*
+and *4-agree/0-oppose* both at **100%**, hiding the difference in strength. Counting all 4
+pillars in the denominator fixes that — `4 agree = 100%`, `3 agree + 1 neutral = 75%`,
+`3 agree + 1 oppose = 50%`, `2 agree + 2 oppose = 0%` — so both *how many* confirm and
+*how many fight* move the number.
 - The **Signal-agreement %** (purple dotted line + the top metric card) is this number.
 - The **scorecard** shows each pillar as ✅ agrees / ❌ fights / • flat.
 - **Continuation calls (UPTREND ★ / DOWNTREND ▼) are withheld when conflicted** — a
@@ -50,23 +57,22 @@ is computed — it just makes every number visible.
 
 `Time` · **`State`** (the resulting call) · **`Net`** (bull-read − bear-read, the single
 directional conviction — 🟢 + stay / 🔴 − defend, heat-shaded) · **`Brd%`** (breadth — 🟢
->55 broad / 🔴 <45 weak) · **`Conf%`** (signal agreement, tinted 🟢 when the prevailing
-lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair value) ·
-`RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢 uptrend
-55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲ bull / 🔴▼ bear RSI divergence) · `CVD↑` (🟢▲
-CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲ bull / 🔴▼ bear 6-bar volume divergence)
-· `Hi` `Lo` (swing-high / swing-low direction — 🟢▲ higher / 🔴▼ lower; read as a pair:
-▲▲ uptrend, ▼▼ downtrend, ▲▼ expanding, ▼▲ inside) · `LWick` (🟢 bullish lower side — long
-lower wick *or* green body with no lower wick) `UWick` (🔴 bearish upper side — long upper
-wick *or* red body with no upper wick) · `Candle` (single close-location read: 🟢 +1 closed
-at high / 🔴 −1 at low — momentum *and* rejection in one column; on trial alongside the
-two-column LWick/UWick split) · `%B` (momentum **gated by fast structure** + reversal: high
-%B *with* a new high → 🟢 up-momentum / pale if no new high; low %B with a new low → 🔴;
-stretched beyond a band but no new extreme → 🟠 amber reversal-watch; ~0.5 grey) ·
-**`Reversal` `Uptrend`** (🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair) ·
-`Stretch` (signed — 🟢 + above fair value / 🔴 − below) · `Persist`
-(↑3 🟢 above / ↓3 🔴 below VWAP) · `P/M/V/B/S` pillar votes (▲/▼/·) · `Agree` `Oppose` ·
-*then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
+>55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
+the prevailing lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair
+value) · `RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢
+uptrend 55–70 · 🟠 overbought >70) · `RSIdiv` (🟢▲ bull / 🔴▼ bear RSI divergence) · `CVD↑`
+(🟢▲ CVD rose vs the *previous* candle) · `CVDdiv` (🟢▲ bull / 🔴▼ bear 6-bar volume
+divergence) · `HiLo` (swing high+low in one cell — 🟢 ▲▲ uptrend · 🔴 ▼▼ downtrend · 🟠 ▲▼
+expanding/outside · ▼▲ inside) · `LWick` (🟢 bullish lower side — long lower wick *or* green
+body with no lower wick) `UWick` (🔴 bearish upper side — long upper wick *or* red body with
+no upper wick) · `Candle` (single close-location read: 🟢 +1 closed at high / 🔴 −1 at low —
+momentum *and* rejection in one column; on trial alongside the two-column LWick/UWick split)
+· `%B` (momentum **gated by fast structure** + reversal: high %B *with* a new high → 🟢
+up-momentum / pale if no new high; low %B with a new low → 🔴; stretched beyond a band but
+no new extreme → 🟠 amber reversal-watch; ~0.5 grey) · `Stretch` (signed — 🟢 + above fair
+value / 🔴 − below) · `Persist` (↑3 🟢 above / ↓3 🔴 below VWAP) · **`Reversal` `Uptrend`**
+(🟢 bull pair) · **`Downtr` `Topping`** (🔴 bear pair) · `P/M/V/B/S` pillar votes (▲/▼/·) ·
+`Agree` `Oppose` · *then at the end:* `Open` `High` `Low` `Close` `VWAP` `CVD`.
 
 **Reading it:** the four score columns and `Net` are **heat-shaded** (darker = louder),
 so scan a row to see which side is winning and how strongly; the arrow columns are

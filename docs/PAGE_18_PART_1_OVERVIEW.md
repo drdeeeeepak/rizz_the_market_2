@@ -81,7 +81,7 @@ not a guarantee. Always keep your hard stop.
 | **The 4 raw scores** | Reversal, Uptrend, Downtrend, Topping — the underlying 0–100 scores that Bull/Bear read are picked from (Part 2b §C). |
 | **The 4 states** | BOUNCE_BREWING (▲), UPTREND/ride-it (★), DOWNTREND/defend-PUT (▼), TOPPING/defend-CALL (▽), or NEUTRAL. |
 | **Pillars / votes** | Five independent checks — Price vs VWAP, Momentum, Volume, Breadth, Structure — each votes ▲ bull / ▼ bear / · flat. |
-| **Signal agreement / Confidence** | 0–100: of the pillars, how many *agree* with the price direction. High = trustworthy; low = conflicted. |
+| **Signal agreement / Confidence** | 0–100: the **net** of the 4 voting pillars (momentum, volume, breadth, structure) pulling with the price direction — `(agree − oppose) ÷ 4 × 100`. So 4-agree = 100%, 3-agree/1-neutral = 75%, 2-agree/2-oppose = 0%. High = trustworthy; low = conflicted. |
 | **Two-sided view** | Showing the BULL case and BEAR case for both condor legs at once (Part 3 §A). |
 | **IST** | Indian Standard Time. All day/session logic uses IST. |
 

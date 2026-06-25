@@ -218,8 +218,11 @@ def _confluence(df: pd.DataFrame) -> pd.DataFrame:
     votes = np.vstack([vote_mom, vote_vol, vote_brd, vote_str])      # (4, N)
     agree = ((votes == bias) & (bias != 0)).sum(axis=0)
     oppose = ((votes == -bias) & (bias != 0)).sum(axis=0)
-    denom = agree + oppose
-    conf = np.where(denom > 0, agree / denom * 100.0, 0.0)
+    # Net agreement out of ALL 4 voting pillars (Momentum, Volume, Breadth, Structure).
+    # Counting neutrals against the score means 3-agree/1-neutral (75%) ranks below
+    # 4-agree (100%) — the old agree/(agree+oppose) scored both 100%. An opposing pillar
+    # also costs more than a neutral one ((agree−oppose) vs just agree).
+    conf = np.clip((agree - oppose) / 4.0 * 100.0, 0.0, 100.0)
 
     df["bias"] = bias
     df["vote_mom"] = vote_mom
@@ -584,13 +587,13 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     t["CVD↑"] = _b("cvd_rising", "▲")
     t["CVDdiv"] = np.where(d["cvd_bull_div"].astype(bool), "▲",
                            np.where(d["cvd_bear_div"].astype(bool), "▼", ""))
-    # Swing structure sits right beside the divergences (most meaningful read there):
-    # Hi = swing-high direction, Lo = swing-low direction.
-    # ▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding · ▼▲ inside.
-    t["Hi"] = np.where(d["higher_high"].astype(bool), "▲",
-                       np.where(d["lower_high"].astype(bool), "▼", ""))
-    t["Lo"] = np.where(d["lower_low"].astype(bool), "▼",
-                       np.where(d["higher_low"].astype(bool), "▲", ""))
+    # Swing structure in ONE space-saving column: Hi char + Lo char side by side.
+    # ▲▲ uptrend · ▼▼ downtrend · ▲▼ expanding (outside) · ▼▲ inside (contracting).
+    _hi_c = np.where(d["higher_high"].astype(bool), "▲",
+                     np.where(d["lower_high"].astype(bool), "▼", "·"))
+    _lo_c = np.where(d["lower_low"].astype(bool), "▼",
+                     np.where(d["higher_low"].astype(bool), "▲", "·"))
+    t["HiLo"] = [f"{a}{b}" for a, b in zip(_hi_c, _lo_c)]
     t["%B"] = d["pct_b"].round(2)
     # One signed Stretch column: + = stretched ABOVE fair value, − = stretched BELOW.
     t["Stretch"] = (d["stretch_up"] - d["stretch_down"]).round(2)
@@ -629,9 +632,8 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     # Results lead (State · Net · Brd% · Conf%), then the key reads, then the rest, raw last.
     order = [
         "Time", "State", "Net", "Brd%", "Conf%",
-        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "Hi", "Lo", "LWick", "UWick", "Candle", "%B",
+        "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "HiLo", "LWick", "UWick", "Candle", "%B", "Stretch", "Persist",
         "Reversal", "Uptrend", "Downtr", "Topping",
-        "Stretch", "Persist",
         "P", "M", "V", "B", "S", "Agree", "Oppose",
         "Open", "High", "Low", "Close", "VWAP", "CVD",
     ]
