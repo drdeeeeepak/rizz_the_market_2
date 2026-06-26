@@ -13,13 +13,17 @@ from plotly.subplots import make_subplots
 import ui.components as ui
 import ui.conviction_table as uict
 from page_utils import bootstrap_signals, show_page_header
-from data.live_fetcher import get_nifty_fut_2h, get_india_vix, get_dual_expiry_chains
 from analytics.gamma_exposure import compute_gex
 from analytics import intraday_conviction as ic
 
-# Always run against current engine code (Streamlit caches imported modules across deploys).
+# Streamlit Cloud caches imported modules across deploys, so a freshly-pushed module can
+# lag a freshly-pushed page (e.g. live_fetcher missing get_nifty_fut_2h). Reload the
+# modules we depend on BEFORE binding their names, so this page runs against current code
+# without a manual reboot.
 import importlib
+import data.live_fetcher as _lf
 try:
+    importlib.reload(_lf)
     importlib.reload(ic)
     importlib.reload(uict)
 except Exception:
@@ -30,6 +34,16 @@ st.title("Page 19 — Conviction Radar · 2H (positional)")
 st.caption("Same engine as page 18 on **2-hour candles**, with VWAP **anchored to each "
            "post-expiry Wednesday** (Thursday on a holiday) — fair value *since the position "
            "was opened*, for tracking the Iron Condor across the weekly cycle.")
+
+# Bind data fetchers after the reload (and degrade gracefully if the module is still stale).
+if not hasattr(_lf, "get_nifty_fut_2h"):
+    st.warning("🔄 The app was just updated and Streamlit is still holding the older data "
+               "module. Open the menu (top-right ⋮) and **Reboot app** once to load the 2H "
+               "data fetcher.")
+    st.stop()
+get_nifty_fut_2h = _lf.get_nifty_fut_2h
+get_india_vix = _lf.get_india_vix
+get_dual_expiry_chains = _lf.get_dual_expiry_chains
 
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
