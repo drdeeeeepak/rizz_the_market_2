@@ -58,9 +58,12 @@ if spot <= 0:
 
 c1, c2, c3 = st.columns([1, 3, 2])
 with c1:
-    days = st.slider("Calendar days of 2H history", 20, 90, 60)
+    n_cycles = st.slider("Expiry cycles shown", 2, 10, 6)
 with c3:
     use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~25s)", value=False)
+
+# Fetch enough history to cover the requested cycles (each ~7 calendar days, add buffer)
+days = n_cycles * 8 + 10
 
 with st.spinner("Loading 2H data…"):
     df2 = get_nifty_fut_2h(days=days)
@@ -96,6 +99,26 @@ except Exception:
 
 df = ic.enrich(df2, expected_move_pts=expected_move_pts,
                breadth=breadth if not breadth.empty else None, anchored_vwap=True)
+
+# Slice to last n_cycles expiry cycles
+if not df.empty:
+    _cycle_keys = pd.Series(
+        [ic._expiry_cycle_key(ts) for ts in df.index], index=df.index
+    )
+    _unique_cycles = sorted(_cycle_keys.unique())
+    if len(_unique_cycles) > n_cycles:
+        _cutoff = _unique_cycles[-n_cycles]
+        df = df[_cycle_keys >= _cutoff].copy()
+        _cycle_keys = _cycle_keys[df.index]
+    # Boundaries: first candle of each cycle (for vertical lines on the chart)
+    _cycle_starts_idx = []
+    _prev = None
+    for ts, ck in _cycle_keys.items():
+        if ck != _prev:
+            _cycle_starts_idx.append(ts)
+            _prev = ck
+else:
+    _cycle_starts_idx = []
 
 _REQ = {"bull_read", "bear_read", "state", "vwap", "above_vwap", "confidence", "conflict"}
 if df.empty or not _REQ.issubset(df.columns) or not hasattr(ic, "candle_table"):
@@ -252,6 +275,15 @@ for key, anchor, mult, sym, fill, edge, label in _MARKER_SPECS:
                   mode="markers", name=label,
                   marker=dict(symbol=sym, size=13, color=fill, line=dict(width=1, color=edge))),
                   row=1, col=1)
+
+# Expiry cycle boundaries — vertical lines across all rows (skip first, it's the chart edge)
+for _cs in _cycle_starts_idx[1:]:
+    _cx = _cs.strftime("%d-%b %H:%M")
+    _cd = _cs.strftime("%d %b")
+    fig.add_vline(x=_cx, line=dict(color="rgba(245,158,11,0.55)", width=1.5, dash="dot"),
+                  annotation_text=f"⬡ {_cd}", annotation_position="top",
+                  annotation_font=dict(size=11, color="#f59e0b"),
+                  annotation_bgcolor="rgba(0,0,0,0)")
 
 # RSI
 fig.add_trace(go.Scatter(x=x, y=df["rsi"], mode="lines", name="RSI",
