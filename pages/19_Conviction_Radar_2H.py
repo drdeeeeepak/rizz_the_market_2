@@ -73,7 +73,7 @@ with st.spinner("Loading 2H data…"):
 breadth = pd.Series(dtype=float)
 if use_breadth:
     with st.spinner("Building Nifty-50 breadth on 2H candles (~25s)…"):
-        stock_dfs = get_nifty50_intraday(interval="120minute", days=days)
+        stock_dfs = get_nifty50_intraday(interval="60minute", days=days)
         breadth = ic.breadth_series(stock_dfs)
 
 if df2 is None or df2.empty:
@@ -129,6 +129,7 @@ if df.empty or not _REQ.issubset(df.columns) or not hasattr(ic, "candle_table"):
 verdict = ic.live_verdict(df, gex["regime"], gex.get("spot_vs_flip_pts"))
 two_sided = ic.two_sided_verdict(df, gex.get("regime", "UNKNOWN"), gex.get("spot_vs_flip_pts"))
 markers = ic.transition_markers(df)
+scorecard = ic.pillar_scorecard(df.iloc[-1], gex.get("regime", "UNKNOWN"), gex.get("spot_vs_flip_pts"))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cards — bull · bear · Bull−Bear · Final (with today's gamma tilt on the live Final)
@@ -217,6 +218,28 @@ with fc:
 st.caption("Positional read on the weekly cycle: **+35/-35** = strong, agreed, gamma-backed → act "
            "(roll the threatened leg) · **±15-35** = real but unconfirmed → wait · **near 0** = no edge.")
 
+# ── Pillar scorecard ─────────────────────────────────────────────────────────
+ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
+                  "Each pillar votes; a continuation call is only trusted when they line up")
+sc_cols = st.columns(len(scorecard))
+for col, c in zip(sc_cols, scorecard):
+    if c["agrees"] is True:
+        mark, mc = "✅ agrees", "#16a34a"
+    elif c["agrees"] is False:
+        mark, mc = "❌ fights", "#dc2626"
+    else:
+        mark, mc = "• flat", "#64748b"
+    with col:
+        st.markdown(
+            f"<div style='border:1px solid {mc}55;border-radius:8px;padding:8px 10px;text-align:center;'>"
+            f"<div style='font-size:14px;font-weight:700;color:#334155;'>{c['pillar']}</div>"
+            f"<div style='font-size:15px;color:#475569;margin:4px 0;min-height:40px;'>{c['read']}</div>"
+            f"<div style='font-size:15px;font-weight:800;color:{mc};'>{mark}</div>"
+            f"</div>", unsafe_allow_html=True)
+if verdict.get("conflict"):
+    st.caption("⚠️ The signals are **conflicted** — this is the kind of move that often fizzles. "
+               "The engine is withholding any 'ride it / defend' continuation call until they line up.")
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -276,14 +299,28 @@ for key, anchor, mult, sym, fill, edge, label in _MARKER_SPECS:
                   marker=dict(symbol=sym, size=13, color=fill, line=dict(width=1, color=edge))),
                   row=1, col=1)
 
-# Expiry cycle boundaries — vertical lines across all rows (skip first, it's the chart edge)
+# Expiry cycle boundaries — Scatter traces per row; y is clipped to axis range automatically.
+# add_vline is unreliable on categorical axes in subplots, so explicit traces are used.
+_price_lo = float(df["low"].min())
+_price_hi = float(df["high"].max())
+_first_boundary = True
 for _cs in _cycle_starts_idx[1:]:
     _cx = _cs.strftime("%d-%b %H:%M")
     _cd = _cs.strftime("%d %b")
-    fig.add_vline(x=_cx, line=dict(color="rgba(245,158,11,0.55)", width=1.5, dash="dot"),
-                  annotation_text=f"⬡ {_cd}", annotation_position="top",
-                  annotation_font=dict(size=11, color="#f59e0b"),
-                  annotation_bgcolor="rgba(0,0,0,0)")
+    _y_ranges = [(_price_lo, _price_hi)] + [(0, 100)] * (_rows - 1)
+    for _row, (_ylo, _yhi) in enumerate(_y_ranges, start=1):
+        fig.add_trace(go.Scatter(
+            x=[_cx, _cx], y=[_ylo, _yhi], mode="lines",
+            line=dict(color="rgba(245,158,11,0.70)", width=1.8, dash="dot"),
+            showlegend=_first_boundary and _row == 1,
+            name="Cycle boundary" if (_first_boundary and _row == 1) else None,
+            hoverinfo="skip",
+        ), row=_row, col=1)
+    fig.add_annotation(x=_cx, y=_price_hi, xref="x", yref="y",
+                       text=f"⬡ {_cd}", showarrow=False,
+                       font=dict(size=11, color="#f59e0b"),
+                       xanchor="left", yanchor="top")
+    _first_boundary = False
 
 # RSI
 fig.add_trace(go.Scatter(x=x, y=df["rsi"], mode="lines", name="RSI",
