@@ -44,6 +44,7 @@ if not hasattr(_lf, "get_nifty_fut_2h"):
 get_nifty_fut_2h = _lf.get_nifty_fut_2h
 get_india_vix = _lf.get_india_vix
 get_dual_expiry_chains = _lf.get_dual_expiry_chains
+get_nifty50_intraday = _lf.get_nifty50_intraday
 
 sig, spot, signals_ts = bootstrap_signals()
 show_page_header(spot, signals_ts)
@@ -55,14 +56,22 @@ if spot <= 0:
              "rather than guessing a price.")
     st.stop()
 
-c1, c2 = st.columns([1, 3])
+c1, c2, c3 = st.columns([1, 3, 2])
 with c1:
     days = st.slider("Calendar days of 2H history", 20, 90, 60)
+with c3:
+    use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~25s)", value=False)
 
 with st.spinner("Loading 2H data…"):
     df2 = get_nifty_fut_2h(days=days)
     vix = get_india_vix() or 0.0
     chains = get_dual_expiry_chains(spot)
+
+breadth = pd.Series(dtype=float)
+if use_breadth:
+    with st.spinner("Building Nifty-50 breadth on 2H candles (~25s)…"):
+        stock_dfs = get_nifty50_intraday(interval="120minute", days=days)
+        breadth = ic.breadth_series(stock_dfs)
 
 if df2 is None or df2.empty:
     st.error("Could not load Nifty 2H data from Kite. Check login / market data, then refresh.")
@@ -85,7 +94,8 @@ try:
 except Exception:
     pass
 
-df = ic.enrich(df2, expected_move_pts=expected_move_pts, breadth=None, anchored_vwap=True)
+df = ic.enrich(df2, expected_move_pts=expected_move_pts,
+               breadth=breadth if not breadth.empty else None, anchored_vwap=True)
 
 _REQ = {"bull_read", "bear_read", "state", "vwap", "above_vwap", "confidence", "conflict"}
 if df.empty or not _REQ.issubset(df.columns) or not hasattr(ic, "candle_table"):
@@ -194,8 +204,11 @@ ui.section_header("2H candles since the cycle anchor — signals drawn on",
                   "▲ bounce brewing · ★ uptrend ride · ▼ downtrend defend-PUT · ▽ topping defend-CALL")
 
 x = [t.strftime("%d-%b %H:%M") for t in df.index]
-fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-                    row_heights=[0.58, 0.20, 0.22])
+has_breadth = not breadth.empty and df["breadth"].notna().any()
+_rows = 4 if has_breadth else 3
+_heights = [0.50, 0.16, 0.18, 0.16] if has_breadth else [0.58, 0.20, 0.22]
+fig = make_subplots(rows=_rows, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+                    row_heights=_heights)
 
 # Bollinger band
 fig.add_trace(go.Scatter(x=x, y=df["bb_upper"], mode="lines", line=dict(width=0),
@@ -263,7 +276,16 @@ for yv in (55, 60):
     fig.add_hline(y=yv, line=dict(color="#cbd5e1", width=0.7, dash="dot"), row=3, col=1)
 fig.update_yaxes(title_text="raw scores / agree", range=[0, 100], row=3, col=1)
 
-fig.update_layout(height=860, margin=dict(l=10, r=10, t=30, b=10),
+# Row 4 — breadth (optional)
+if has_breadth:
+    fig.add_trace(go.Scatter(x=x, y=df["breadth"], mode="lines", name="Breadth %",
+                             line=dict(color="#06b6d4", width=1.3)), row=4, col=1)
+    for yv in (40, 50, 60):
+        fig.add_hline(y=yv, line=dict(color="#cbd5e1", width=0.7,
+                      dash="dot" if yv == 50 else "dash"), row=4, col=1)
+    fig.update_yaxes(title_text="breadth %", range=[0, 100], row=4, col=1)
+
+fig.update_layout(height=980 if has_breadth else 860, margin=dict(l=10, r=10, t=30, b=10),
                   xaxis_rangeslider_visible=False, plot_bgcolor="white", font=dict(size=14),
                   legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0, font=dict(size=13)),
                   hovermode="x unified")
@@ -307,5 +329,6 @@ else:
 
 st.caption("Notes: 2H candles are resampled from near-month **futures** 60-min (real volume). "
            "VWAP is **anchored** to each weekly cycle (post-expiry Wednesday / Thursday on a holiday), "
-           "so ΔVWAP and Stretch read against fair value *since the position opened*. Breadth is omitted "
-           "on this timeframe. Gamma is a today-only snapshot. These shift the odds; not a guarantee.")
+           "so ΔVWAP and Stretch read against fair value *since the position opened*. "
+           "Breadth = % of Nifty-50 stocks above their own intraday VWAP at each 2H bar (enable via checkbox). "
+           "Gamma is a today-only snapshot. These shift the odds; not a guarantee.")
