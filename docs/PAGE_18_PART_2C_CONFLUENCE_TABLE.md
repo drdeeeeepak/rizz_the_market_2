@@ -55,10 +55,12 @@ is computed — it just makes every number visible.
 
 **Column key** — the **results lead**, then the inputs that produced them, raw price last:
 
-`Time` · **`State`** (the resulting call) · **`Final`** (Bull−Bear × signal-agreement — the
-trust-adjusted headline conviction, 🟢 + bull / 🔴 − defend; ±35 agreed = act-worthy) ·
-**`Bull−Bear`** (bull-read − bear-read, the raw lean *before* the agreement discount,
-heat-shaded) · **`Brd%`** (breadth — 🟢 >55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
+`Time` · **`State`** (the resulting call) · **`Final`** (Bull−Bear × signal-agreement ×
+dealer-gamma where stored — the trust-adjusted headline conviction, 🟢 + bull / 🔴 − defend;
+±35 agreed = act-worthy) · **`γ`** (that day's gamma regime: 🟢 shock-absorber backs bull /
+🔴 accelerator backs bear / — none stored → Final un-tilted) · **`Bull−Bear`** (bull-read −
+bear-read, the raw lean *before* the agreement & gamma adjustments, heat-shaded) ·
+**`Brd%`** (breadth — 🟢 >55 broad / 🔴 <45 weak) · **`Conf%`** ((agree − oppose) ÷ 4 voting pillars, tinted 🟢 when
 the prevailing lean is bullish / 🔴 when bearish, darker = stronger) · `ΔVWAP` (close − fair
 value) · `RSI` (banded: 🟣 capitulation <30 · 🔴 downtrend 30–45 · ⚪ neutral 45–55 · 🟢
 uptrend 55–70 · 🟠 overbought >70; **text red when RSI fell vs the previous candle**) ·

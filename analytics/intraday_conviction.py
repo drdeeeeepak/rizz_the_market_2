@@ -555,7 +555,8 @@ def two_sided_verdict(df: pd.DataFrame, gamma_regime: str = "UNKNOWN",
 _VOTE_ARROW = {1: "▲", -1: "▼", 0: "·"}
 
 
-def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
+def candle_table(df: pd.DataFrame, newest_first: bool = True,
+                 gamma_by_date: dict = None) -> pd.DataFrame:
     """
     Build a display DataFrame: one row per candle, every calculation in columns,
     grouped Price → Momentum → Volume → Stretch → Structure → Breadth →
@@ -617,8 +618,26 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
     # Bull−Bear = raw lean of the case scores (bull_read − bear_read).
     _bb = (d["bull_read"] - d["bear_read"])
     t["Bull−Bear"] = _bb.astype(int)                    # +bull / −bear (−100..+100)
-    # Final = Bull−Bear discounted by signal agreement (Conf%) → trust-adjusted conviction.
-    t["Final"] = (_bb * d["confidence"] / 100.0).round().astype(int)
+    # Final = Bull−Bear × Conf% × today's-or-stored dealer-gamma tilt (where we have it).
+    # A cushioned regime (POSITIVE) backs the bull case, accelerator (NEGATIVE) the bear
+    # case → ×1.15 if aligned, ×0.85 if it fights. Days with no stored gamma (e.g. no
+    # login) get tilt 1.0 (no change) and a "—" in the γ column — never guessed.
+    gamma_by_date = gamma_by_date or {}
+    _dates = [ix.strftime("%Y-%m-%d") for ix in d.index]
+    _conf = d["confidence"].to_numpy()
+    _final, _gcol = [], []
+    for _dt, _bbv, _cf in zip(_dates, _bb.to_numpy(), _conf):
+        _reg = gamma_by_date.get(_dt)
+        if _reg in ("POSITIVE", "NEGATIVE"):
+            _cush = _reg == "POSITIVE"
+            _gcol.append("🟢" if _cush else "🔴")
+            _tilt = 1.0 if _bbv == 0 else (1.15 if (_cush if _bbv > 0 else not _cush) else 0.85)
+        else:
+            _gcol.append("—")
+            _tilt = 1.0
+        _final.append(int(round(max(-100.0, min(100.0, _bbv * _cf / 100.0 * _tilt)))))
+    t["Final"] = _final
+    t["γ"] = _gcol
     # ── pillar votes ──────────────────────────────────────────────────────────
     t["P"] = [_VOTE_ARROW.get(int(v), "·") for v in d["bias"]]
     t["M"] = [_VOTE_ARROW.get(int(v), "·") for v in d["vote_mom"]]
@@ -639,7 +658,7 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True) -> pd.DataFrame:
 
     # Results lead (State · Net · Brd% · Conf%), then the key reads, then the rest, raw last.
     order = [
-        "Time", "State", "Final", "Bull−Bear", "Brd%", "Conf%",
+        "Time", "State", "Final", "γ", "Bull−Bear", "Brd%", "Conf%",
         "ΔVWAP", "RSI", "RSIdiv", "CVD↑", "CVDdiv", "HiLo", "LWick", "UWick", "Candle", "%B", "Stretch", "Persist",
         "Reversal", "Uptrend", "Downtr", "Topping",
         "P", "M", "V", "B", "S", "Agree", "Oppose",

@@ -125,12 +125,23 @@ leg · **−35 or less** = strong, agreed bear → defend (manage the leg / sell
 Both are heat-shaded green (bull) / red (defend), darker as they get more extreme. Neither
 replaces the four raw scores (which tell you *why*).
 
-**Gamma tilt:** the **live Final *card*** multiplies in today's dealer gamma — `× 1.15` if
-the regime backs the direction (cushioned + bull, or accelerator + bear), `× 0.85` if it
-fights it — so the headline number is as real as possible *now*. The **table `Final`
-column omits gamma**, because gamma is a daily value with no history before we began
-logging it, so it can't be applied candle-by-candle to the past (see Part 3 §B for how the
-stored daily gamma could be folded in where available). *(Table cols: `Final`, `Bull−Bear`.)*
+**Gamma tilt — folded in where we have it.** Final now multiplies in dealer gamma:
+```
+Final = Bull−Bear × (Conf%/100) × gamma_tilt
+gamma_tilt = 1.15 if the regime BACKS the direction (cushioned+bull / accelerator+bear)
+             0.85 if it FIGHTS it
+             1.00 if no gamma is stored for that day
+```
+- The **live Final card** uses *today's* live regime.
+- The **table `Final` column** uses each candle's **stored daily regime** (`gamma_history.json`)
+  — so past days get tilted only once the daily history has logged them. Gamma is a *daily*
+  value (one regime per day; see "why" below), so every candle of a day shares the same tilt.
+- A small **`γ` column** shows that day's regime: **🟢** shock-absorber (POSITIVE, backs the
+  bull case) · **🔴** accelerator (NEGATIVE, backs the bear case) · **—** none stored (e.g.
+  no-login day → Final left un-tilted, never guessed). So you can always see *whether* and
+  *which way* gamma moved each cell.
+
+*(Table cols: `Final`, `γ`, `Bull−Bear`.)*
 
 ➡️ **Next: Part 2c — confluence, metric cards & the behind-the-scenes table**
 (`PAGE_18_PART_2C_CONFLUENCE_TABLE.md`).

@@ -551,7 +551,17 @@ with st.expander("📖 What each thing on the chart means (plain English)"):
 ui.section_header("🔬 Behind the scenes — every calculation, candle by candle",
                   "Always on · newest candle first · column key in the expander below the table")
 with st.container():
-    ct = ic.candle_table(df, newest_first=True)
+    # Gamma-by-date map: stored daily regimes (past) + today's live regime → lets the
+    # Final column fold in dealer gamma WHERE we have it; missing days stay un-tilted.
+    _gmap = {}
+    try:
+        from data.gamma_history import load_daily_history
+        _gmap = {r.get("date"): r.get("regime") for r in load_daily_history() if r.get("date")}
+    except Exception:
+        pass
+    if gex.get("regime") in ("POSITIVE", "NEGATIVE"):
+        _gmap[pd.Timestamp.now(tz="Asia/Kolkata").strftime("%Y-%m-%d")] = gex.get("regime")
+    ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
     if ct.empty:
         st.info("No candles to show.")
     else:
@@ -775,6 +785,7 @@ with st.container():
         sty = _m(sty, _brd_css, "Brd%")
         sty = _m(sty, _clv_css, "Candle")
         sty = _m(sty, _hilo_css, "HiLo")
+        sty = _m(sty, lambda v: "text-align:center;", "γ")
         sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Persist")
         sty = _m(sty, _state_css, "State")
         # RSI banded by regime, with red text when it fell vs the previous candle (needs
@@ -817,10 +828,12 @@ with st.container():
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(
                 "**Column key** (results lead, then the inputs that produced them) — "
-                "**`State`** the resulting call · **`Final`** = Bull−Bear × signal-agreement — the "
-                "trust-adjusted headline conviction (🟢 + bull / 🔴 − defend; ±35 agreed = act-worthy, "
-                "near 0 = no edge) · **`Bull−Bear`** = bull-read − bear-read, the raw lean *before* the "
-                "agreement discount · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
+                "**`State`** the resulting call · **`Final`** = Bull−Bear × signal-agreement × dealer-gamma "
+                "(where stored) — the trust-adjusted headline conviction (🟢 + bull / 🔴 − defend; ±35 agreed "
+                "= act-worthy, near 0 = no edge) · **`γ`** that day's dealer-gamma regime (🟢 shock-absorber "
+                "backs bull · 🔴 accelerator backs bear · — none stored / no login that day, so Final un-tilted) "
+                "· **`Bull−Bear`** = bull-read − bear-read, the raw lean *before* the agreement & gamma "
+                "adjustments · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
                 "**`Conf%`** = net of the 4 pillars (agree − oppose) ÷ 4, tinted 🟢 when the lean is bullish / "
                 "🔴 when bearish (darker = stronger; so 4-agree = 100%, 3-agree/1-neutral = 75%) · "
                 "`ΔVWAP` close minus fair value · `RSI` momentum, banded by regime (🟣 capitulation "
