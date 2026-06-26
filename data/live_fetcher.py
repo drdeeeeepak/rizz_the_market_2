@@ -607,6 +607,42 @@ def get_nifty_fut_intraday(interval: str = "15minute", days: int = 7) -> pd.Data
         return pd.DataFrame()
 
 
+def _resample_to_2h(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Session-aware resample of 60-min OHLCV → 2-hour candles, stamped at the bucket
+    start (09:15, 11:15, 13:15, 15:15). Buckets never span a day boundary.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    idx = df.index
+    mins = (idx.hour * 60 + idx.minute).to_numpy()
+    bucket = np.clip((mins - (9 * 60 + 15)) // 120, 0, None)        # 0..3 within the day
+    start_min = 555 + bucket * 120                                  # 9:15, 11:15, 13:15, 15:15
+    floored = idx.normalize() + pd.to_timedelta(start_min, unit="m")
+    out = df.groupby(floored).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"))
+    out.index.name = "date"
+    return out.sort_index()
+
+
+@st.cache_data(ttl=TTL_1H, show_spinner=False)
+def get_nifty_fut_2h(days: int = 60) -> pd.DataFrame:
+    """
+    Near-month NIFTY FUTURES 2-hour OHLCV (resampled from 60-min, WITH volume) for the
+    positional 2H Conviction Radar. Falls back to the index (no volume) if futures fail.
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    try:
+        raw = get_nifty_fut_intraday(interval="60minute", days=days)
+        if raw is None or raw.empty:
+            raw = get_nifty_intraday(interval="60minute", days=days)   # index fallback
+        return _resample_to_2h(raw)
+    except Exception as e:
+        log.error("Nifty fut 2H fetch failed: %s", e)
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=TTL_5M, show_spinner=False)
 def get_nifty_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
     """

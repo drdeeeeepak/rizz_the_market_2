@@ -72,6 +72,38 @@ def _session_vwap(df: pd.DataFrame) -> pd.Series:
     return (pv / vv).ffill()
 
 
+def _expiry_cycle_key(ts) -> "pd.Timestamp":
+    """
+    Identify which weekly options cycle a timestamp belongs to, keyed by the cycle's
+    *expiry Tuesday*. The cycle runs from the first trading day AFTER expiry (Wednesday,
+    or Thursday if Wed is a holiday) through the next expiry Tuesday. Tue/Mon belong to
+    the cycle that is still running (the prior Tuesday's), Wed–Sun to the cycle that
+    started this week.
+    """
+    import datetime as _dt
+    d = ts.date() if hasattr(ts, "date") else pd.Timestamp(ts).date()
+    wd = d.weekday()                                   # Mon=0 … Sun=6 (Tue=1)
+    this_tue = d + _dt.timedelta(days=(1 - wd))        # the Tuesday of this Mon–Sun week
+    return pd.Timestamp(this_tue if wd >= 2 else this_tue - _dt.timedelta(days=7))
+
+
+def _anchored_vwap(df: pd.DataFrame) -> pd.Series:
+    """
+    Anchored VWAP for positional tracking — resets each WEEKLY cycle at the first
+    trading candle after expiry (post-Tuesday Wednesday, or Thursday on a holiday),
+    instead of every day. Same volume-weighting (or price-only fallback) as the
+    session VWAP, just grouped by expiry cycle rather than by calendar day.
+    """
+    tp = (df["high"] + df["low"] + df["close"]) / 3.0
+    key = pd.Series([_expiry_cycle_key(ix) for ix in df.index], index=df.index)
+    vol = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+    if float(vol.sum()) <= 0:
+        return tp.groupby(key).transform(lambda s: s.expanding().mean())
+    pv = (tp * vol).groupby(key).cumsum()
+    vv = vol.groupby(key).cumsum().replace(0, np.nan)
+    return (pv / vv).ffill()
+
+
 def _rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
@@ -95,12 +127,14 @@ def _cvd_proxy(df: pd.DataFrame) -> pd.Series:
 
 
 def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
-           breadth: pd.Series = None) -> pd.DataFrame:
+           breadth: pd.Series = None, anchored_vwap: bool = False) -> pd.DataFrame:
     """
     Add every per-candle column used by the chart and the verdict.
     df must be intraday OHLCV with a DatetimeIndex.
     expected_move_pts : today's VIX-implied one-day move (points). Used for stretch.
     breadth           : optional Series (% of Nifty-50 above their VWAP), aligned later.
+    anchored_vwap     : if True, VWAP anchors to the weekly expiry cycle (post-Tuesday
+                        Wednesday) instead of resetting daily — for positional 2H tracking.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -110,7 +144,7 @@ def enrich(df: pd.DataFrame, expected_move_pts: float = 0.0,
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index)
 
-    df["vwap"] = _session_vwap(df)
+    df["vwap"] = _anchored_vwap(df) if anchored_vwap else _session_vwap(df)
     df["rsi"] = _rsi(df["close"])
     df["cvd"] = _cvd_proxy(df)
 
