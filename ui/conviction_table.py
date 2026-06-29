@@ -274,3 +274,149 @@ def column_key_md(vwap_label: str = "fair value") -> str:
         "**`Reversal`** bounce-brewing, **`Uptrend`** ride-it (🟢 bull) · **`Downtr`** defend-PUT, "
         "**`Topping`** defend-CALL (🔴 bear) · "
         "`P/M/V/B/S` pillar votes · `Agree/Oppose` vote tally · *then raw* `O/H/L/C · VWAP · CVD`.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Vertical / transposed view — candles become COLUMNS (oldest→newest, newest on the
+# RIGHT) and the signals become ROWS, so a handful of candles read top-to-bottom
+# under each timestamp in one glance. Re-uses the per-value colour helpers above,
+# dispatched by ROW name instead of column name.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Curated "headline + key reads" rows (top→bottom under each candle). The full set is
+# every column candle_table() produced — shown when the page asks for all rows.
+TRANSPOSED_KEY_ROWS = [
+    "State", "Final", "γ", "Bull−Bear", "Conf%", "Brd%",
+    "RSI", "RSIdiv", "ΔVWAP", "Stretch", "HiLo", "Candle", "%B", "Persist",
+    "Reversal", "Uptrend", "Downtr", "Topping",
+]
+
+
+def transpose_candle_table(ct_chrono: pd.DataFrame, n: int = 8,
+                           key_rows_only: bool = True):
+    """
+    Flip a chronological (oldest-first) candle_table() 90°.
+
+    Returns (display, context):
+      • display — the rows to SHOW (curated subset or all), columns = the last `n`
+        candle timestamps oldest→newest (newest on the right).
+      • context — the FULL transposed frame (all rows) for the same candles, so the
+        styler can reach High/Low/Open/Close/Bull−Bear even when they're hidden.
+    Pass a candle_table built with newest_first=False (oldest-first) so column order
+    reads left→right in time.
+    """
+    if ct_chrono is None or ct_chrono.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    tail = ct_chrono.tail(int(n))
+    full = tail.set_index("Time").T            # rows = signals, cols = timestamps
+    if key_rows_only:
+        keep = [r for r in TRANSPOSED_KEY_ROWS if r in full.index]
+        display = full.loc[keep]
+    else:
+        display = full
+    return display, full
+
+
+def style_transposed_table(display: pd.DataFrame, ctx: pd.DataFrame = None):
+    """
+    Style a transposed frame (signals as rows, candles as columns). Dispatches the
+    same colour helpers used by style_candle_table(), but keyed by ROW name. `ctx`
+    is the full transposed frame (all rows) for cross-row reads (%B structure, Conf%
+    tint, wicks); defaults to `display` when not supplied.
+    """
+    if display is None or display.empty:
+        return display.style if hasattr(display, "style") else display
+    ctx = ctx if ctx is not None and not ctx.empty else display
+    styles = pd.DataFrame("", index=display.index, columns=display.columns)
+    cols = list(display.columns)
+
+    def _crow(name):
+        return ctx.loc[name] if name in ctx.index else None
+
+    # ── simple per-value dispatch ──────────────────────────────────────────────
+    _heat_base = {"Reversal": _GREEN, "Uptrend": _BLUE, "Downtr": _RED, "Topping": _AMBER}
+    for name, base in _heat_base.items():
+        if name in display.index:
+            styles.loc[name] = [_heat(v, base) for v in display.loc[name]]
+    for name in ("Final", "Bull−Bear", "γ"):
+        if name in display.index:
+            styles.loc[name] = [_net_css(v) for v in display.loc[name]]
+    _simple = {"ΔVWAP": _delta_css, "Stretch": _stretch_css, "Brd%": _brd_css,
+               "Candle": _clv_css, "HiLo": _hilo_css, "State": _state_css}
+    for name, fn in _simple.items():
+        if name in display.index:
+            styles.loc[name] = [fn(v) for v in display.loc[name]]
+    for name in ("P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Persist"):
+        if name in display.index:
+            styles.loc[name] = [_vote_css(v) for v in display.loc[name]]
+
+    # ── RSI: previous candle = the column to the LEFT (time order) ──────────────
+    if "RSI" in display.index:
+        _rsi = pd.to_numeric(display.loc["RSI"], errors="coerce")
+        _out, _prev = [], None
+        for v in _rsi:
+            falling = (_prev is not None and pd.notna(v) and pd.notna(_prev) and v < _prev)
+            _out.append(_rsi_css(v, bool(falling)))
+            _prev = v
+        styles.loc["RSI"] = _out
+
+    # ── Conf%: tint by the Bull−Bear sign in the SAME column ───────────────────
+    if "Conf%" in display.index:
+        _bb = pd.to_numeric(_crow("Bull−Bear"), errors="coerce") if _crow("Bull−Bear") is not None else None
+        _out = []
+        for i, v in enumerate(display.loc["Conf%"]):
+            try:
+                conf = float(v)
+                net = float(_bb.iloc[i]) if _bb is not None else 0.0
+            except (TypeError, ValueError):
+                _out.append("")
+                continue
+            f = min(1.0, conf / 100.0)
+            if f < 0.05 or net == 0:
+                _out.append("color:#94a3b8;")
+                continue
+            r, g, b = (22, 163, 74) if net > 0 else (220, 38, 38)
+            rr, gg, bb_ = (int(255 + (c - 255) * f) for c in (r, g, b))
+            txt = "#ffffff" if f > 0.55 else "#0f172a"
+            _out.append(f"background-color:rgb({rr},{gg},{bb_});color:{txt};font-weight:700;")
+        styles.loc["Conf%"] = _out
+
+    # ── %B: structure-aware, needs High/Low rows (previous = columns to the left)
+    if "%B" in display.index and _crow("High") is not None and _crow("Low") is not None:
+        _hi = pd.to_numeric(_crow("High"), errors="coerce")
+        _lo = pd.to_numeric(_crow("Low"), errors="coerce")
+        _ph = _hi.shift(1).rolling(3, min_periods=1).max()
+        _pl = _lo.shift(1).rolling(3, min_periods=1).min()
+        _out = []
+        for i in range(len(cols)):
+            new_hi = bool(_hi.iloc[i] > _ph.iloc[i]) if pd.notna(_ph.iloc[i]) else False
+            new_lo = bool(_lo.iloc[i] < _pl.iloc[i]) if pd.notna(_pl.iloc[i]) else False
+            hold_up = bool(_lo.iloc[i] >= _pl.iloc[i]) if pd.notna(_pl.iloc[i]) else True
+            hold_dn = bool(_hi.iloc[i] <= _ph.iloc[i]) if pd.notna(_ph.iloc[i]) else True
+            _out.append(_pctb_state_css(display.loc["%B"].iloc[i], new_hi, new_lo, hold_up, hold_dn))
+        styles.loc["%B"] = _out
+
+    # ── wicks: need OHLC rows (only present in show-all mode) ───────────────────
+    if {"Open", "High", "Low", "Close"}.issubset(ctx.index) and ({"LWick", "UWick"} & set(display.index)):
+        _o = pd.to_numeric(_crow("Open"), errors="coerce")
+        _h = pd.to_numeric(_crow("High"), errors="coerce")
+        _l = pd.to_numeric(_crow("Low"), errors="coerce")
+        _c = pd.to_numeric(_crow("Close"), errors="coerce")
+        for i in range(len(cols)):
+            rng = _h.iloc[i] - _l.iloc[i]
+            if not (rng > 0):
+                continue
+            lw = (min(_o.iloc[i], _c.iloc[i]) - _l.iloc[i]) / rng
+            uw = (_h.iloc[i] - max(_o.iloc[i], _c.iloc[i])) / rng
+            body = abs(_c.iloc[i] - _o.iloc[i]) / rng
+            if "LWick" in display.index:
+                f = lw if lw >= 0.25 else (body if (_c.iloc[i] > _o.iloc[i] and lw < 0.15) else 0.0)
+                styles.loc["LWick"].iloc[i] = _bg(_GREEN, f) if f >= 0.1 else "color:#94a3b8;"
+            if "UWick" in display.index:
+                f = uw if uw >= 0.25 else (body if (_c.iloc[i] < _o.iloc[i] and uw < 0.15) else 0.0)
+                styles.loc["UWick"].iloc[i] = _bg(_RED, f) if f >= 0.1 else "color:#94a3b8;"
+
+    sty = display.style.apply(lambda _: styles, axis=None)
+    sty = sty.set_properties(**{"font-size": "13px", "text-align": "center"})
+    sty = sty.format(na_rep="—", precision=1)
+    return sty

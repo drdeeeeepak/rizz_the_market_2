@@ -572,6 +572,36 @@ with st.container():
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(_uict.column_key_md())
 
+        # ── ⌗ Vertical view — candles as columns, signals stacked underneath ────
+        st.markdown("")
+        vv = st.toggle("⌗ Vertical view — stack each candle's signals underneath it "
+                       "(newest on the right)", value=False,
+                       help="Flips the table 90°: a handful of recent candles sit side-by-side as "
+                            "columns and every signal reads top-to-bottom under each one — one glance, "
+                            "fewer candles, more depth per candle.")
+        if vv:
+            vc1, vc2 = st.columns([1, 1])
+            with vc1:
+                n_cols = st.slider("Candles shown (columns)", 4, 12, 8,
+                                   help="Only a handful fit side-by-side; pick the most recent N.")
+            with vc2:
+                show_all_rows = st.checkbox("Show all signal rows (not just the key reads)",
+                                            value=False)
+            # candle_table above is newest-first; reverse to chronological (oldest→newest)
+            # so columns read left→right in time with the newest candle on the right.
+            _ct_chrono = ct.iloc[::-1]
+            _disp, _ctx = _uict.transpose_candle_table(
+                _ct_chrono, n=n_cols, key_rows_only=not show_all_rows)
+            if _disp is None or _disp.empty:
+                st.info("Not enough candles for the vertical view.")
+            else:
+                _vheight = min(40 + len(_disp.index) * 32, 760)
+                st.dataframe(_uict.style_transposed_table(_disp, _ctx),
+                             use_container_width=True, height=_vheight)
+                st.caption("Read each **column top-to-bottom** for one candle's full picture; scan "
+                           "**left→right** to watch a signal evolve. Newest candle is the rightmost "
+                           "column. Colours match the horizontal table (see the column key above).")
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
