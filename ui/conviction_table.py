@@ -198,13 +198,12 @@ def style_candle_table(ct: pd.DataFrame):
     sty = _m(sty, lambda v: _heat(v, _BLUE), "Uptrend")
     sty = _m(sty, lambda v: _heat(v, _RED), "Downtr")
     sty = _m(sty, lambda v: _heat(v, _AMBER), "Topping")
-    sty = _m(sty, _net_css, "Final", "Bull−Bear")
+    sty = _m(sty, _net_css, "Final", "Bull−Bear", "γ")
     sty = _m(sty, _delta_css, "ΔVWAP")
     sty = _m(sty, _stretch_css, "Stretch")
     sty = _m(sty, _brd_css, "Brd%")
     sty = _m(sty, _clv_css, "Candle")
     sty = _m(sty, _hilo_css, "HiLo")
-    sty = _m(sty, lambda v: "text-align:center;", "γ")
     sty = _m(sty, _vote_css, "P", "M", "V", "B", "S", "RSIdiv", "CVDdiv", "CVD↑", "Persist")
     sty = _m(sty, _state_css, "State")
 
@@ -246,10 +245,12 @@ def column_key_md(vwap_label: str = "fair value") -> str:
     """The legend markdown. vwap_label lets the 2H page say 'anchored VWAP'."""
     return (
         "**Column key** (results lead, then the inputs that produced them) — "
-        "**`State`** the resulting call · **`Final`** = Bull−Bear × signal-agreement × dealer-gamma "
-        "(where stored) — the trust-adjusted headline conviction (🟢 + bull / 🔴 − defend; ±35 agreed "
-        "= act-worthy, near 0 = no edge) · **`γ`** that day's dealer-gamma regime (🟢 shock-absorber "
-        "backs bull · 🔴 accelerator backs bear · — none stored / no login that day, so Final un-tilted) "
+        "**`State`** the resulting call · **`Final`** = Bull−Bear × signal-agreement — the "
+        "trust-adjusted headline conviction *without* any dealer-gamma tilt (🟢 + bull / 🔴 − defend; "
+        "±35 agreed = act-worthy, near 0 = no edge) · **`γ`** that **same figure with that day's "
+        "dealer-gamma tilt folded in** (×1.15 if gamma backs the lean, ×0.85 if it fights — POSITIVE "
+        "shock-absorber backs bull, NEGATIVE accelerator backs bear; compare vs `Final` to see gamma's "
+        "push; — = none stored / no login that day) "
         "· **`Bull−Bear`** = bull-read − bear-read, the raw lean *before* the agreement & gamma "
         "adjustments · **`Brd%`** breadth (🟢 >55 broad / 🔴 <45 weak) · "
         "**`Conf%`** = net of the 4 pillars (agree − oppose) ÷ 4, tinted 🟢 when the lean is bullish / "

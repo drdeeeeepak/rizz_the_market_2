@@ -652,24 +652,26 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True,
     # Bull−Bear = raw lean of the case scores (bull_read − bear_read).
     _bb = (d["bull_read"] - d["bear_read"])
     t["Bull−Bear"] = _bb.astype(int)                    # +bull / −bear (−100..+100)
-    # Final = Bull−Bear × Conf% × today's-or-stored dealer-gamma tilt (where we have it).
-    # A cushioned regime (POSITIVE) backs the bull case, accelerator (NEGATIVE) the bear
-    # case → ×1.15 if aligned, ×0.85 if it fights. Days with no stored gamma (e.g. no
-    # login) get tilt 1.0 (no change) and a "—" in the γ column — never guessed.
+    # Two separate columns so you can see gamma's push at a glance:
+    #   Final = Bull−Bear × Conf% — the trust-adjusted conviction WITHOUT any gamma tilt.
+    #   γ     = that SAME figure WITH today's-or-stored dealer-gamma tilt folded in, where we
+    #           have a stored regime. A cushioned regime (POSITIVE) backs the bull case,
+    #           accelerator (NEGATIVE) the bear case → ×1.15 if aligned, ×0.85 if it fights.
+    #           Days with no stored gamma (e.g. no login) show "—" — never guessed.
     gamma_by_date = gamma_by_date or {}
     _dates = [ix.strftime("%Y-%m-%d") for ix in d.index]
     _conf = d["confidence"].to_numpy()
     _final, _gcol = [], []
     for _dt, _bbv, _cf in zip(_dates, _bb.to_numpy(), _conf):
+        _base = max(-100.0, min(100.0, _bbv * _cf / 100.0))
+        _final.append(int(round(_base)))
         _reg = gamma_by_date.get(_dt)
         if _reg in ("POSITIVE", "NEGATIVE"):
             _cush = _reg == "POSITIVE"
-            _gcol.append("🟢" if _cush else "🔴")
             _tilt = 1.0 if _bbv == 0 else (1.15 if (_cush if _bbv > 0 else not _cush) else 0.85)
+            _gcol.append(int(round(max(-100.0, min(100.0, _base * _tilt)))))
         else:
             _gcol.append("—")
-            _tilt = 1.0
-        _final.append(int(round(max(-100.0, min(100.0, _bbv * _cf / 100.0 * _tilt)))))
     t["Final"] = _final
     t["γ"] = _gcol
     # ── pillar votes ──────────────────────────────────────────────────────────

@@ -316,8 +316,9 @@ st.caption("**Reading the Final conviction (both ways):** "
            "**−15…−35** = real but unconfirmed *bear* → caution, watch the threatened leg · "
            "**−35 or less** = strong, agreed *bear* → defend (manage the leg / sell-CALL). "
            "The **live Final card** = Bull−Bear × Conf% × today's gamma tilt (×1.15 if gamma backs the "
-           "direction, ×0.85 if it fights it); the table `Final` column omits gamma since it can't be "
-           "applied to past candles.")
+           "direction, ×0.85 if it fights it); in the table the `Final` column shows Bull−Bear × Conf% "
+           "*without* gamma, and the separate `γ` column shows that same figure *with* the stored "
+           "dealer-gamma tilt folded in (— where no regime was logged).")
 
 # ── Conflict scorecard — exactly which signals agree vs fight right now ────────
 ui.section_header("Do the signals agree? (so you don't enter a move that won't follow through)",
