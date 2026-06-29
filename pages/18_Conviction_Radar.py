@@ -567,7 +567,7 @@ with st.container():
     else:
         import ui.conviction_table as _uict
         st.dataframe(_uict.style_candle_table(ct), use_container_width=True,
-                     height=460, hide_index=True)
+                     height=670, hide_index=True)
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(_uict.column_key_md())
 
