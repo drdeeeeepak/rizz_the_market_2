@@ -669,7 +669,10 @@ def candle_table(df: pd.DataFrame, newest_first: bool = True,
         if _reg in ("POSITIVE", "NEGATIVE"):
             _cush = _reg == "POSITIVE"
             _tilt = 1.0 if _bbv == 0 else (1.15 if (_cush if _bbv > 0 else not _cush) else 0.85)
-            _gcol.append(int(round(max(-100.0, min(100.0, _base * _tilt)))))
+            # Keep this column ALL strings ("12", "-30", "—") — a mixed int/str object
+            # column can't serialise to Arrow ("could not convert '—' to int64"). The
+            # styler's _net_css(float(v)) reads the numeric strings fine.
+            _gcol.append(str(int(round(max(-100.0, min(100.0, _base * _tilt))))))
         else:
             _gcol.append("—")
     t["Final"] = _final

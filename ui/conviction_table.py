@@ -309,6 +309,19 @@ def transpose_candle_table(ct_chrono: pd.DataFrame, n: int = 8,
         return pd.DataFrame(), pd.DataFrame()
     tail = ct_chrono.tail(int(n))
     full = tail.set_index("Time").T            # rows = signals, cols = timestamps
+
+    # Transposed, each candle COLUMN mixes strings/ints/floats (State + RSI + scores…),
+    # which can't serialise to Arrow. Cast every cell to a tidy string so each column is
+    # homogeneous; the styler reads the numbers back via float()/to_numeric, so colours
+    # are unaffected. Values arrive pre-rounded from candle_table().
+    def _cell(v):
+        if pd.isna(v):
+            return "—"
+        if isinstance(v, float) and float(v).is_integer():
+            return str(int(v))
+        return str(v)
+    full = full.apply(lambda col: col.map(_cell))   # Series.map: works on all pandas (3.0 dropped applymap)
+
     if key_rows_only:
         keep = [r for r in TRANSPOSED_KEY_ROWS if r in full.index]
         display = full.loc[keep]

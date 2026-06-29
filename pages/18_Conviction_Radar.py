@@ -31,8 +31,10 @@ from analytics import intraday_conviction as ic
 # reload of the per-candle engine so the page always runs against current code — no
 # manual "Reboot app" needed after a deploy. (Pure-function module → reload is safe.)
 import importlib
+import ui.conviction_table as _uict
 try:
     importlib.reload(ic)
+    importlib.reload(_uict)   # styler/transpose helpers can be new on a fresh deploy too
 except Exception:
     pass
 
@@ -566,7 +568,6 @@ with st.container():
     if ct.empty:
         st.info("No candles to show.")
     else:
-        import ui.conviction_table as _uict
         st.dataframe(_uict.style_candle_table(ct), use_container_width=True,
                      height=670, hide_index=True)
         with st.expander("📋 Column key — what each column & colour means"):
