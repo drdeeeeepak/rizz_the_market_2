@@ -35,10 +35,13 @@ st.set_page_config(page_title="P20 · Conviction Table", layout="wide",
 # sized to the viewport (below), so the page has nothing to scroll — only the table rows do.
 st.markdown("""
 <style>
-.block-container { padding-top: 0.6rem !important; padding-bottom: 0 !important;
-                   max-width: 100% !important; }
+/* Pull the table to the top: kill Streamlit's big default top padding (1.58 uses
+   stMainBlockContainer; older builds use .block-container — target both). */
+[data-testid="stMainBlockContainer"], .block-container, .stMainBlockContainer {
+    padding-top: 0.3rem !important; padding-bottom: 0 !important; max-width: 100% !important;
+}
 header[data-testid="stHeader"] { height: 0; visibility: hidden; }
-[data-testid="stToolbar"] { display: none; }
+[data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -183,5 +186,5 @@ ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
 if ct.empty:
     st.info("No candles to show.")
 else:
-    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 60px)"),
+    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 45px)"),
                 unsafe_allow_html=True)
