@@ -465,3 +465,128 @@ def style_transposed_table(display: pd.DataFrame, ctx: pd.DataFrame = None):
     sty = sty.set_properties(**{"font-size": "13px", "text-align": "center"})
     sty = sty.format(na_rep="—", precision=1)
     return sty
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Drill-down view — a higher-TF table whose rows expand IN PLACE (mindmap style) to
+# reveal the lower-TF candles that fall inside each higher-TF candle. Pure CSS
+# <details> (no JS / no Streamlit rerun), frozen header, curated columns.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Curated headline columns for the drill grid (Time first as the row label).
+DRILL_COLS = ["Time", "State", "Final", "γ", "Bull−Bear", "Conf%", "Brd%", "RSI",
+              "ΔVWAP", "Stretch", "HiLo", "Reversal", "Uptrend", "Downtr", "Topping"]
+# Fixed pixel widths per column so parent + child rows line up in the CSS grid.
+_DRILL_W = [112, 96, 56, 42, 74, 62, 56, 56, 72, 66, 70, 66, 66, 62, 66]
+
+
+def _fmt_cell(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    if isinstance(v, float) and float(v).is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def _drill_cell_css(col, val, bb=None):
+    """CSS for one drill cell — reuses the same colour helpers as the flat table."""
+    if col == "State":
+        return _state_css(val)
+    if col in ("Final", "Bull−Bear", "γ"):
+        return _net_css(val)
+    if col == "Brd%":
+        return _brd_css(val)
+    if col == "RSI":
+        return _rsi_css(val)
+    if col == "ΔVWAP":
+        return _delta_css(val)
+    if col == "Stretch":
+        return _stretch_css(val)
+    if col == "HiLo":
+        return _hilo_css(val)
+    if col == "Reversal":
+        return _heat(val, _GREEN)
+    if col == "Uptrend":
+        return _heat(val, _BLUE)
+    if col == "Downtr":
+        return _heat(val, _RED)
+    if col == "Topping":
+        return _heat(val, _AMBER)
+    if col == "Conf%":
+        try:
+            conf = float(val)
+            net = float(bb) if bb is not None else 0.0
+        except (TypeError, ValueError):
+            return ""
+        f = min(1.0, conf / 100.0)
+        if f < 0.05 or net == 0:
+            return "color:#94a3b8;"
+        r, g, b = (22, 163, 74) if net > 0 else (220, 38, 38)
+        rr, gg, bb_ = (int(255 + (c - 255) * f) for c in (r, g, b))
+        txt = "#ffffff" if f > 0.55 else "#0f172a"
+        return f"background-color:rgb({rr},{gg},{bb_});color:{txt};font-weight:700;"
+    return ""
+
+
+def _drill_row_cells(row, is_child=False, twist=""):
+    bb = row.get("Bull−Bear")
+    out = []
+    for i, c in enumerate(DRILL_COLS):
+        v = row.get(c, "")
+        css = _drill_cell_css(c, v, bb)
+        pre = ""
+        if i == 0:
+            pre = (f"<span class='twist'></span>" if twist == "yes"
+                   else ("<span class='dot'>· </span>" if twist == "leaf" else ""))
+            if is_child:
+                css += "padding-left:26px;"
+        out.append(f"<div class='dcell' style='{css}'>{pre}{_fmt_cell(v)}</div>")
+    return "".join(out)
+
+
+def candle_table_drilldown_html(ct_parent: pd.DataFrame, children_by_ts: dict,
+                                height="calc(100vh - 45px)", child_label: str = "") -> str:
+    """
+    Render `ct_parent` (curated to DRILL_COLS, newest-first, DatetimeIndex) as a grid
+    where each parent candle is a collapsible <details>; expanding it shows the lower-TF
+    candles in `children_by_ts[parent_timestamp]` (a curated DataFrame) indented beneath.
+    """
+    _grid = " ".join(f"{w}px" for w in _DRILL_W)
+    hdr = "".join(
+        f"<div class='dcell'>{('▾ ' if c == 'Time' and child_label else '') + c}</div>"
+        for c in DRILL_COLS)
+    blocks = []
+    for ts in ct_parent.index:
+        prow = ct_parent.loc[ts]
+        kids = children_by_ts.get(ts)
+        if kids is None or len(kids) == 0:
+            blocks.append(f"<div class='drow parent'>{_drill_row_cells(prow, twist='leaf')}</div>")
+            continue
+        summ = f"<summary class='drow parent'>{_drill_row_cells(prow, twist='yes')}</summary>"
+        rows = "".join(f"<div class='drow child'>{_drill_row_cells(kids.loc[i], is_child=True)}</div>"
+                       for i in kids.index)
+        blocks.append(f"<details>{summ}{rows}</details>")
+    body = "".join(blocks)
+    cap = (f"<div class='dcap'>Click a row to open its <b>{child_label}</b> candles inside it</div>"
+           if child_label else "")
+    return f"""
+<style>
+.drill-wrap {{ max-height:{height}; overflow:auto; position:relative;
+              border:1px solid #e2e8f0; border-radius:6px; font-size:13px; }}
+.drill-wrap .dcap {{ padding:3px 8px; color:#64748b; font-size:12px; background:#fff; }}
+.drill-wrap .drow {{ display:grid; grid-template-columns:{_grid}; align-items:center; }}
+.drill-wrap .dcell {{ padding:3px 8px; white-space:nowrap; overflow:hidden;
+                      text-overflow:ellipsis; font-weight:600; }}
+.drill-wrap .header {{ position:sticky; top:0; z-index:6; background:#f1f5f9;
+                       box-shadow:inset 0 -1px 0 #cbd5e1; }}
+.drill-wrap .header .dcell {{ color:#0f172a; font-weight:700; }}
+.drill-wrap details > summary {{ list-style:none; cursor:pointer; }}
+.drill-wrap details > summary::-webkit-details-marker {{ display:none; }}
+.drill-wrap details > summary:hover {{ background:#f8fafc; }}
+.drill-wrap .child {{ background:#fbfbfd; box-shadow:inset 2px 0 0 #cbd5e1; }}
+.drill-wrap .child .dcell:first-child {{ color:#64748b; }}
+.drill-wrap .twist::after {{ content:'▸ '; color:#64748b; }}
+.drill-wrap details[open] > summary .twist::after {{ content:'▾ '; }}
+.drill-wrap .dot {{ color:#cbd5e1; }}
+</style>
+<div class='drill-wrap'>{cap}<div class='drow header'>{hdr}</div>{body}</div>"""

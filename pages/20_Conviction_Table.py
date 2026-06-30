@@ -79,6 +79,8 @@ if spot <= 0:
 _tf_keys = list(TF.keys())
 SLUG = {"5 min": "5m", "15 min": "15m", "1 hour": "1h", "2 hour": "2h", "4 hour": "4h"}
 SLUG_INV = {v: k for k, v in SLUG.items()}
+# parent-bucket size (minutes) per source — used to group children under a parent candle.
+_BLOCK_MIN = {"5minute": 5, "15minute": 15, "60minute": 60, "2H": 120, "4H": 240}
 
 # Seed the selection from the URL once per session (so a hard reload / shared link keeps
 # the timeframe); thereafter session_state owns it.
@@ -88,6 +90,34 @@ if "tf20" not in st.session_state:
 
 def _sync_tf_to_url():
     st.query_params["tf"] = SLUG[st.session_state["tf20"]]
+
+
+def _fetch_enriched(label, days, want_breadth):
+    """Fetch + enrich one timeframe's candles (no cycle slicing). Returns a df or None.
+    5m/15m use session VWAP + daily expected-move; 1H/2H/4H use anchored VWAP + weekly."""
+    s, anch = TF[label]
+    if s in ("5minute", "15minute", "60minute"):
+        d = get_nifty_fut_intraday(interval=s, days=days)
+        if d is None or d.empty:
+            d = get_nifty_intraday(interval=s, days=days)
+        b_int = s
+    else:
+        if get_nifty_fut_nh is None:
+            return None
+        d = get_nifty_fut_nh(2 if s == "2H" else 4, days)
+        b_int = "60minute"
+    if d is None or d.empty:
+        return None
+    v = get_india_vix() or 0.0
+    if v > 0:
+        em = spot * (v / 100.0) / 16.0 * ((5 ** 0.5) if anch else 1.0)
+    else:
+        em = spot * (0.013 if anch else 0.006)
+    br = pd.Series(dtype=float)
+    if want_breadth:
+        br = ic.breadth_series(get_nifty50_intraday(interval=b_int, days=days))
+    return ic.enrich(d, expected_move_pts=em,
+                     breadth=br if not br.empty else None, anchored_vwap=anch)
 
 
 with st.sidebar:
@@ -101,6 +131,10 @@ with st.sidebar:
     else:
         days = st.slider("Trading days", 3, 10, 7)
         n_cycles = None
+    # Drill-down: expand each candle to ANY lower timeframe's candles inside it.
+    _lower = _tf_keys[:_tf_keys.index(tf_label)]
+    drill_label = (st.selectbox("Drill-down into", ["Off"] + _lower, index=0)
+                   if _lower else "Off")
     use_breadth = st.checkbox("Nifty-50 breadth (heavier load)", value=True)
     if st.button("🔄 Refresh now", use_container_width=True):
         # Force fresh data: drop the cached fetches this page uses, then rerun.
@@ -119,42 +153,15 @@ st.query_params["tf"] = SLUG[tf_label]
 # Per-timeframe auto-refresh cadence (soft rerun → keeps this tab's selected TF).
 st_autorefresh(interval=REFRESH_MS.get(tf_label, 120_000), key="p20")
 
-# ── Candles ───────────────────────────────────────────────────────────────────
-if src in ("5minute", "15minute", "60minute"):
-    df_raw = get_nifty_fut_intraday(interval=src, days=days)
-    if df_raw is None or df_raw.empty:
-        df_raw = get_nifty_intraday(interval=src, days=days)   # index fallback (no volume)
-    breadth_interval = src
-else:  # "2H" / "4H" — resampled from 60-min futures
-    if get_nifty_fut_nh is None:
-        st.warning("🔄 App just updated — open the menu (top-right ⋮) and **Reboot app** once "
-                   "to load the N-hour resampler.")
-        st.stop()
-    df_raw = get_nifty_fut_nh(2 if src == "2H" else 4, days)
-    breadth_interval = "60minute"
-
-if df_raw is None or df_raw.empty:
+# ── Parent timeframe ──────────────────────────────────────────────────────────
+df = _fetch_enriched(tf_label, days, use_breadth)
+if df is None or df.empty:
     st.error("Could not load Nifty data from Kite for this timeframe. Check login / market "
              "data, then refresh.")
     st.stop()
 
-# ── Expected move (Stretch calibration): weekly for anchored TFs, daily otherwise ──
-vix = get_india_vix() or 0.0
-if anchored:
-    expected_move_pts = spot * (vix / 100.0) / 16.0 * (5 ** 0.5) if vix > 0 else spot * 0.013
-else:
-    expected_move_pts = spot * (vix / 100.0) / 16.0 if vix > 0 else spot * 0.006
-
-# ── Breadth (always from each stock's session VWAP) ───────────────────────────
-breadth = pd.Series(dtype=float)
-if use_breadth:
-    breadth = ic.breadth_series(get_nifty50_intraday(interval=breadth_interval, days=days))
-
-df = ic.enrich(df_raw, expected_move_pts=expected_move_pts,
-               breadth=breadth if not breadth.empty else None, anchored_vwap=anchored)
-
 # Anchored TFs: keep only the last n_cycles weekly expiry cycles.
-if anchored and n_cycles and not df.empty:
+if anchored and n_cycles:
     _ck = pd.Series([ic._expiry_cycle_key(ts) for ts in df.index], index=df.index)
     _uc = sorted(_ck.unique())
     if len(_uc) > n_cycles:
@@ -185,6 +192,33 @@ if df.empty or not _REQ.issubset(df.columns) or not hasattr(ic, "candle_table"):
 ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
 if ct.empty:
     st.info("No candles to show.")
+    st.stop()
+
+_H = "calc(100vh - 45px)"
+if drill_label == "Off":
+    st.markdown(uict.candle_table_frozen_html(ct, height=_H), unsafe_allow_html=True)
 else:
-    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 45px)"),
-                unsafe_allow_html=True)
+    # ── Drill-down: show each parent candle's lower-TF children, expandable in place ──
+    child_df = _fetch_enriched(drill_label, days, use_breadth)
+    if child_df is None or child_df.empty:
+        st.warning(f"No {drill_label} data to drill into — showing the flat table.")
+        st.markdown(uict.candle_table_frozen_html(ct, height=_H), unsafe_allow_html=True)
+    else:
+        # Keep only children inside the parent's displayed span, then group by parent bucket.
+        child_df = child_df[(child_df.index >= df.index.min()) &
+                            (child_df.index <= df.index.max())]
+        ct_child = ic.candle_table(child_df, newest_first=False, gamma_by_date=_gmap)
+        ct_p = ct[uict.DRILL_COLS]
+        ct_c = ct_child[uict.DRILL_COLS].copy()
+        _blk = _BLOCK_MIN[src]
+
+        def _parent_bucket(ts):
+            m = ts.hour * 60 + ts.minute
+            b = max(0, (m - 555) // _blk)
+            return ts.normalize() + pd.Timedelta(minutes=555 + b * _blk)
+
+        ct_c["_pk"] = [_parent_bucket(ts) for ts in ct_c.index]
+        kids = {k: g.drop(columns="_pk").iloc[::-1] for k, g in ct_c.groupby("_pk")}
+        st.markdown(
+            uict.candle_table_drilldown_html(ct_p, kids, height=_H, child_label=drill_label),
+            unsafe_allow_html=True)
