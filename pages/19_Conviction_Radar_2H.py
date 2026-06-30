@@ -60,7 +60,7 @@ c1, c2, c3 = st.columns([1, 3, 2])
 with c1:
     n_cycles = st.slider("Expiry cycles shown", 2, 10, 6)
 with c3:
-    use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~25s)", value=False)
+    use_breadth = st.checkbox("Include Nifty-50 breadth (heavier first load ~25s)", value=True)
 
 # Fetch enough history to cover the requested cycles (each ~7 calendar days, add buffer)
 days = n_cycles * 8 + 10
@@ -392,7 +392,11 @@ ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
 if ct.empty:
     st.info("No candles to show.")
 else:
-    st.dataframe(uict.style_candle_table(ct), use_container_width=True, height=520, hide_index=True)
+    # Frozen header row: column names stay pinned while you scroll down the candles.
+    # (Custom HTML with position:sticky; preserves the Styler colours and avoids the
+    # γ Arrow-serialization warning that st.dataframe logs.)
+    st.markdown(uict.candle_table_frozen_html(ct, height=660), unsafe_allow_html=True)
+    st.caption("⬆ The header row stays pinned as you scroll down.")
     with st.expander("📋 Column key — what each column & colour means"):
         st.markdown(uict.column_key_md(vwap_label="anchored VWAP"))
 

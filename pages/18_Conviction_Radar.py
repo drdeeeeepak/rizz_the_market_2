@@ -570,7 +570,7 @@ with st.container():
     else:
         # Frozen header row: column names stay pinned while you scroll down the candles.
         # (Custom HTML with position:sticky; all the Styler colours are preserved.)
-        st.markdown(_uict.candle_table_frozen_html(ct, height=670), unsafe_allow_html=True)
+        st.markdown(_uict.candle_table_frozen_html(ct, height=600), unsafe_allow_html=True)
         st.caption("⬆ The header row stays pinned as you scroll down.")
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(_uict.column_key_md())
