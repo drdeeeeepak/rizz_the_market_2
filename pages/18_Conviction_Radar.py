@@ -568,8 +568,11 @@ with st.container():
     if ct.empty:
         st.info("No candles to show.")
     else:
-        st.dataframe(_uict.style_candle_table(ct), use_container_width=True,
-                     height=670, hide_index=True)
+        # Frozen header + frozen first (newest-candle) row so the latest read stays in
+        # view while you scroll down through older candles. (st.dataframe can't pin a
+        # data row → custom HTML with position:sticky; colours preserved.)
+        st.markdown(_uict.candle_table_frozen_html(ct, height=670), unsafe_allow_html=True)
+        st.caption("⬆ Header and the newest-candle row stay pinned as you scroll down.")
         with st.expander("📋 Column key — what each column & colour means"):
             st.markdown(_uict.column_key_md())
 

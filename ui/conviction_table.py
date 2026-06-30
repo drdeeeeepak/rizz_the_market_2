@@ -241,6 +241,45 @@ def style_candle_table(ct: pd.DataFrame):
     return sty
 
 
+def candle_table_frozen_html(ct: pd.DataFrame, height: int = 670) -> str:
+    """
+    Render style_candle_table(ct) as a self-contained HTML table inside a scrollable
+    box with a **frozen header AND frozen first data row** (the newest candle, since the
+    table is newest-first). st.dataframe can't pin a data row, so we drop to HTML + CSS
+    `position:sticky`; all the Styler cell colours are preserved inline.
+
+    Use with: st.markdown(candle_table_frozen_html(ct), unsafe_allow_html=True)
+    """
+    _uuid = "p18ct"
+    sty = style_candle_table(ct).hide(axis="index").set_uuid(_uuid)
+    # Deterministic header height so the first row's sticky `top` lines up exactly.
+    _hh = 30
+    table_html = sty.to_html()
+    # IMPORTANT: Styler emits per-cell colours in a <style> block keyed by cell ID
+    # (`#T_p18ct_row0_col5`, specificity 1,0,0). Our white opaque backing for the frozen
+    # row must therefore use a CLASS-ONLY selector (specificity 0,1,3) so coloured cells
+    # win and keep their heat — only uncoloured cells fall back to white (prevents the
+    # scrolling rows bleeding through). position/z-index/box-shadow never clash with
+    # Styler, so those are safe at any specificity.
+    css = f"""
+<style>
+.p18-frozen-wrap {{ max-height:{height}px; overflow:auto; position:relative;
+                    border:1px solid #e2e8f0; border-radius:6px; }}
+.p18-frozen-wrap table {{ border-collapse:separate; border-spacing:0; font-size:13px; }}
+.p18-frozen-wrap th, .p18-frozen-wrap td {{ white-space:nowrap; padding:4px 8px;
+                                            box-sizing:border-box; }}
+/* frozen header (no Styler colours on headers → class backing is fine) */
+.p18-frozen-wrap thead th {{ position:sticky; top:0; z-index:6; height:{_hh}px;
+                             background:#f1f5f9; color:#0f172a; font-weight:700;
+                             box-shadow:inset 0 -1px 0 #cbd5e1; }}
+/* frozen first data row (newest candle) — sits just under the header */
+.p18-frozen-wrap tbody tr:first-child td {{ position:sticky; top:{_hh}px; z-index:4;
+                                            background:#ffffff;
+                                            box-shadow:inset 0 -2px 0 #94a3b8; }}
+</style>"""
+    return f"{css}<div class='p18-frozen-wrap'>{table_html}</div>"
+
+
 def column_key_md(vwap_label: str = "fair value") -> str:
     """The legend markdown. vwap_label lets the 2H page say 'anchored VWAP'."""
     return (
