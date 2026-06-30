@@ -241,7 +241,7 @@ def style_candle_table(ct: pd.DataFrame):
     return sty
 
 
-def candle_table_frozen_html(ct: pd.DataFrame, height: int = 670) -> str:
+def candle_table_frozen_html(ct: pd.DataFrame, height=670) -> str:
     """
     Render style_candle_table(ct) as a self-contained HTML table inside a scrollable
     box with a **frozen header row**: the column names stay pinned at the top while you
@@ -249,14 +249,18 @@ def candle_table_frozen_html(ct: pd.DataFrame, height: int = 670) -> str:
     own internal scrollbar; this HTML version pins it reliably.) All Styler cell colours
     are preserved.
 
+    `height` may be an int (pixels) or a raw CSS length string (e.g.
+    "calc(100vh - 120px)") to make the scroll box fill the viewport.
+
     Use with: st.markdown(candle_table_frozen_html(ct), unsafe_allow_html=True)
     """
     _uuid = "p18ct"
+    _h = height if isinstance(height, str) else f"{height}px"
     sty = style_candle_table(ct).hide(axis="index").set_uuid(_uuid)
     table_html = sty.to_html()
     css = f"""
 <style>
-.p18-frozen-wrap {{ max-height:{height}px; overflow:auto; position:relative;
+.p18-frozen-wrap {{ max-height:{_h}; overflow:auto; position:relative;
                     border:1px solid #e2e8f0; border-radius:6px; }}
 .p18-frozen-wrap table {{ border-collapse:separate; border-spacing:0; font-size:13px; }}
 .p18-frozen-wrap th, .p18-frozen-wrap td {{ white-space:nowrap; padding:4px 8px;

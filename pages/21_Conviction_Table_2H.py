@@ -24,12 +24,11 @@ except Exception:
 
 st.set_page_config(page_title="P21 · 2H Table", layout="wide")
 
-# Lock the page: no page scroll — only the table rows scroll. Trim Streamlit's chrome and
-# top padding so the 600px table fits the viewport.
+# Trim Streamlit's chrome/top padding so the table fills the viewport. We do NOT force
+# the page's overflow to hidden (that clipped the table's bottom + scrollbar); instead the
+# table itself is sized to the viewport below, so the page has nothing to scroll.
 st.markdown("""
 <style>
-section[data-testid="stMain"], [data-testid="stAppViewContainer"] section.main,
-[data-testid="stMainBlockContainer"] { overflow: hidden !important; }
 .block-container { padding-top: 0.6rem !important; padding-bottom: 0 !important;
                    max-width: 100% !important; }
 header[data-testid="stHeader"] { height: 0; visibility: hidden; }
@@ -107,4 +106,5 @@ ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
 if ct.empty:
     st.info("No candles to show.")
 else:
-    st.markdown(uict.candle_table_frozen_html(ct, height=600), unsafe_allow_html=True)
+    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 120px)"),
+                unsafe_allow_html=True)
