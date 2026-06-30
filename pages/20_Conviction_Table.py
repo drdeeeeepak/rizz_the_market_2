@@ -71,15 +71,25 @@ if spot <= 0:
 
 # Remember the timeframe in the URL (?tf=…) so each tab keeps its own selection through
 # any refresh — including a hard browser reload, which would otherwise reset to default.
+# Use short slugs (no spaces) so the param is clean in the address bar.
 _tf_keys = list(TF.keys())
-_qp_tf = st.query_params.get("tf")
-_tf_idx = _tf_keys.index(_qp_tf) if _qp_tf in _tf_keys else 1   # default 15 min
+SLUG = {"5 min": "5m", "15 min": "15m", "1 hour": "1h", "2 hour": "2h", "4 hour": "4h"}
+SLUG_INV = {v: k for k, v in SLUG.items()}
+_qp_label = SLUG_INV.get(st.query_params.get("tf"))
+_tf_idx = _tf_keys.index(_qp_label) if _qp_label in _tf_keys else 1   # default 15 min
+
+
+def _sync_tf_to_url():
+    st.query_params["tf"] = SLUG[st.session_state["tf20"]]
+
 
 c1, c2, c3, c4 = st.columns([1, 1, 1.6, 0.9])
 with c1:
-    tf_label = st.selectbox("Timeframe", _tf_keys, index=_tf_idx, key="tf20")
-if st.query_params.get("tf") != tf_label:
-    st.query_params["tf"] = tf_label
+    tf_label = st.selectbox("Timeframe", _tf_keys, index=_tf_idx, key="tf20",
+                            on_change=_sync_tf_to_url)
+# Sync on first load / hard reload too (on_change only fires on user change).
+if st.query_params.get("tf") != SLUG[tf_label]:
+    st.query_params["tf"] = SLUG[tf_label]
 src, anchored = TF[tf_label]
 with c2:
     if anchored:
