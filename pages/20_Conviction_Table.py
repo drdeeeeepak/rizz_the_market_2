@@ -11,6 +11,7 @@
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 import ui.conviction_table as uict
 from page_utils import bootstrap_signals
@@ -40,6 +41,10 @@ header[data-testid="stHeader"] { height: 0; visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
+# Live refresh (same cadence as the other monitor pages). This is a SOFT rerun, so the
+# timeframe you picked for this tab is kept — it does not revert to the default.
+st_autorefresh(interval=60_000, key="p20")
+
 # Fetchers (bound after the reload).
 get_nifty_fut_intraday = _lf.get_nifty_fut_intraday
 get_nifty_intraday = _lf.get_nifty_intraday
@@ -61,13 +66,23 @@ sig, spot, _ = bootstrap_signals()
 if spot <= 0:
     spot = float(sig.get("spot", 0))
 
+# Remember the timeframe in the URL (?tf=…) so each tab keeps its own selection through
+# any refresh — including a hard browser reload, which would otherwise reset to default.
+_tf_keys = list(TF.keys())
+_qp_tf = st.query_params.get("tf")
+_tf_idx = _tf_keys.index(_qp_tf) if _qp_tf in _tf_keys else 1   # default 15 min
+
 c1, c2, c3 = st.columns([1, 1, 2])
 with c1:
-    tf_label = st.selectbox("Timeframe", list(TF.keys()), index=1)   # default 15 min
+    tf_label = st.selectbox("Timeframe", _tf_keys, index=_tf_idx, key="tf20")
+if st.query_params.get("tf") != tf_label:
+    st.query_params["tf"] = tf_label
 src, anchored = TF[tf_label]
 with c2:
     if anchored:
-        n_cycles = st.slider("Expiry cycles", 2, 10, 6)
+        # 1H over many cycles = a heavy breadth fetch → cap it tighter than 2H/4H.
+        _max_cyc, _def_cyc = (4, 3) if src == "60minute" else (10, 6)
+        n_cycles = st.slider("Expiry cycles", 2, _max_cyc, _def_cyc)
         days = n_cycles * 8 + 10
     else:
         days = st.slider("Trading days", 3, 10, 7)
