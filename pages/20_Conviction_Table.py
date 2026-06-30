@@ -61,8 +61,8 @@ TF = {
 # Auto-refresh cadence per timeframe (ms) — faster TFs refresh more often, slower ones
 # back off (the underlying data caches are 5-min anyway, so this just paces the reruns).
 REFRESH_MS = {
-    "5 min": 60_000, "15 min": 120_000, "1 hour": 300_000,
-    "2 hour": 600_000, "4 hour": 900_000,
+    "5 min": 60_000, "15 min": 60_000, "1 hour": 120_000,
+    "2 hour": 180_000, "4 hour": 180_000,
 }
 
 sig, spot, _ = bootstrap_signals()
