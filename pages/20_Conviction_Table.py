@@ -41,10 +41,6 @@ header[data-testid="stHeader"] { height: 0; visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# Live refresh (same cadence as the other monitor pages). This is a SOFT rerun, so the
-# timeframe you picked for this tab is kept — it does not revert to the default.
-st_autorefresh(interval=60_000, key="p20")
-
 # Fetchers (bound after the reload).
 get_nifty_fut_intraday = _lf.get_nifty_fut_intraday
 get_nifty_intraday = _lf.get_nifty_intraday
@@ -62,6 +58,13 @@ TF = {
     "4 hour": ("4H",       True),
 }
 
+# Auto-refresh cadence per timeframe (ms) — faster TFs refresh more often, slower ones
+# back off (the underlying data caches are 5-min anyway, so this just paces the reruns).
+REFRESH_MS = {
+    "5 min": 60_000, "15 min": 120_000, "1 hour": 300_000,
+    "2 hour": 600_000, "4 hour": 900_000,
+}
+
 sig, spot, _ = bootstrap_signals()
 if spot <= 0:
     spot = float(sig.get("spot", 0))
@@ -72,7 +75,7 @@ _tf_keys = list(TF.keys())
 _qp_tf = st.query_params.get("tf")
 _tf_idx = _tf_keys.index(_qp_tf) if _qp_tf in _tf_keys else 1   # default 15 min
 
-c1, c2, c3 = st.columns([1, 1, 2])
+c1, c2, c3, c4 = st.columns([1, 1, 1.6, 0.9])
 with c1:
     tf_label = st.selectbox("Timeframe", _tf_keys, index=_tf_idx, key="tf20")
 if st.query_params.get("tf") != tf_label:
@@ -89,6 +92,20 @@ with c2:
         n_cycles = None
 with c3:
     use_breadth = st.checkbox("Nifty-50 breadth (heavier load)", value=True)
+with c4:
+    st.caption("&nbsp;")  # nudge the button down to line up with the labelled widgets
+    if st.button("🔄 Refresh now", use_container_width=True):
+        # Force fresh data: drop the cached fetches this page uses, then rerun.
+        for _fn in (get_nifty_fut_intraday, get_nifty_intraday, get_nifty50_intraday,
+                    get_india_vix, get_dual_expiry_chains):
+            try:
+                _fn.clear()
+            except Exception:
+                pass
+        st.rerun()
+
+# Per-timeframe auto-refresh cadence (soft rerun → keeps this tab's selected TF).
+st_autorefresh(interval=REFRESH_MS.get(tf_label, 120_000), key="p20")
 
 # ── Candles ───────────────────────────────────────────────────────────────────
 if src in ("5minute", "15minute", "60minute"):
