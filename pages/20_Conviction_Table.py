@@ -28,7 +28,8 @@ try:
 except Exception:
     pass
 
-st.set_page_config(page_title="P20 · Conviction Table", layout="wide")
+st.set_page_config(page_title="P20 · Conviction Table", layout="wide",
+                   initial_sidebar_state="expanded")
 
 # Trim Streamlit's chrome/top padding so the table fills the viewport. The table itself is
 # sized to the viewport (below), so the page has nothing to scroll — only the table rows do.
@@ -69,29 +70,26 @@ sig, spot, _ = bootstrap_signals()
 if spot <= 0:
     spot = float(sig.get("spot", 0))
 
-# Remember the timeframe in the URL (?tf=…) so each tab keeps its own selection through
-# any refresh — including a hard browser reload, which would otherwise reset to default.
-# Use short slugs (no spaces) so the param is clean in the address bar.
+# Controls live in the SIDEBAR so the main area is ONLY the table — that way the table
+# fills the viewport and its bottom (horizontal) scrollbar is always reachable, with no
+# top controls wrapping and shoving it off-screen.
 _tf_keys = list(TF.keys())
 SLUG = {"5 min": "5m", "15 min": "15m", "1 hour": "1h", "2 hour": "2h", "4 hour": "4h"}
 SLUG_INV = {v: k for k, v in SLUG.items()}
-_qp_label = SLUG_INV.get(st.query_params.get("tf"))
-_tf_idx = _tf_keys.index(_qp_label) if _qp_label in _tf_keys else 1   # default 15 min
+
+# Seed the selection from the URL once per session (so a hard reload / shared link keeps
+# the timeframe); thereafter session_state owns it.
+if "tf20" not in st.session_state:
+    st.session_state["tf20"] = SLUG_INV.get(st.query_params.get("tf"), "15 min")
 
 
 def _sync_tf_to_url():
     st.query_params["tf"] = SLUG[st.session_state["tf20"]]
 
 
-c1, c2, c3, c4 = st.columns([1, 1, 1.6, 0.9])
-with c1:
-    tf_label = st.selectbox("Timeframe", _tf_keys, index=_tf_idx, key="tf20",
-                            on_change=_sync_tf_to_url)
-# Sync on first load / hard reload too (on_change only fires on user change).
-if st.query_params.get("tf") != SLUG[tf_label]:
-    st.query_params["tf"] = SLUG[tf_label]
-src, anchored = TF[tf_label]
-with c2:
+with st.sidebar:
+    tf_label = st.selectbox("Timeframe", _tf_keys, key="tf20", on_change=_sync_tf_to_url)
+    src, anchored = TF[tf_label]
     if anchored:
         # 1H over many cycles = a heavy breadth fetch → cap it tighter than 2H/4H.
         _max_cyc, _def_cyc = (4, 3) if src == "60minute" else (10, 6)
@@ -100,10 +98,7 @@ with c2:
     else:
         days = st.slider("Trading days", 3, 10, 7)
         n_cycles = None
-with c3:
     use_breadth = st.checkbox("Nifty-50 breadth (heavier load)", value=True)
-with c4:
-    st.caption("&nbsp;")  # nudge the button down to line up with the labelled widgets
     if st.button("🔄 Refresh now", use_container_width=True):
         # Force fresh data: drop the cached fetches this page uses, then rerun.
         for _fn in (get_nifty_fut_intraday, get_nifty_intraday, get_nifty50_intraday,
@@ -113,6 +108,10 @@ with c4:
             except Exception:
                 pass
         st.rerun()
+
+# Keep the URL in sync with the current timeframe on every run (covers first load and
+# hard reloads; assigning the same value is a no-op, so this won't loop).
+st.query_params["tf"] = SLUG[tf_label]
 
 # Per-timeframe auto-refresh cadence (soft rerun → keeps this tab's selected TF).
 st_autorefresh(interval=REFRESH_MS.get(tf_label, 120_000), key="p20")
@@ -184,5 +183,5 @@ ct = ic.candle_table(df, newest_first=True, gamma_by_date=_gmap)
 if ct.empty:
     st.info("No candles to show.")
 else:
-    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 120px)"),
+    st.markdown(uict.candle_table_frozen_html(ct, height="calc(100vh - 60px)"),
                 unsafe_allow_html=True)
