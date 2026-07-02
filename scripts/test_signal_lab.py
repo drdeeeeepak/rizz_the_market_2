@@ -73,6 +73,22 @@ def make_fut_daily_with_oi(n=400, seed=3) -> pd.DataFrame:
     return base
 
 
+def make_fut_with_roll_gaps(n=400, seed=3, gap_every=21, gap_pct=0.05) -> pd.DataFrame:
+    """Synthetic continuous-futures series with periodic un-back-adjusted
+    rollover jumps (like Kite's continuous=True), to test the roll-gap guard."""
+    df = make_fut_daily_with_oi(n=n, seed=seed)
+    gap_mult = np.ones(n)
+    for i in range(gap_every, n, gap_every):
+        gap_mult[i:] *= (1 + gap_pct)
+    df = df.copy()
+    for col in ["open", "high", "low", "close"]:
+        df[col] = df[col] * gap_mult
+    # OI also resets sharply at each synthetic rollover (old contract decays, new ramps)
+    for i in range(gap_every, n, gap_every):
+        df.loc[df.index[i], "oi"] = df["oi"].iloc[i] * 0.15
+    return df
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
@@ -197,9 +213,26 @@ def run():
     check("daily_advance_breadth: returns a Series", isinstance(breadth, pd.Series))
     check("daily_advance_breadth: values within [0,100]",
           bool(((breadth.dropna() >= 0) & (breadth.dropna() <= 100)).all()))
-    conv_real = bt.build_conviction_history_real(fut, breadth=breadth)
+    conv_real = bt.build_conviction_history_real(daily, fut, breadth=breadth)
     check("build_conviction_history_real: returns nonempty on synthetic futures+OI",
           not conv_real.empty, f"rows={len(conv_real)}")
+    check("build_conviction_history_real: price stays on the INDEX (gap-free)",
+          not conv_real.empty and abs(float(conv_real["close"].iloc[-1]) - float(daily["close"].iloc[-1])) < 1.0,
+          f"{conv_real['close'].iloc[-1] if not conv_real.empty else None} vs {daily['close'].iloc[-1]}")
+    real_res = bt.run_backtest_real(daily, fut, breadth=breadth)
+    check("run_backtest_real: returns nonempty distribution", not real_res["distribution"].empty)
+
+    # ── 10. Roll-gap guard on the OI-buildup adapter ────────────────────────────
+    fut_gappy = make_fut_with_roll_gaps()
+    sig_gappy = sa.adapt_oi_buildup(fut_gappy)
+    gap_days = sa._roll_jump_mask(fut_gappy["close"])
+    gap_dates = fut_gappy.index[gap_days]
+    check("_roll_jump_mask: flags at least one synthetic rollover", gap_days.sum() > 0,
+          f"flagged={gap_days.sum()}")
+    aligned = sig_gappy.reindex(pd.to_datetime(gap_dates).normalize())
+    check("adapt_oi_buildup: roll-gap days are neutralised (signal==0)",
+          bool((aligned.fillna(0) == 0).all()) if len(aligned) else False,
+          f"{aligned.tolist()}")
 
 
 if __name__ == "__main__":

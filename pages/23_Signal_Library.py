@@ -46,6 +46,11 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "- **Futures OI Buildup** needs continuous-futures OI history (`get_nifty_fut_continuous`) "
         "— option-chain GEX/gamma-flip has NO history at all (only the forward gamma_history "
         "log) and isn't back-testable here.\n"
+        "- **Continuous-futures roll gaps:** Kite's `continuous=True` stitches contracts "
+        "WITHOUT back-adjustment, so every monthly rollover prints a real price jump (basis, "
+        "not a market move). All 7 price-based adapters above run on the INDEX (gap-free), "
+        "not futures, so they're unaffected. The OI-Buildup adapter and the section-4 real-"
+        "volume rerun below both guard against it (see their own captions).\n"
         "- **Daily breadth** (advance/decline, % of Nifty-50 above their own PREVIOUS CLOSE) is "
         "a COUSIN of the live Conviction table's Brd% (% above session VWAP, intraday) — it "
         "tests whether breadth adds edge at the daily/weekly horizon, not a re-test of that "
@@ -198,10 +203,16 @@ else:
 # ── 4. Advanced: real-volume + breadth-on Conviction re-run ────────────────
 st.divider()
 st.subheader("4 · Advanced — real-volume + breadth-on Conviction re-run")
-st.caption("Re-runs the page-22 Conviction backtest on CONTINUOUS FUTURES (real volume → "
-          "real CVD) with daily advance/decline BREADTH wired in, instead of the muted "
-          "synthetic-volume/breadth-off first cut. Heavy: pulls ~50 stocks' daily history "
-          "(chunked, ~20-30s) — separate button so it's opt-in.")
+st.caption("Re-runs the page-22 Conviction backtest with REAL volume (from continuous futures, "
+          "merged onto the gap-free INDEX price — see caveat below) and daily advance/decline "
+          "BREADTH wired in, instead of the muted synthetic-volume/breadth-off first cut. "
+          "Heavy: pulls ~50 stocks' daily history (chunked, ~20-30s) — separate button so it's "
+          "opt-in.")
+st.caption("Price stays on the INDEX, not continuous futures directly: Kite's "
+          "`continuous=True` stitches contracts WITHOUT back-adjustment, so every monthly "
+          "rollover prints a real price jump (cost-of-carry basis, not a market move) that "
+          "would corrupt RSI/VWAP/Stretch and the forward-outcome labels. Futures contributes "
+          "real VOLUME only here.")
 if st.button("▶ Run real-volume + breadth-on re-run"):
     with st.spinner("Fetching continuous futures + 50-constituent daily history…"):
         fut2 = _load_fut_continuous(lookback)
@@ -210,7 +221,7 @@ if st.button("▶ Run real-volume + breadth-on re-run"):
         st.error("Could not load continuous futures history. Log in via Home → Kite, then retry.")
     else:
         breadth = bt.daily_advance_breadth(stock_daily) if stock_daily else None
-        real = bt.run_backtest_real(fut2, breadth=breadth, horizons=(5, 10),
+        real = bt.run_backtest_real(daily, fut2, breadth=breadth, horizons=(5, 10),
                                     call_pct=float(call_pct), put_pct=float(put_pct), nbins=int(nbins))
         st.success(f"Analysed **{real['n_rows']}** daily rows on real futures · {real['span']} · "
                   f"breadth from **{len(stock_daily)}** constituents")

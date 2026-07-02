@@ -251,11 +251,20 @@ def run_intraday_backtest(df: pd.DataFrame, horizons=(6, 13, 25),
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHASE 3 — Real-volume + breadth-on re-run (data fidelity upgrade)
-# Uses continuous NIFTY FUTURES daily (data.live_fetcher.get_nifty_fut_continuous)
-# instead of the index-with-synthetic-volume used above, so CVD/VWAP are real
-# (close-location × real volume), and wires in daily advance/decline breadth
-# instead of leaving it muted. Re-tests the CVD and Brd% columns the Phase-1
-# backtest had to skip.
+# Wires in REAL volume (from continuous NIFTY FUTURES,
+# data.live_fetcher.get_nifty_fut_continuous) and daily advance/decline breadth,
+# so CVD/VWAP/Brd% stop being muted/skipped like they were in the Phase-1 run.
+#
+# IMPORTANT — continuous-futures ROLL GAPS: Kite's historical_data(continuous=True)
+# stitches contracts WITHOUT back-adjustment, so the front-month switch at each
+# monthly expiry prints as a real price jump (cost-of-carry basis, not an actual
+# market move). Using that price series directly would corrupt every indicator
+# with memory (RSI, VWAP/Stretch) AND the forward-outcome labels at every
+# rollover. So price here stays on the INDEX (gap-free, same series
+# build_conviction_history() uses) — continuous futures contributes ONLY its
+# real VOLUME, merged onto the index's OHLC by date. OI is deliberately not
+# used in this function (see signal_adapters.adapt_oi_buildup for the one
+# place OI is used, with its own roll-jump guard).
 # ══════════════════════════════════════════════════════════════════════════════
 
 def daily_advance_breadth(stock_dfs: dict) -> pd.Series:
@@ -293,19 +302,40 @@ def daily_advance_breadth(stock_dfs: dict) -> pd.Series:
     return (mat.mean(axis=1) * 100.0).rename("breadth")
 
 
-def build_conviction_history_real(fut_daily: pd.DataFrame, breadth: pd.Series = None,
-                                  warmup: int = 40) -> pd.DataFrame:
-    """Same cycle-by-cycle engine run as build_conviction_history(), but on REAL
-    continuous-futures OHLCV (real traded volume, real OI available) instead of
-    the index with synthetic volume=1 — so CVD/VWAP are genuine, and breadth (see
-    daily_advance_breadth) is wired through the engine's real breadth parameter
-    instead of left as NaN."""
-    d = fut_daily.copy()
-    d.columns = [c.lower() for c in d.columns]
-    if not isinstance(d.index, pd.DatetimeIndex):
-        d.index = pd.to_datetime(d.index)
-    keep = [c for c in ["open", "high", "low", "close", "volume"] if c in d.columns]
-    d = d[keep].astype(float).sort_index()
+def _index_with_futures_volume(daily: pd.DataFrame, fut_daily: pd.DataFrame) -> pd.DataFrame:
+    """INDEX OHLC (gap-free) + real VOLUME merged in from continuous futures by
+    date. Days where the futures fetch has no matching date (e.g. the roll-day
+    stitch drops/duplicates a row) fall back to volume=1 for that single day
+    rather than dropping the row — matches the Phase-1 fallback so a handful
+    of gaps don't shrink the sample."""
+    idx = daily.copy()
+    idx.columns = [c.lower() for c in idx.columns]
+    if not isinstance(idx.index, pd.DatetimeIndex):
+        idx.index = pd.to_datetime(idx.index)
+    idx.index = idx.index.normalize()
+    idx = idx[["open", "high", "low", "close"]].astype(float).sort_index()
+
+    fut = fut_daily.copy()
+    fut.columns = [c.lower() for c in fut.columns]
+    if not isinstance(fut.index, pd.DatetimeIndex):
+        fut.index = pd.to_datetime(fut.index)
+    fut.index = fut.index.normalize()
+    vol = pd.to_numeric(fut.get("volume"), errors="coerce") if "volume" in fut.columns else pd.Series(dtype=float)
+    vol = vol[~vol.index.duplicated(keep="last")]
+
+    idx["volume"] = vol.reindex(idx.index)
+    idx["volume"] = idx["volume"].fillna(1.0)
+    return idx
+
+
+def build_conviction_history_real(daily: pd.DataFrame, fut_daily: pd.DataFrame,
+                                  breadth: pd.Series = None, warmup: int = 40) -> pd.DataFrame:
+    """Same cycle-by-cycle engine run as build_conviction_history(), but with
+    REAL volume (from continuous futures, merged onto the gap-free INDEX price
+    — see the roll-gap note above) so CVD/VWAP are genuine instead of the
+    synthetic volume=1 Phase-1 used, and breadth (see daily_advance_breadth)
+    wired through the engine's real breadth parameter instead of left as NaN."""
+    d = _index_with_futures_volume(daily, fut_daily)
     ret = np.log(d["close"] / d["close"].shift(1))
     rv = ret.rolling(14).std()
     key = pd.Series([ic._expiry_cycle_key(ix) for ix in d.index], index=d.index)
@@ -332,12 +362,15 @@ def build_conviction_history_real(fut_daily: pd.DataFrame, breadth: pd.Series = 
     return conv
 
 
-def run_backtest_real(fut_daily: pd.DataFrame, breadth: pd.Series = None, horizons=(5, 10),
-                      call_pct: float = 3.5, put_pct: float = 4.0, nbins: int = 5) -> dict:
+def run_backtest_real(daily: pd.DataFrame, fut_daily: pd.DataFrame, breadth: pd.Series = None,
+                      horizons=(5, 10), call_pct: float = 3.5, put_pct: float = 4.0,
+                      nbins: int = 5) -> dict:
     """Real-volume + breadth-on driver — mirrors run_backtest()'s return shape
-    so pages can render either uniformly."""
-    conv = build_conviction_history_real(fut_daily, breadth=breadth)
-    outc = forward_outcomes(fut_daily, horizons=horizons, call_pct=call_pct, put_pct=put_pct)
+    so pages can render either uniformly. Forward-outcome LABELS are computed
+    on the INDEX (`daily`), same as run_backtest() — never on continuous
+    futures directly, so a roll gap can't leak into the answer key."""
+    conv = build_conviction_history_real(daily, fut_daily, breadth=breadth)
+    outc = forward_outcomes(daily, horizons=horizons, call_pct=call_pct, put_pct=put_pct)
     dist = weekly_move_distribution(outc, horizons=horizons, call_pct=call_pct, put_pct=put_pct)
     cuts = column_cutoff_scan(conv, outc, horizons=horizons, nbins=nbins)
     span = (f"{conv.index.min():%d-%b-%Y} → {conv.index.max():%d-%b-%Y}"

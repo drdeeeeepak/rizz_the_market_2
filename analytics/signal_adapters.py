@@ -259,6 +259,30 @@ def adapt_ema_slope_phases(df_1h: pd.DataFrame) -> pd.Series:
 # the index; needs data.live_fetcher.get_nifty_fut_continuous(oi=True))
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _roll_jump_mask(close: pd.Series, z_thresh: float = 4.5, window: int = 21) -> pd.Series:
+    """Flag days whose return is a robust statistical outlier vs its own
+    trailing window — a proxy for a futures contract-ROLL GAP. Kite's
+    historical_data(continuous=True) stitches contracts WITHOUT back-adjustment,
+    so the front-month switch at each monthly expiry prints as a real price
+    jump (cost-of-carry basis, not an actual market move) — left unguarded,
+    that jump gets read as a directional long/short-buildup call it isn't.
+
+    Uses a median/MAD (modified z-score) rather than mean/std: a plain rolling
+    std is itself dragged up by the very jump it's supposed to catch (a single
+    5% day inside a 21-day window inflates std enough to hide itself), whereas
+    the median and median-absolute-deviation stay put with one outlier in the
+    window. Not a perfect detector (Kite's continuous response carries no
+    per-row contract/expiry tag to key off instead, and a genuinely large real
+    move looks identical to a roll gap) — but it keeps the OI-buildup signal
+    from firing on the ~12 rollovers/year it would otherwise misread."""
+    ret = close.pct_change()
+    med = ret.rolling(window, min_periods=5).median()
+    dev = (ret - med).abs()
+    mad = dev.rolling(window, min_periods=5).median()
+    z = dev / (1.4826 * mad.replace(0, np.nan))
+    return z.fillna(0) > z_thresh
+
+
 def adapt_oi_buildup(fut_daily: pd.DataFrame) -> pd.Series:
     """Classic long/short OI-buildup read from continuous-futures price + OI
     change, one value per trading day:
@@ -268,7 +292,11 @@ def adapt_oi_buildup(fut_daily: pd.DataFrame) -> pd.Series:
         price down& OI down → Long Unwinding  → -0.5
     Requires an 'oi' column (data.live_fetcher.get_nifty_fut_continuous). This
     is the one adapter here that genuinely cannot be back-filled from the
-    index — option-chain OI has no history at all, but FUTURES OI does."""
+    index — option-chain OI has no history at all, but FUTURES OI does.
+
+    Roll-gap days (see _roll_jump_mask) are set to 0 (no opinion) — both the
+    price diff and the OI diff span the old→new contract switch on those
+    days, so neither side of the read is trustworthy."""
     d = _to_dt_index(fut_daily)
     if "oi" not in d.columns or d.empty:
         return pd.Series(dtype=float, name="oi_buildup")
@@ -279,6 +307,7 @@ def adapt_oi_buildup(fut_daily: pd.DataFrame) -> pd.Series:
     sign[(dprice < 0) & (doi > 0)] = -1.0
     sign[(dprice > 0) & (doi < 0)] = 0.5
     sign[(dprice < 0) & (doi < 0)] = -0.5
+    sign[_roll_jump_mask(d["close"])] = 0.0
     sign.index = sign.index.normalize()
     sign.name = "oi_buildup"
     return sign
