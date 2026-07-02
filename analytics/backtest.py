@@ -17,8 +17,12 @@ import pandas as pd
 from analytics import intraday_conviction as ic
 
 # Columns we scan for cutoffs (numeric ones get binned; State is handled categorically).
+# Brd% / CVD are only meaningful once real volume + breadth are wired in (see
+# build_conviction_history_real / run_backtest_real below) — on the synthetic-volume
+# Phase-1 run they'll just show a muted/flat read, which is exactly the caveat this
+# backtest already documents.
 SCAN_NUMERIC = ["Final", "Bull−Bear", "Conf%", "RSI", "ΔVWAP", "Stretch",
-                "Reversal", "Uptrend", "Downtr", "Topping"]
+                "Reversal", "Uptrend", "Downtr", "Topping", "Brd%", "CVD"]
 
 
 def _norm(daily: pd.DataFrame) -> pd.DataFrame:

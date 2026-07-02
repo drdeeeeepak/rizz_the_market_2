@@ -659,6 +659,86 @@ def get_nifty_fut_2h(days: int = 60) -> pd.DataFrame:
     return get_nifty_fut_nh(2, days)
 
 
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty_fut_continuous(days: int = 730) -> pd.DataFrame:
+    """
+    Continuous NIFTY FUTURES daily OHLCV + OI (Kite historical_data with
+    continuous=True, oi=True) — real traded volume and open interest stitched
+    across expiries, over YEARS. Unlike the index (volume=0) or a single
+    contract (~2-3 months of history only), this gives the daily signal
+    backtest harness (analytics/signal_lab.py) real volume for CVD/VWAP and
+    real OI for the futures OI-buildup adapter.
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    tok = get_nifty_fut_token()
+    if not tok:
+        return pd.DataFrame()
+    kite = _get_kite_safe()
+    try:
+        to_date = date.today()
+        from_date = to_date - timedelta(days=days)
+        data = kite.historical_data(
+            tok, from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d"),
+            "day", continuous=True, oi=True,
+        )
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        cols = [c for c in ["open", "high", "low", "close", "volume", "oi"] if c in df.columns]
+        return df[cols]
+    except Exception as e:
+        log.error("Nifty fut continuous fetch failed: %s", e)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty50_daily(days: int = 730) -> dict:
+    """
+    Daily OHLCV for all 50 Nifty-50 constituents, chunked + throttled (~50
+    historical calls, same pattern as get_nifty50_intraday). Feeds
+    analytics.backtest.daily_advance_breadth() for the daily/positional
+    Conviction backtest's breadth pillar (muted in the first-cut backtest).
+    Cached daily — safe to call from the Signal Library page's Run button.
+    Returns {symbol: DataFrame}; failed symbols are skipped.
+    """
+    tokens = get_nifty50_tokens()
+    if not tokens:
+        return {}
+    kite = _get_kite_safe()
+    to_date = date.today()
+    from_date = to_date - timedelta(days=days)
+    out = {}
+    THROTTLE = 0.34   # Kite historical API ≈ 3 requests/sec
+    for sym, tok in tokens.items():
+        data = None
+        for attempt in range(2):
+            try:
+                data = kite.historical_data(
+                    tok, from_date.strftime("%Y-%m-%d"),
+                    to_date.strftime("%Y-%m-%d"), "day",
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if attempt == 0 and ("too many" in msg or "rate" in msg or "throttle" in msg):
+                    time.sleep(1.0)
+                    continue
+                log.warning("Daily breadth fetch %s failed: %s", sym, e)
+                break
+        if data:
+            try:
+                df = pd.DataFrame(data)
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date").sort_index()
+                out[sym] = df[["open", "high", "low", "close", "volume"]]
+            except Exception as e:
+                log.warning("Daily breadth parse %s failed: %s", sym, e)
+        time.sleep(THROTTLE)
+    return out
+
+
 @st.cache_data(ttl=TTL_5M, show_spinner=False)
 def get_nifty_intraday(interval: str = "15minute", days: int = 7) -> pd.DataFrame:
     """
