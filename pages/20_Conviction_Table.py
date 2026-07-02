@@ -60,13 +60,14 @@ TF = {
     "1 hour": ("60minute", True),
     "2 hour": ("2H",       True),
     "4 hour": ("4H",       True),
+    "1 day":  ("day",      True),
 }
 
 # Auto-refresh cadence per timeframe (ms) — faster TFs refresh more often, slower ones
 # back off (the underlying data caches are 5-min anyway, so this just paces the reruns).
 REFRESH_MS = {
     "5 min": 60_000, "15 min": 60_000, "1 hour": 120_000,
-    "2 hour": 180_000, "4 hour": 180_000,
+    "2 hour": 180_000, "4 hour": 180_000, "1 day": 300_000,
 }
 
 sig, spot, _ = bootstrap_signals()
@@ -77,10 +78,12 @@ if spot <= 0:
 # fills the viewport and its bottom (horizontal) scrollbar is always reachable, with no
 # top controls wrapping and shoving it off-screen.
 _tf_keys = list(TF.keys())
-SLUG = {"5 min": "5m", "15 min": "15m", "1 hour": "1h", "2 hour": "2h", "4 hour": "4h"}
+SLUG = {"5 min": "5m", "15 min": "15m", "1 hour": "1h", "2 hour": "2h",
+        "4 hour": "4h", "1 day": "1d"}
 SLUG_INV = {v: k for k, v in SLUG.items()}
 # parent-bucket size (minutes) per source — used to group children under a parent candle.
-_BLOCK_MIN = {"5minute": 5, "15minute": 15, "60minute": 60, "2H": 120, "4H": 240}
+# "day" is special-cased (group children by date), so its value is just a placeholder.
+_BLOCK_MIN = {"5minute": 5, "15minute": 15, "60minute": 60, "2H": 120, "4H": 240, "day": 1440}
 
 # Seed the selection from the URL once per session (so a hard reload / shared link keeps
 # the timeframe); thereafter session_state owns it.
@@ -96,7 +99,7 @@ def _fetch_enriched(label, days, want_breadth):
     """Fetch + enrich one timeframe's candles (no cycle slicing). Returns a df or None.
     5m/15m use session VWAP + daily expected-move; 1H/2H/4H use anchored VWAP + weekly."""
     s, anch = TF[label]
-    if s in ("5minute", "15minute", "60minute"):
+    if s in ("5minute", "15minute", "60minute", "day"):
         d = get_nifty_fut_intraday(interval=s, days=days)
         if d is None or d.empty:
             d = get_nifty_intraday(interval=s, days=days)
@@ -204,15 +207,17 @@ else:
         st.warning(f"No {drill_label} data to drill into — showing the flat table.")
         st.markdown(uict.candle_table_frozen_html(ct, height=_H), unsafe_allow_html=True)
     else:
-        # Keep only children inside the parent's displayed span, then group by parent bucket.
-        child_df = child_df[(child_df.index >= df.index.min()) &
-                            (child_df.index <= df.index.max())]
+        # Group children by their parent bucket; the renderer only pulls children for the
+        # parents actually on screen, so buckets outside the displayed range are ignored
+        # (avoids off-by-one at the last candle, and the midnight-stamp issue for 1D).
         ct_child = ic.candle_table(child_df, newest_first=False, gamma_by_date=_gmap)
         ct_p = ct[uict.DRILL_COLS]
         ct_c = ct_child[uict.DRILL_COLS].copy()
         _blk = _BLOCK_MIN[src]
 
         def _parent_bucket(ts):
+            if src == "day":                       # daily candles are stamped at midnight
+                return ts.normalize()
             m = ts.hour * 60 + ts.minute
             b = max(0, (m - 555) // _blk)
             return ts.normalize() + pd.Timedelta(minutes=555 + b * _blk)
