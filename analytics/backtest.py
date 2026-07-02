@@ -17,8 +17,12 @@ import pandas as pd
 from analytics import intraday_conviction as ic
 
 # Columns we scan for cutoffs (numeric ones get binned; State is handled categorically).
+# Brd% / CVD are only meaningful once real volume + breadth are wired in (see
+# build_conviction_history_real / run_backtest_real below) — on the synthetic-volume
+# Phase-1 run they'll just show a muted/flat read, which is exactly the caveat this
+# backtest already documents.
 SCAN_NUMERIC = ["Final", "Bull−Bear", "Conf%", "RSI", "ΔVWAP", "Stretch",
-                "Reversal", "Uptrend", "Downtr", "Topping"]
+                "Reversal", "Uptrend", "Downtr", "Topping", "Brd%", "CVD"]
 
 
 def _norm(daily: pd.DataFrame) -> pd.DataFrame:
@@ -243,3 +247,133 @@ def run_intraday_backtest(df: pd.DataFrame, horizons=(6, 13, 25),
             if not conv.empty else "—")
     return {"cutoffs": cuts, "state_edge": edge, "n_rows": int(len(conv)),
             "span": span, "conv": conv, "outcomes": outc, "horizons": horizons}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 3 — Real-volume + breadth-on re-run (data fidelity upgrade)
+# Wires in REAL volume (from continuous NIFTY FUTURES,
+# data.live_fetcher.get_nifty_fut_continuous) and daily advance/decline breadth,
+# so CVD/VWAP/Brd% stop being muted/skipped like they were in the Phase-1 run.
+#
+# IMPORTANT — continuous-futures ROLL GAPS: Kite's historical_data(continuous=True)
+# stitches contracts WITHOUT back-adjustment, so the front-month switch at each
+# monthly expiry prints as a real price jump (cost-of-carry basis, not an actual
+# market move). Using that price series directly would corrupt every indicator
+# with memory (RSI, VWAP/Stretch) AND the forward-outcome labels at every
+# rollover. So price here stays on the INDEX (gap-free, same series
+# build_conviction_history() uses) — continuous futures contributes ONLY its
+# real VOLUME, merged onto the index's OHLC by date. OI is deliberately not
+# used in this function (see signal_adapters.adapt_oi_buildup for the one
+# place OI is used, with its own roll-jump guard).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def daily_advance_breadth(stock_dfs: dict) -> pd.Series:
+    """% of Nifty-50 constituents closing ABOVE their own PREVIOUS DAILY CLOSE
+    (classic advance/decline breadth), one value per trading day.
+
+    This is a COUSIN of the live Conviction table's Brd% column (which is %
+    above SESSION VWAP, intraday) — not a re-test of that exact column — but
+    it tests whether breadth adds edge at the daily/weekly horizon a condor
+    actually cares about. Needs only daily OHLC for ~50 stocks (cheap,
+    multi-year), unlike intraday breadth which needs 50 historical intraday
+    pulls per lookback window.
+
+    Fidelity note: uses TODAY's Nifty-50 constituent list applied
+    historically (membership/survivorship bias) — acceptable for a base-rate
+    scan, not corrected here."""
+    if not stock_dfs:
+        return pd.Series(dtype=float)
+    flags = []
+    for sym, df in stock_dfs.items():
+        if df is None or df.empty:
+            continue
+        d = df.copy()
+        d.columns = [c.lower() for c in d.columns]
+        if "close" not in d.columns:
+            continue
+        if not isinstance(d.index, pd.DatetimeIndex):
+            d.index = pd.to_datetime(d.index)
+        d.index = d.index.normalize()
+        adv = (d["close"] > d["close"].shift(1)).astype(float)
+        flags.append(adv.rename(sym))
+    if not flags:
+        return pd.Series(dtype=float)
+    mat = pd.concat(flags, axis=1)
+    return (mat.mean(axis=1) * 100.0).rename("breadth")
+
+
+def _index_with_futures_volume(daily: pd.DataFrame, fut_daily: pd.DataFrame) -> pd.DataFrame:
+    """INDEX OHLC (gap-free) + real VOLUME merged in from continuous futures by
+    date. Days where the futures fetch has no matching date (e.g. the roll-day
+    stitch drops/duplicates a row) fall back to volume=1 for that single day
+    rather than dropping the row — matches the Phase-1 fallback so a handful
+    of gaps don't shrink the sample."""
+    idx = daily.copy()
+    idx.columns = [c.lower() for c in idx.columns]
+    if not isinstance(idx.index, pd.DatetimeIndex):
+        idx.index = pd.to_datetime(idx.index)
+    idx.index = idx.index.normalize()
+    idx = idx[["open", "high", "low", "close"]].astype(float).sort_index()
+
+    fut = fut_daily.copy()
+    fut.columns = [c.lower() for c in fut.columns]
+    if not isinstance(fut.index, pd.DatetimeIndex):
+        fut.index = pd.to_datetime(fut.index)
+    fut.index = fut.index.normalize()
+    vol = pd.to_numeric(fut.get("volume"), errors="coerce") if "volume" in fut.columns else pd.Series(dtype=float)
+    vol = vol[~vol.index.duplicated(keep="last")]
+
+    idx["volume"] = vol.reindex(idx.index)
+    idx["volume"] = idx["volume"].fillna(1.0)
+    return idx
+
+
+def build_conviction_history_real(daily: pd.DataFrame, fut_daily: pd.DataFrame,
+                                  breadth: pd.Series = None, warmup: int = 40) -> pd.DataFrame:
+    """Same cycle-by-cycle engine run as build_conviction_history(), but with
+    REAL volume (from continuous futures, merged onto the gap-free INDEX price
+    — see the roll-gap note above) so CVD/VWAP are genuine instead of the
+    synthetic volume=1 Phase-1 used, and breadth (see daily_advance_breadth)
+    wired through the engine's real breadth parameter instead of left as NaN."""
+    d = _index_with_futures_volume(daily, fut_daily)
+    ret = np.log(d["close"] / d["close"].shift(1))
+    rv = ret.rolling(14).std()
+    key = pd.Series([ic._expiry_cycle_key(ix) for ix in d.index], index=d.index)
+    cycles = list(dict.fromkeys(key.tolist()))
+    pos = {ts: i for i, ts in enumerate(d.index)}
+    parts = []
+    for ck in cycles:
+        idxs = d.index[key == ck]
+        if len(idxs) == 0:
+            continue
+        first, last = pos[idxs[0]], pos[idxs[-1]]
+        window = d.iloc[max(0, first - warmup): last + 1]
+        rv0 = rv.iloc[first]
+        c0 = d["close"].iloc[first]
+        em_week = (rv0 * c0 * (5 ** 0.5)) if np.isfinite(rv0) and rv0 > 0 else 0.02 * c0
+        w = ic.enrich(window, expected_move_pts=float(em_week), breadth=breadth, anchored_vwap=True)
+        ct = ic.candle_table(w, newest_first=False)
+        ct = ct.loc[ct.index.isin(idxs)]
+        parts.append(ct)
+    if not parts:
+        return pd.DataFrame()
+    conv = pd.concat(parts).sort_index()
+    conv["close"] = d["close"].reindex(conv.index)
+    return conv
+
+
+def run_backtest_real(daily: pd.DataFrame, fut_daily: pd.DataFrame, breadth: pd.Series = None,
+                      horizons=(5, 10), call_pct: float = 3.5, put_pct: float = 4.0,
+                      nbins: int = 5) -> dict:
+    """Real-volume + breadth-on driver — mirrors run_backtest()'s return shape
+    so pages can render either uniformly. Forward-outcome LABELS are computed
+    on the INDEX (`daily`), same as run_backtest() — never on continuous
+    futures directly, so a roll gap can't leak into the answer key."""
+    conv = build_conviction_history_real(daily, fut_daily, breadth=breadth)
+    outc = forward_outcomes(daily, horizons=horizons, call_pct=call_pct, put_pct=put_pct)
+    dist = weekly_move_distribution(outc, horizons=horizons, call_pct=call_pct, put_pct=put_pct)
+    cuts = column_cutoff_scan(conv, outc, horizons=horizons, nbins=nbins)
+    span = (f"{conv.index.min():%d-%b-%Y} → {conv.index.max():%d-%b-%Y}"
+            if not conv.empty else "—")
+    return {"distribution": dist, "cutoffs": cuts, "n_rows": int(len(conv)),
+            "span": span, "conv": conv, "outcomes": outc}
