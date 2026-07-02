@@ -94,3 +94,32 @@ Goals: sell closer, better mid-week book/roll decisions, and time one-sided sell
 4. Price-page adapters (Dow, EMA Ribbon, SuperTrend, Market Profile, Bollinger, RSI-weekly, slope).
 5. Ranked "Signal Library" page + CSV.
 6. Walk-forward the RSI overbought-fade rule.
+
+## Validation test cases (walk-forward — do BEFORE trusting anything live)
+The first backtest was 2y daily (one bull regime) + ~2mo intraday, with muted volume/breadth
+and small sub-samples. Treat every "edge" below as a LEAD to validate, not a rule. Build no
+live UI on these until they survive a walk-forward split by year/regime with adequate n.
+
+**Lead 1 — Overbought fade (call side).** SHORT / sell-CALL when RSI ≥ 62 & Bull−Bear ≥ 45 &
+%B ≥ 0.8. First pass: ~63% hit @5d, n=38. Test: does hit-rate stay > ~57% in EACH regime split?
+
+**Lead 2 — Drift fade→continuation flip (anchored to each cycle's Tuesday close).**
+Drift = close/anchor − 1. In the OVERBOUGHT context (RSI ≥ 58): drift 0→+2% reverted DOWN
+(~65% fade wins); drift +2→+3% FLIPPED to continuation UP (~60%). First-pass flip ≈ +2% to
++2.5%, but the flip buckets had n≈9–10 → weak. Test: re-estimate the flip point per regime;
+is there a stable drift level where overbought forward-return sign changes? Report it with n
+and confidence band. If unstable across regimes → discard.
+
+**Lead 3 — Per-expiry max drift from anchor (strike/roll sizing — the SOLID part).**
+Touch (High/Low) vs Tuesday anchor, per weekly cycle: call side p90 ≈ +3.0%, p95 ≈ +3.7%,
+touch +3.5% ≈ 8% of expiries; put side touch −3% ≈ 10%, −4% ≈ 5%. This is the most robust
+result — use for sell-closer sizing and roll targets (roll a threatened call to ~+3.5% of
+current spot). Re-confirm on longer history.
+
+**Asymmetry to preserve:** the fade edge is CALL-side only. The oversold/put-side bounce did
+NOT work (~coin-flip; worse with negative drift). Manage the put leg by the sizing (Lead 3),
+not by a reversion bet. Re-check across regimes.
+
+**Decision gate for a live "drift-vs-anchor gauge" on the Conviction Table:** build it ONLY if
+Leads 1+2 hold (hit-rate > ~57% and a stable flip point) in ≥2 of the regime splits with n≥30
+each. Otherwise keep it as analysis only.
