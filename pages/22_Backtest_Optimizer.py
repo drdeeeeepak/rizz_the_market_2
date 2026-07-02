@@ -1,7 +1,7 @@
 # pages/22_Backtest_Optimizer.py
-# Premium-seller optimizer. Runs the Conviction engine over ~2y of daily Nifty history and
-# answers: (1) how far does Nifty travel in a week → how close can I sell; (2) which
-# conviction-column readings precede a breach of my sold strikes → book-loss / roll / hold.
+# Premium-seller optimizer, two modes:
+#   • Positional (daily) — condor management + "how close can I sell" (index, ~2y).
+#   • Intraday timing    — one-sided selling entry/side/exit (futures, real volume, ~months).
 #
 # You just: log in (Home → Kite) so the token is fresh, then click "Run backtest".
 
@@ -21,96 +21,155 @@ except Exception:
 
 st.set_page_config(page_title="P22 · Backtest / Optimizer", layout="wide")
 st.title("Page 22 — Backtest / Optimizer (premium seller)")
-st.caption("Empirical cutoffs for your Nifty option-selling: how close you can sell, and which "
-           "conviction readings warn of a strike breach before next Tuesday.")
+st.caption("Empirical cutoffs for your Nifty option-selling: how close you can sell, which "
+           "conviction readings warn of a strike breach, and when to time one-sided trades.")
 
 with st.expander("⚠️ What this is (and its limits) — read once"):
     st.markdown(
-        "- Runs the **anchored (positional) engine** over ~2 years of **daily** Nifty history, "
-        "cycle-by-cycle, then measures the **forward 1-week / 2-week move** after every row.\n"
-        "- **Fidelity caveats (first-cut):** uses the continuous **index** with synthetic equal "
-        "volume, so VWAP is unweighted and the CVD/volume pillar is a price-action proxy; "
-        "expected-move (Stretch) is a realized-vol estimate (no VIX history); **breadth is off**. "
-        "So trust the **price/momentum/structure** columns (State, Final, Bull−Bear, RSI, ΔVWAP, "
-        "Stretch, the 4 scores) more than any volume/breadth read here.\n"
+        "- **Positional (daily):** anchored engine over ~2y of **index** daily (synthetic volume → "
+        "CVD is a price proxy, breadth off, realized-vol expected-move). Measures the forward "
+        "**1-week / 2-week** move after every row → sell-closer sizing + strike-breach cutoffs.\n"
+        "- **Intraday timing:** session engine over ~months of **futures** intraday (**real volume** → "
+        "CVD works). Measures the forward move over the next **N candles** → directional edge (which "
+        "side to sell) and how fast it decays (exit).\n"
         "- These are **base-rate cutoffs to stack the odds**, not guarantees. Always keep your stop.")
 
-c1, c2, c3, c4 = st.columns([1.3, 1, 1, 1])
-with c1:
-    lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30)
-with c2:
-    call_pct = st.number_input("Sold CALL distance %", 1.0, 8.0, 3.5, 0.25)
-with c3:
-    put_pct = st.number_input("Sold PUT distance %", 1.0, 8.0, 4.0, 0.25)
-with c4:
-    nbins = st.select_slider("Buckets per column", options=[3, 4, 5, 6], value=5)
 
-run = st.button("▶ Run backtest", type="primary")
-
-
+# ── cached loaders / runners ──────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_daily(days: int) -> pd.DataFrame:
+def _load_daily(days):
     return _lf.get_nifty_intraday(interval="day", days=days)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _run(days, cp, pp, nb):
-    daily = _load_daily(days)
-    if daily is None or daily.empty:
+def _load_intraday(interval, days):
+    return _lf.get_nifty_fut_intraday(interval=interval, days=days)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _run_daily(days, cp, pp, nb):
+    d = _load_daily(days)
+    if d is None or d.empty:
         return None
-    return bt.run_backtest(daily, horizons=(5, 10), call_pct=cp, put_pct=pp, nbins=nb)
+    return bt.run_backtest(d, horizons=(5, 10), call_pct=cp, put_pct=pp, nbins=nb)
 
 
-if not run:
-    st.info("Set your strike distances and click **Run backtest**. First run pulls ~2y of daily "
-            "candles and computes the engine over every cycle (~10–20s).")
-    st.stop()
+@st.cache_data(ttl=3600, show_spinner=False)
+def _run_intraday(interval, days, horizons, nb):
+    d = _load_intraday(interval, days)
+    if d is None or d.empty:
+        return None
+    return bt.run_intraday_backtest(d, horizons=tuple(horizons), anchored=False, nbins=nb)
 
-with st.spinner("Fetching history and running the engine over every cycle…"):
-    res = _run(lookback, float(call_pct), float(put_pct), int(nbins))
 
-if res is None:
-    st.error("Could not load daily Nifty history from Kite. Log in via Home → Kite, then retry.")
-    st.stop()
+def _render_cuts(cuts, order):
+    for col in order:
+        if col not in cuts:
+            continue
+        st.markdown(f"**{col}**")
+        st.dataframe(cuts[col].reset_index(), use_container_width=True, hide_index=True)
 
-st.success(f"Analysed **{res['n_rows']}** daily rows · {res['span']}")
 
-# ── 1. Weekly move distribution — how close can you sell? ──────────────────────
-st.subheader("1 · How far does Nifty travel? (sell-closer sizing)")
-st.caption("Percentiles of the forward **max-up** and **max-down** move from each day. "
-           "Sell beyond the percentile that matches your target win-rate (e.g. the p90 column "
-           "≈ a strike breached ~10% of the time).")
-st.dataframe(res["distribution"], use_container_width=True, hide_index=True)
-_d = res["distribution"]
-if not _d.empty:
-    _r5 = _d[_d["horizon"] == "5d"].iloc[0]
-    st.caption(f"↳ 1-week read: your **+{call_pct:.2f}% call** was breached "
-               f"**{_r5['call_breach%']}%** of weeks · **−{put_pct:.2f}% put** "
-               f"**{_r5['put_breach%']}%**. For a ~90% hold, sell near **+{_r5['up_p90']}% / "
-               f"−{_r5['dn_p90']}%**; ~95% → **+{_r5['up_p95']}% / −{_r5['dn_p95']}%**.")
+mode = st.radio("Mode", ["Positional (daily) — condor / sell-closer",
+                         "Intraday timing (one-sided entry / exit)"], horizontal=True)
 
-st.divider()
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE 1 — Positional (daily)
+# ══════════════════════════════════════════════════════════════════════════════
+if mode.startswith("Positional"):
+    c1, c2, c3, c4 = st.columns([1.3, 1, 1, 1])
+    with c1:
+        lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30)
+    with c2:
+        call_pct = st.number_input("Sold CALL distance %", 1.0, 8.0, 3.5, 0.25)
+    with c3:
+        put_pct = st.number_input("Sold PUT distance %", 1.0, 8.0, 4.0, 0.25)
+    with c4:
+        nbins = st.select_slider("Buckets/column", options=[3, 4, 5, 6], value=5)
 
-# ── 2. Column cutoff scan — which readings warn of a breach ────────────────────
-st.subheader("2 · Column cutoffs — which readings precede a breach (book-loss / roll / hold)")
-st.caption("For each column, rows are bucketed low→high. **call_breach%** = how often the "
-           "+call strike was hit in the next week from that bucket; **put_breach%** likewise. "
-           "**pct_up5** = share of weeks that closed up. High call_breach → your sold-CALL is "
-           "threatened (defend / roll up); high put_breach → sold-PUT threatened.")
+    if not st.button("▶ Run positional backtest", type="primary"):
+        st.info("Set your strike distances and click Run. First run pulls ~2y of daily candles "
+                "and computes the engine over every cycle (~10–20s).")
+        st.stop()
 
-cuts = res["cutoffs"]
-# State first, then the numeric columns in a sensible order.
-order = ["State", "Final", "Bull−Bear", "Conf%", "Downtr", "Topping", "Uptrend",
-         "Reversal", "RSI", "ΔVWAP", "Stretch"]
-for col in order:
-    if col not in cuts:
-        continue
-    st.markdown(f"**{col}**")
-    st.dataframe(cuts[col].reset_index(), use_container_width=True, hide_index=True)
+    with st.spinner("Fetching daily history and running the engine over every cycle…"):
+        res = _run_daily(lookback, float(call_pct), float(put_pct), int(nbins))
+    if res is None:
+        st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
+        st.stop()
+    st.success(f"Analysed **{res['n_rows']}** daily rows · {res['span']}")
 
-# ── Raw data download for your own slicing ────────────────────────────────────
-with st.expander("⬇ Download the raw per-day table (conviction columns + forward outcomes)"):
-    _merged = res["conv"].join(res["outcomes"], how="inner")
-    st.download_button("Download CSV", _merged.to_csv().encode("utf-8"),
-                       file_name="conviction_backtest.csv", mime="text/csv")
-    st.dataframe(_merged.tail(30), use_container_width=True)
+    st.subheader("1 · How far does Nifty travel? (sell-closer sizing)")
+    st.caption("Percentiles of the forward **max-up** / **max-down** move from each day. Sell beyond "
+               "the percentile matching your target win-rate (p90 ≈ breached ~10% of the time).")
+    st.dataframe(res["distribution"], use_container_width=True, hide_index=True)
+    _d = res["distribution"]
+    if not _d.empty:
+        _r5 = _d[_d["horizon"] == "5d"].iloc[0]
+        st.caption(f"↳ 1-week: your **+{call_pct:.2f}% call** was breached **{_r5['call_breach%']}%** "
+                   f"of weeks · **−{put_pct:.2f}% put** **{_r5['put_breach%']}%**. For ~90% hold sell near "
+                   f"**+{_r5['up_p90']}% / −{_r5['dn_p90']}%**; ~95% → **+{_r5['up_p95']}% / −{_r5['dn_p95']}%**.")
+
+    st.divider()
+    st.subheader("2 · Column cutoffs — which readings precede a breach (book-loss / roll / hold)")
+    st.caption("Rows bucketed low→high. **call_breach%** = how often the +call strike was hit next "
+               "week from that bucket (sold-CALL threatened → defend/roll up); **put_breach%** likewise.")
+    _render_cuts(res["cutoffs"],
+                 ["State", "Final", "Bull−Bear", "Conf%", "Downtr", "Topping", "Uptrend",
+                  "Reversal", "RSI", "ΔVWAP", "Stretch"])
+
+    with st.expander("⬇ Download the raw per-day table (columns + forward outcomes)"):
+        _m = res["conv"].join(res["outcomes"], how="inner")
+        st.download_button("Download CSV", _m.to_csv().encode("utf-8"),
+                           file_name="conviction_positional.csv", mime="text/csv")
+        st.dataframe(_m.tail(30), use_container_width=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE 2 — Intraday timing
+# ══════════════════════════════════════════════════════════════════════════════
+else:
+    _CPS = {"15 min": ("15minute", 25), "1 hour": ("60minute", 7)}
+    c1, c2, c3 = st.columns([1, 1.4, 1])
+    with c1:
+        tf_label = st.selectbox("Candle", list(_CPS.keys()), index=1)
+    with c2:
+        lookback = st.slider("Lookback (calendar days)", 30, 200, 120, step=10)
+    with c3:
+        nbins = st.select_slider("Buckets/column", options=[3, 4, 5, 6], value=5)
+    interval, cps = _CPS[tf_label]
+    horizons = (cps, 2 * cps, 4 * cps)   # ≈ 1, 2, 4 sessions ahead
+
+    st.caption(f"Forward move measured at **{horizons[0]}/{horizons[1]}/{horizons[2]} candles** "
+               f"(≈ 1 / 2 / 4 sessions on {tf_label}).")
+
+    if not st.button("▶ Run intraday backtest", type="primary"):
+        st.info("Pick a candle size and click Run. Pulls a few months of intraday futures (real "
+                "volume) and scores the forward move after every reading.")
+        st.stop()
+
+    with st.spinner("Fetching intraday futures and running the engine…"):
+        res = _run_intraday(interval, lookback, horizons, int(nbins))
+    if res is None:
+        st.error("Could not load intraday futures history. Log in via Home → Kite, then retry.")
+        st.stop()
+    st.success(f"Analysed **{res['n_rows']}** {tf_label} candles · {res['span']}")
+
+    st.subheader("1 · Directional edge by State (which side to sell + when to exit)")
+    st.caption("Per State: average forward return and up-rate at 1 / 2 / 4 sessions. Positive & "
+               "high up% → bullish → **sell PUTs**; negative → bearish → **sell CALLs**. Watch the "
+               "edge **decay** across horizons — that's your exit window.")
+    st.dataframe(res["state_edge"], use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader(f"2 · Column cutoffs — forward edge over the next {horizons[0]} candles")
+    st.caption("Rows bucketed low→high. **pct_up** = share that closed up · **avg_ret** = mean forward "
+               "return · **avg_maxup / avg_maxdn** = the favourable/adverse excursion to size stops.")
+    _render_cuts(res["cutoffs"],
+                 ["State", "Final", "Bull−Bear", "Conf%", "Uptrend", "Downtr", "Topping",
+                  "Reversal", "RSI", "ΔVWAP", "Stretch"])
+
+    with st.expander("⬇ Download the raw per-candle table (columns + forward outcomes)"):
+        _m = res["conv"].join(res["outcomes"], how="inner")
+        st.download_button("Download CSV", _m.to_csv().encode("utf-8"),
+                           file_name="conviction_intraday.csv", mime="text/csv")
+        st.dataframe(_m.tail(30), use_container_width=True)

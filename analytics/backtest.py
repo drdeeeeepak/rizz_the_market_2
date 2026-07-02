@@ -107,15 +107,19 @@ def weekly_move_distribution(outcomes: pd.DataFrame, horizons=(5, 10),
 
 
 def _bucket_stats(g: "pd.core.groupby.DataFrameGroupBy", h0: int) -> pd.DataFrame:
-    return pd.DataFrame({
+    cols = g.obj.columns
+    d = {
         "n": g.size(),
         f"avg_ret{h0}": g[f"ret{h0}"].mean().round(2),
         f"pct_up{h0}": g[f"ret{h0}"].apply(lambda x: round((x > 0).mean() * 100, 0)),
-        "call_breach%": (g["breach_call"].mean() * 100).round(0),
-        "put_breach%": (g["breach_put"].mean() * 100).round(0),
-        f"avg_maxup{h0}": g[f"up{h0}"].mean().round(2),
-        f"avg_maxdn{h0}": g[f"dn{h0}"].mean().round(2),
-    })
+    }
+    if "breach_call" in cols:          # daily/positional runs carry strike-breach flags
+        d["call_breach%"] = (g["breach_call"].mean() * 100).round(0)
+    if "breach_put" in cols:
+        d["put_breach%"] = (g["breach_put"].mean() * 100).round(0)
+    d[f"avg_maxup{h0}"] = g[f"up{h0}"].mean().round(2)
+    d[f"avg_maxdn{h0}"] = g[f"dn{h0}"].mean().round(2)
+    return pd.DataFrame(d)
 
 
 def column_cutoff_scan(conv: pd.DataFrame, outcomes: pd.DataFrame,
@@ -157,3 +161,85 @@ def run_backtest(daily: pd.DataFrame, horizons=(5, 10),
             if not conv.empty else "—")
     return {"distribution": dist, "cutoffs": cuts, "n_rows": int(len(conv)),
             "span": span, "conv": conv, "outcomes": outc}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Intraday timing (one-sided selling: when to enter, which side, when to exit)
+# Uses intraday FUTURES (real volume → CVD pillar works), session VWAP, forward move
+# measured in CANDLES. Better fidelity than the daily/index run above.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _em_from_intraday(d: pd.DataFrame) -> float:
+    """One-day expected move (points) from realized daily vol of the intraday series."""
+    day_close = d["close"].resample("1D").last().dropna()
+    dret = np.log(day_close / day_close.shift(1)).dropna()
+    px = float(d["close"].iloc[-1])
+    em = float(dret.std() * px) if len(dret) > 3 else 0.006 * px
+    return em if np.isfinite(em) and em > 0 else 0.006 * px
+
+
+def build_conviction_history_intraday(df: pd.DataFrame, anchored: bool = False) -> pd.DataFrame:
+    """Run the engine on intraday candles (session VWAP by default, real volume kept).
+    Single realized-vol expected-move over the window (flagged approximation)."""
+    d = df.copy()
+    d.columns = [c.lower() for c in d.columns]
+    if not isinstance(d.index, pd.DatetimeIndex):
+        d.index = pd.to_datetime(d.index)
+    d = d.sort_index()
+    em = _em_from_intraday(d)
+    w = ic.enrich(d, expected_move_pts=em, anchored_vwap=anchored)
+    conv = ic.candle_table(w, newest_first=False)
+    conv["close"] = d["close"].reindex(conv.index)
+    return conv
+
+
+def forward_outcomes_candles(df: pd.DataFrame, horizons=(6, 13, 25)) -> pd.DataFrame:
+    """Forward max-up% / max-down% / close-to-close return over the next K CANDLES
+    (no strike breach — intraday is about directional edge & exit timing)."""
+    d = df.copy()
+    d.columns = [c.lower() for c in d.columns]
+    close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+    res = pd.DataFrame(index=d.index)
+    for h in horizons:
+        up, dn, rr = np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
+        for i in range(n):
+            j1 = i + h
+            if j1 >= n:
+                continue
+            c0 = close[i]
+            up[i] = high[i + 1:j1 + 1].max() / c0 - 1.0
+            dn[i] = low[i + 1:j1 + 1].min() / c0 - 1.0
+            rr[i] = close[j1] / c0 - 1.0
+        res[f"up{h}"] = up * 100
+        res[f"dn{h}"] = dn * 100
+        res[f"ret{h}"] = rr * 100
+    return res
+
+
+def state_horizon_edge(conv: pd.DataFrame, outc: pd.DataFrame, horizons) -> pd.DataFrame:
+    """Per State: forward return + up-rate at each horizon — the directional edge and how
+    fast it decays (→ entry side and exit timing for one-sided sells)."""
+    df = conv.join(outc, how="inner")
+    rows = []
+    for stt, g in df.groupby("State"):
+        row = {"State": stt, "n": int(len(g))}
+        for h in horizons:
+            if f"ret{h}" in g:
+                row[f"ret{h}"] = round(float(g[f"ret{h}"].mean()), 2)
+                row[f"up{h}%"] = round(float((g[f"ret{h}"] > 0).mean() * 100), 0)
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("n", ascending=False)
+
+
+def run_intraday_backtest(df: pd.DataFrame, horizons=(6, 13, 25),
+                          anchored: bool = False, nbins: int = 5) -> dict:
+    """One-call driver for the intraday timing study."""
+    conv = build_conviction_history_intraday(df, anchored=anchored)
+    outc = forward_outcomes_candles(df, horizons=horizons)
+    cuts = column_cutoff_scan(conv, outc, horizons=horizons, nbins=nbins)
+    edge = state_horizon_edge(conv, outc, horizons)
+    span = (f"{conv.index.min():%d-%b %H:%M} → {conv.index.max():%d-%b %H:%M}"
+            if not conv.empty else "—")
+    return {"cutoffs": cuts, "state_edge": edge, "n_rows": int(len(conv)),
+            "span": span, "conv": conv, "outcomes": outc, "horizons": horizons}
