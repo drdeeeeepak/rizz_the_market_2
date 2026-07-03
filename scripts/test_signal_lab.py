@@ -277,12 +277,18 @@ def run():
 
     for _lbl, _fn, _df in [
         ("ema_ribbon", sa.adapt_ema_ribbon, daily),
+        ("ema_momentum", sa.adapt_ema_momentum, daily),
+        ("ema_moat_balance", sa.adapt_ema_moat_balance, daily),
         ("supertrend", sa.adapt_supertrend, daily),
         ("market_profile", sa.adapt_market_profile, daily),
         ("bollinger_pctb", sa.adapt_bollinger_pctb, daily),
+        ("bollinger_asymmetry", sa.adapt_bollinger_asymmetry, daily),
         ("rsi_weekly", sa.adapt_rsi_weekly, daily),
+        ("rsi_alignment", sa.adapt_rsi_alignment, daily),
+        ("rsi_exhaustion_fade", sa.adapt_rsi_exhaustion_fade, daily),
         ("oi_buildup", sa.adapt_oi_buildup, fut),
         ("dow_theory", sa.adapt_dow_theory, h1),
+        ("dow_leg_health", sa.adapt_dow_leg_health, h1),
         ("ema_slope_phases", sa.adapt_ema_slope_phases, h1),
     ]:
         _assert_causal(_lbl, _fn, _df)
