@@ -160,6 +160,20 @@ def run():
     rf = sl.rsi_fade_walk_forward(daily)
     check("rsi_fade_walk_forward: returns overall+by_split", "overall" in rf and "by_split" in rf)
 
+    # ── 5b. dow_retrace_bucket_scan runs and covers the phases we care about ───
+    dow_scan = sl.dow_retrace_bucket_scan(daily, h1)
+    check("dow_retrace_bucket_scan: returns a nonempty DataFrame", not dow_scan.empty,
+          f"rows={len(dow_scan)}")
+    if not dow_scan.empty:
+        expected_cols = {"structure", "sequence", "retrace_bucket", "n", "hit_rate%"}
+        check("dow_retrace_bucket_scan: has expected columns", expected_cols.issubset(dow_scan.columns),
+              str(list(dow_scan.columns)))
+        check("dow_retrace_bucket_scan: only UPTREND/DOWNTREND rows",
+              set(dow_scan["structure"].unique()) <= {"UPTREND", "DOWNTREND"})
+        check("dow_retrace_bucket_scan: only RISING/FALLING sequences",
+              set(dow_scan["sequence"].unique()) <= {"RISING", "FALLING"})
+        check("dow_retrace_bucket_scan: n counts are positive", bool((dow_scan["n"] > 0).all()))
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),

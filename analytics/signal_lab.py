@@ -208,3 +208,80 @@ def rsi_fade_walk_forward(daily: pd.DataFrame, horizons=DEFAULT_HORIZONS,
     by_split = walk_forward(daily, signal, horizons=horizons, call_pct=call_pct,
                             put_pct=put_pct, by=by)
     return {"signal": signal, "overall": overall, "by_split": by_split}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Dow Theory — which retrace-% zone is actually the best entry?
+# ══════════════════════════════════════════════════════════════════════════════
+
+def dow_retrace_bucket_scan(daily: pd.DataFrame, df_1h: pd.DataFrame,
+                            horizons=DEFAULT_HORIZONS, window_days: int = None,
+                            bins=(0, 30, 60, 90, 101)) -> pd.DataFrame:
+    """Is 60%+ retrace (labelled PRIME) actually a better entry than 30-45%
+    (labelled GOOD), or is that just a wider stop dressed up as a label?
+    Buckets every UPTREND day by (sequence, retrace_pct) assuming you ALWAYS
+    buy there, and every DOWNTREND day by (sequence, retrace_pct) assuming
+    you ALWAYS short there — then reports forward hit-rate/expectancy per
+    bucket, empirically.
+
+    `sequence` matters because retrace_pct means something different
+    depending on it (see dow_theory._retrace_depth): RISING = bouncing AWAY
+    from the most recent pivot low (0%=at the low, 100%=back at the old
+    high) — this is the UT-1/DT-1 'GOOD vs PRIME' question directly. FALLING
+    = pulling back FROM the most recent pivot high toward the old low
+    (0%=at the high, 100%=back at the old low) — in an UPTREND this is the
+    UT-3 retest-the-floor case (90-101% bucket); in a DOWNTREND it's the
+    leg that follows a fresh new low.
+
+    Reuses signal_adapters._dow_theory_frame (the SAME rolling-window pivot/
+    structure/sequence/retrace computation the structure-sign and leg-health
+    adapters already use) plus backtest.forward_outcomes — nothing new is
+    computed here, just re-sliced by retrace_pct instead of by signal sign."""
+    from analytics import signal_adapters as sa   # local import — signal_adapters imports nothing from here
+    window_days = window_days or sa.DOW_PHASE_DAYS
+    frame = sa._dow_theory_frame(df_1h, window_days)
+    if frame.empty:
+        return pd.DataFrame()
+    frame = frame.copy()
+    frame.index = pd.to_datetime(frame.index).normalize()
+
+    d = _norm_daily(daily)
+    outc = bt.forward_outcomes(d, horizons=horizons)
+    h0 = horizons[0]
+
+    df = frame.join(outc, how="inner")
+    df = df[df[f"ret{h0}"].notna() & df["retrace_pct"].notna()
+            & df["structure"].isin(["UPTREND", "DOWNTREND"])].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    labels = [f"{int(bins[i])}-{int(bins[i + 1])}%" for i in range(len(bins) - 1)]
+    df["retrace_bucket"] = pd.cut(pd.to_numeric(df["retrace_pct"]), bins=bins,
+                                  labels=labels, right=False)
+
+    rows = []
+    for (structure, sequence, rb), g in df.groupby(
+            ["structure", "sequence", "retrace_bucket"], observed=True):
+        if len(g) == 0:
+            continue
+        direction = 1.0 if structure == "UPTREND" else -1.0
+        ret = g[f"ret{h0}"] * direction
+        fav = g[f"up{h0}"] if direction > 0 else -g[f"dn{h0}"]
+        adv = -g[f"dn{h0}"] if direction > 0 else g[f"up{h0}"]
+        rows.append({
+            "structure": structure, "sequence": sequence, "retrace_bucket": rb,
+            "n": int(len(g)),
+            "hit_rate%": round(float((ret > 0).mean() * 100), 1),
+            f"avg_ret{h0}%": round(float(ret.mean()), 3),
+            f"avg_favorable{h0}%": round(float(fav.mean()), 2),
+            f"avg_adverse{h0}%": round(float(adv.mean()), 2),
+        })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    struct_order = {"UPTREND": 0, "DOWNTREND": 1}
+    seq_order = {"RISING": 0, "FALLING": 1}
+    out["_so"] = out["structure"].map(struct_order)
+    out["_qo"] = out["sequence"].map(seq_order)
+    out = out.sort_values(["_so", "_qo", "retrace_bucket"]).drop(columns=["_so", "_qo"])
+    return out.reset_index(drop=True)

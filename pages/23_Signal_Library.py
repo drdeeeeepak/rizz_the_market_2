@@ -84,6 +84,57 @@ def _frozen(df: pd.DataFrame, height=360, reset=True):
     st.markdown(uict.candle_table_frozen_html(d, height=height), unsafe_allow_html=True)
 
 
+def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None) -> str:
+    """Bundle every table this page can produce into ONE text/csv file, each
+    block prefixed with a '## N. TITLE' header — a single thing to hand back
+    for review instead of juggling one download per section."""
+    parts = ["## 1. LEADERBOARD\n" + ranked.to_csv(index=False)]
+
+    # Wide daily table: one row per day, one column per signal, plus the forward-outcome
+    # columns once (identical across signals — all scored against the same price series).
+    sig_cols, outcome_df = {}, None
+    for r in results:
+        det = r["detail"]
+        sig_cols[r["name"]] = det["signal"]
+        if outcome_df is None:
+            outcome_df = det.drop(columns=["signal"])
+    if sig_cols:
+        wide = pd.DataFrame(sig_cols)
+        if outcome_df is not None:
+            wide = wide.join(outcome_df, how="outer")
+        parts.append("## 2. DAILY SIGNALS + FORWARD OUTCOMES (all signals, one row per day)\n"
+                     + wide.to_csv())
+
+    bucket_rows = []
+    for r in results:
+        b = r["bucket"]
+        if b.empty:
+            continue
+        b = b.reset_index()
+        b.insert(0, "signal", r["name"])
+        bucket_rows.append(b)
+    if bucket_rows:
+        parts.append("## 3. BUCKET SCANS (per signal)\n"
+                     + pd.concat(bucket_rows, ignore_index=True).to_csv(index=False))
+
+    if rf and not rf.get("by_split", pd.DataFrame()).empty:
+        parts.append("## 4. RSI OVERBOUGHT-FADE WALK-FORWARD (by split)\n"
+                     + rf["by_split"].to_csv(index=False))
+
+    if dow_scan is not None and not dow_scan.empty:
+        parts.append("## 5. DOW THEORY RETRACE-% BUCKET SCAN\n" + dow_scan.to_csv(index=False))
+
+    if real_bundle is not None:
+        real = real_bundle["real"]
+        parts.append("## 6. REAL-VOLUME + BREADTH-ON — WEEKLY MOVE DISTRIBUTION\n"
+                     + real["distribution"].to_csv(index=False))
+        for col, cdf in real["cutoffs"].items():
+            parts.append(f"## 6b. REAL-VOLUME + BREADTH-ON — CUTOFF: {col}\n"
+                         + cdf.reset_index().to_csv())
+
+    return "\n\n".join(parts)
+
+
 # ── controls ─────────────────────────────────────────────────────────────────
 c1, c2, c3, c4 = st.columns([1.3, 1, 1, 1])
 with c1:
@@ -260,3 +311,33 @@ if "p23_real_result" in st.session_state:
         if col in real["cutoffs"]:
             st.markdown(f"**{col}**")
             st.dataframe(real["cutoffs"][col].reset_index(), use_container_width=True, hide_index=True)
+
+# ── 5. Dow Theory — which retrace-% is actually the best entry? ────────────
+st.divider()
+st.subheader("5 · Dow Theory — which retrace% is actually the best entry?")
+st.caption("Buckets every UPTREND day (assume you always buy) and every DOWNTREND day (assume "
+          "you always short) by how deep the retrace was at entry — checks empirically whether "
+          "the 60%+ 'PRIME' zone actually beats the 30-60% 'GOOD' zone, or is just a wider stop "
+          "wearing a better label. **sequence=RISING** = bouncing AWAY from the last pivot low "
+          "(the UT-1/DT-1 question) · **sequence=FALLING** = pulling back FROM the last pivot "
+          "high (in an UPTREND, the 90-101% FALLING row is the UT-3 floor-retest; in a DOWNTREND "
+          "it's the leg after a fresh low).")
+h1_dow = h1 if (h1 is not None and not h1.empty) else _load_h1(h1_days)
+dow_scan = sl.dow_retrace_bucket_scan(daily, h1_dow, horizons=(5, 10))
+if dow_scan.empty:
+    st.caption("Not enough 1H history/pivots to bucket — try a longer 1H lookback above.")
+else:
+    _frozen(dow_scan, height=min(60 + 30 * len(dow_scan), 460))
+    st.download_button("⬇ Download Dow retrace scan CSV", dow_scan.to_csv(index=False).encode("utf-8"),
+                       file_name="dow_retrace_bucket_scan.csv", mime="text/csv")
+
+# ── 6. Download everything as one CSV ───────────────────────────────────────
+st.divider()
+st.subheader("6 · Download everything as one CSV")
+st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
+          "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, and the "
+          "real-volume rerun if you ran it — into ONE file with '## N. TITLE' section headers. "
+          "Easiest single thing to hand back for review.")
+combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"))
+st.download_button("⬇ Download everything (combined CSV)", combined.encode("utf-8"),
+                   file_name="signal_library_full_export.csv", mime="text/csv", type="primary")
