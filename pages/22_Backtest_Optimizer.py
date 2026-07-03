@@ -87,10 +87,23 @@ if mode.startswith("Positional"):
     with c4:
         nbins = st.select_slider("Buckets/column", options=[3, 4, 5, 6], value=5)
 
-    if not st.button("▶ Run positional backtest", type="primary"):
+    # Gate on session_state rather than the button's own return value: st.button() is
+    # only True on the ONE rerun triggered by that exact click — clicking the
+    # download button inside the expander below triggers its own rerun where this
+    # button is False again, and a raw `if not st.button(...): st.stop()` gate would
+    # wipe the whole mode's results before the script ever got there.
+    if st.button("▶ Run positional backtest", type="primary"):
+        st.session_state.p22_pos_ran = True
+        st.session_state.p22_pos_inputs = dict(lookback=lookback, call_pct=call_pct,
+                                               put_pct=put_pct, nbins=nbins)
+
+    if not st.session_state.get("p22_pos_ran"):
         st.info("Set your strike distances and click Run. First run pulls ~2y of daily candles "
                 "and computes the engine over every cycle (~10–20s).")
         st.stop()
+
+    _in = st.session_state.p22_pos_inputs
+    lookback, call_pct, put_pct, nbins = _in["lookback"], _in["call_pct"], _in["put_pct"], _in["nbins"]
 
     with st.spinner("Fetching daily history and running the engine over every cycle…"):
         res = _run_daily(lookback, float(call_pct), float(put_pct), int(nbins))
@@ -142,10 +155,21 @@ else:
     st.caption(f"Forward move measured at **{horizons[0]}/{horizons[1]}/{horizons[2]} candles** "
                f"(≈ 1 / 2 / 4 sessions on {tf_label}).")
 
-    if not st.button("▶ Run intraday backtest", type="primary"):
+    # Same session_state gating as Mode 1 above (see comment there) — the download
+    # button inside the expander below would otherwise wipe these results on click.
+    if st.button("▶ Run intraday backtest", type="primary"):
+        st.session_state.p22_intra_ran = True
+        st.session_state.p22_intra_inputs = dict(interval=interval, lookback=lookback,
+                                                  horizons=horizons, nbins=nbins)
+
+    if not st.session_state.get("p22_intra_ran"):
         st.info("Pick a candle size and click Run. Pulls a few months of intraday futures (real "
                 "volume) and scores the forward move after every reading.")
         st.stop()
+
+    _in = st.session_state.p22_intra_inputs
+    interval, lookback = _in["interval"], _in["lookback"]
+    horizons, nbins = _in["horizons"], _in["nbins"]
 
     with st.spinner("Fetching intraday futures and running the engine…"):
         res = _run_intraday(interval, lookback, horizons, int(nbins))
