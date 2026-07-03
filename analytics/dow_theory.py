@@ -268,8 +268,12 @@ def _detect_phase(
         # Continuing: last candle high crossed above last HH
         if last_high > ph:
             return "UT-2"
-        # HL threatened: rising but within 50pts of HL support
-        if sequence == "RISING" and retrace_pct > 90:
+        # HL threatened: fell back from the HH and is now retesting the HL floor
+        # (mirror of DT-3's LH-ceiling retest, using FALLING since that's the
+        # sequence that measures retrace toward pl_last, not ph_last — see
+        # _retrace_depth). Was previously "RISING", which measured the bounce
+        # toward the OLD HIGH instead and so almost never captured a floor test.
+        if sequence == "FALLING" and retrace_pct > 90:
             return "UT-3"
         # Normal retrace
         return "UT-1"
