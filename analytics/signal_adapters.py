@@ -264,27 +264,29 @@ _MP_SIGN = {
     "INITIATIVE_UPPER": 1.0, "INITIATIVE_LOWER": -1.0,
     "TESTING_UPPER": -0.5, "TESTING_LOWER": 0.5, "BALANCED": 0.0,
 }
+_MP_SIGN_FADE = {
+    "INITIATIVE_UPPER": -1.0, "INITIATIVE_LOWER": 1.0,
+    "TESTING_UPPER": 0.5, "TESTING_LOWER": -0.5, "BALANCED": 0.0,
+}
 
 
-def adapt_market_profile(daily: pd.DataFrame) -> pd.Series:
-    """Market Profile nesting-state sign (page 12), one value per trading day:
-    +1 INITIATIVE_UPPER (breakout continuation up) / -1 INITIATIVE_LOWER,
-    -0.5 TESTING_UPPER (fade at the value-area ceiling) / +0.5 TESTING_LOWER
-    (fade at the floor), 0 BALANCED. A RESPONSIVE daily read (rejected the
-    test and closed back inside value) halves the magnitude — the same
-    directional lean the live page treats as a softer signal.
+def _market_profile_nesting_frame(daily: pd.DataFrame) -> pd.DataFrame:
+    """Shared per-day (nesting, behaviour) computation, one pass over the
+    daily history, feeding both adapt_market_profile (continuation) and
+    adapt_market_profile_fade (mean-reversion) — same nesting-state read,
+    different sign convention.
 
     Reuses MarketProfileEngine._value_area / ._nesting_state / ._price_behaviour
     directly — pure functions, no I/O. The only date.today() use in the engine
     is inside its top-level .signals() (for the cycle_day/action display
-    labels), which this adapter never calls. The Wed→day weekly window is
-    re-derived per historical day (mirroring _weekly_window's own Wed-anchor
-    logic) instead of using date.today()."""
+    labels), which this never calls. The Wed→day weekly window is re-derived
+    per historical day (mirroring _weekly_window's own Wed-anchor logic)
+    instead of using date.today()."""
     eng = MarketProfileEngine()
     d = _to_dt_index(daily)
     if len(d) < 2:
-        return pd.Series(dtype=float, name="market_profile")
-    out = {}
+        return pd.DataFrame(columns=["nesting", "behaviour"])
+    rows = {}
     for i in range(1, len(d)):
         day = d.index[i]
         days_since_wed = (day.weekday() - 2) % 7   # Wed=2
@@ -298,11 +300,48 @@ def adapt_market_profile(daily: pd.DataFrame) -> pd.Series:
         spot = float(d["close"].iloc[i])
         nesting = eng._nesting_state(weekly_va, daily_va, spot)
         behaviour = eng._price_behaviour(d.iloc[i - 1:i + 1], weekly_va, spot)
-        sign = _MP_SIGN.get(nesting, 0.0)
-        if behaviour == "RESPONSIVE" and abs(sign) == 1.0:
+        rows[day] = {"nesting": nesting, "behaviour": behaviour}
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def _market_profile_signal(daily: pd.DataFrame, sign_map: dict) -> pd.Series:
+    frame = _market_profile_nesting_frame(daily)
+    if frame.empty:
+        return pd.Series(dtype=float)
+    out = {}
+    for day, row in frame.iterrows():
+        sign = sign_map.get(row["nesting"], 0.0)
+        if row["behaviour"] == "RESPONSIVE" and abs(sign) == 1.0:
             sign *= 0.5
         out[day] = sign
-    return pd.Series(out, name="market_profile").sort_index()
+    return pd.Series(out).sort_index()
+
+
+def adapt_market_profile(daily: pd.DataFrame) -> pd.Series:
+    """Market Profile nesting-state sign (page 12), one value per trading day:
+    +1 INITIATIVE_UPPER (breakout continuation up) / -1 INITIATIVE_LOWER,
+    -0.5 TESTING_UPPER (fade at the value-area ceiling) / +0.5 TESTING_LOWER
+    (fade at the floor), 0 BALANCED. A RESPONSIVE daily read (rejected the
+    test and closed back inside value) halves the magnitude — the same
+    directional lean the live page treats as a softer signal. See
+    adapt_market_profile_fade for the mirrored (mean-reversion) reading."""
+    sig = _market_profile_signal(daily, _MP_SIGN)
+    sig.name = "market_profile"
+    return sig
+
+
+def adapt_market_profile_fade(daily: pd.DataFrame) -> pd.Series:
+    """MEAN-REVERSION mirror of adapt_market_profile — same nesting-state
+    read (shares _market_profile_nesting_frame, not recomputed), sign
+    flipped: INITIATIVE_UPPER (read as bullish breakout continuation above)
+    now scores bearish (fade the initiative move back into value), and
+    TESTING_UPPER/LOWER flip too. Added because the continuation version
+    backtested with a 43.7% hit rate on ~4y of Nifty (notably below 50%,
+    i.e. below coin-flip) — this checks whether reading it as a fade is
+    what the data actually wants, same pattern already found for %B/RSI."""
+    sig = _market_profile_signal(daily, _MP_SIGN_FADE)
+    sig.name = "market_profile_fade"
+    return sig
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -330,15 +369,14 @@ def adapt_bollinger_pctb(daily: pd.DataFrame) -> pd.Series:
 
 
 _ASYMMETRY_SIGN = {"1:2": 1.0, "2:1": -1.0, "1:1": 0.0}
+_ASYMMETRY_SIGN_FADE = {"1:2": -1.0, "2:1": 1.0, "1:1": 0.0}
 
 
-def adapt_bollinger_asymmetry(daily: pd.DataFrame) -> pd.Series:
-    """Bollinger asymmetry-ratio sign (page 09's real headline output — which
-    leg needs more room) — CONTINUATION framed, the opposite convention from
-    adapt_bollinger_pctb's mean-reversion framing, worth testing both ways.
-    Ratio "1:2" means CE needs more room (primary_risk_side="CE" in the live
-    page — price pushing toward/through the upper band) → bullish (+1.0).
-    "2:1" (PE at risk, price toward the lower band) → bearish (-1.0).
+def _bollinger_ratio_series(daily: pd.DataFrame) -> pd.Series:
+    """Shared per-row asymmetry-ratio computation (raw '1:2'/'2:1'/'1:1'
+    label, not yet signed), one pass over the daily history, feeding both
+    adapt_bollinger_asymmetry (continuation) and adapt_bollinger_asymmetry_fade
+    (mean-reversion) — same ratio, different sign convention.
 
     Reuses BollingerOptionsEngine._squeeze_status/_base_ratio/_ma_pos/_apply_ma
     directly — pure, row-wise functions once bb_bw/bb_pct_b/bb_basis are
@@ -349,7 +387,7 @@ def adapt_bollinger_asymmetry(daily: pd.DataFrame) -> pd.Series:
     eng = BollingerOptionsEngine()
     d = _to_dt_index(daily)
     if d.empty:
-        return pd.Series(dtype=float, name="bollinger_asymmetry")
+        return pd.Series(dtype=object)
     d = eng.compute(d)
     out = {}
     for ts, row in d.iterrows():
@@ -363,8 +401,34 @@ def adapt_bollinger_asymmetry(daily: pd.DataFrame) -> pd.Series:
         ratio, _, _ = eng._base_ratio(zone, sq, float(pb))
         ma = eng._ma_pos(float(close), float(basis))
         ratio = eng._apply_ma(ratio, ma, ma)
-        out[ts.normalize()] = _ASYMMETRY_SIGN.get(ratio, 0.0)
-    return pd.Series(out, name="bollinger_asymmetry").sort_index()
+        out[ts.normalize()] = ratio
+    return pd.Series(out).sort_index()
+
+
+def adapt_bollinger_asymmetry(daily: pd.DataFrame) -> pd.Series:
+    """Bollinger asymmetry-ratio sign (page 09's real headline output — which
+    leg needs more room) — CONTINUATION framed, the opposite convention from
+    adapt_bollinger_pctb's mean-reversion framing, worth testing both ways.
+    Ratio "1:2" means CE needs more room (primary_risk_side="CE" in the live
+    page — price pushing toward/through the upper band) → bullish (+1.0).
+    "2:1" (PE at risk, price toward the lower band) → bearish (-1.0). See
+    adapt_bollinger_asymmetry_fade for the mirrored (mean-reversion) reading."""
+    sig = _bollinger_ratio_series(daily).map(_ASYMMETRY_SIGN).astype(float)
+    sig.name = "bollinger_asymmetry"
+    return sig
+
+
+def adapt_bollinger_asymmetry_fade(daily: pd.DataFrame) -> pd.Series:
+    """MEAN-REVERSION mirror of adapt_bollinger_asymmetry — same ratio
+    (shares _bollinger_ratio_series, not recomputed), sign flipped: "1:2"
+    (read as CE-at-risk/bullish under the continuation reading) now scores
+    bearish (fade), "2:1" now scores bullish. Added because the continuation
+    version backtested NEGATIVE (~-0.11% expectancy on ~4y of Nifty) — this
+    checks whether the fade framing is what's actually real, matching the
+    pattern already found for %B/RSI."""
+    sig = _bollinger_ratio_series(daily).map(_ASYMMETRY_SIGN_FADE).astype(float)
+    sig.name = "bollinger_asymmetry_fade"
+    return sig
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -559,8 +623,10 @@ ADAPTERS = {
     "EMA Moat Balance":      {"fn": adapt_ema_moat_balance,  "needs": ("daily",),     "cadence": "daily"},
     "SuperTrend (daily)":    {"fn": adapt_supertrend,        "needs": ("daily",),     "cadence": "daily"},
     "Market Profile":        {"fn": adapt_market_profile,    "needs": ("daily",),     "cadence": "daily (Wed→day VA)"},
+    "Market Profile Fade":   {"fn": adapt_market_profile_fade, "needs": ("daily",),   "cadence": "daily (Wed→day VA)"},
     "Bollinger %B":          {"fn": adapt_bollinger_pctb,    "needs": ("daily",),     "cadence": "daily proxy of 2H/4H"},
     "Bollinger Asymmetry":   {"fn": adapt_bollinger_asymmetry, "needs": ("daily",),   "cadence": "daily proxy of 2H/4H"},
+    "Bollinger Asymmetry Fade": {"fn": adapt_bollinger_asymmetry_fade, "needs": ("daily",), "cadence": "daily proxy of 2H/4H"},
     "RSI Weekly":            {"fn": adapt_rsi_weekly,        "needs": ("daily",),     "cadence": "weekly, ffilled daily"},
     "RSI Alignment":         {"fn": adapt_rsi_alignment,     "needs": ("daily",),     "cadence": "daily+weekly combined"},
     "RSI Exhaustion Fade":   {"fn": adapt_rsi_exhaustion_fade, "needs": ("daily",),   "cadence": "daily+weekly combined"},

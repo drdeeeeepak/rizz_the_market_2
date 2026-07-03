@@ -181,8 +181,10 @@ def run():
         "ema_moat_balance": lambda: sa.adapt_ema_moat_balance(daily),
         "supertrend": lambda: sa.adapt_supertrend(daily),
         "market_profile": lambda: sa.adapt_market_profile(daily),
+        "market_profile_fade": lambda: sa.adapt_market_profile_fade(daily),
         "bollinger_pctb": lambda: sa.adapt_bollinger_pctb(daily),
         "bollinger_asymmetry": lambda: sa.adapt_bollinger_asymmetry(daily),
+        "bollinger_asymmetry_fade": lambda: sa.adapt_bollinger_asymmetry_fade(daily),
         "rsi_weekly": lambda: sa.adapt_rsi_weekly(daily),
         "rsi_alignment": lambda: sa.adapt_rsi_alignment(daily),
         "rsi_exhaustion_fade": lambda: sa.adapt_rsi_exhaustion_fade(daily),
@@ -234,8 +236,19 @@ def run():
           len(active_fade) > 0 and float((active_fade < 0).mean()) > 0.5,
           f"active={len(active_fade)}, frac_negative={float((active_fade < 0).mean()) if len(active_fade) else None}")
 
+    # ── 7b. Fade adapters are EXACT mirrors of their continuation siblings ─────
+    for label, orig_fn, fade_fn in [
+        ("market_profile", sa.adapt_market_profile, sa.adapt_market_profile_fade),
+        ("bollinger_asymmetry", sa.adapt_bollinger_asymmetry, sa.adapt_bollinger_asymmetry_fade),
+    ]:
+        orig, fade = orig_fn(daily).dropna(), fade_fn(daily).dropna()
+        both = orig.index.intersection(fade.index)
+        mirrored = bool((orig.reindex(both) == -fade.reindex(both)).all()) if len(both) else False
+        check(f"adapter[{label}]: fade is an exact sign-mirror of the original",
+              mirrored and len(both) > 0, f"n={len(both)}")
+
     # ── 8. ADAPTERS registry sanity ─────────────────────────────────────────────
-    check("ADAPTERS registry: all 14 entries present", len(sa.ADAPTERS) == 14, str(len(sa.ADAPTERS)))
+    check("ADAPTERS registry: all 16 entries present", len(sa.ADAPTERS) == 16, str(len(sa.ADAPTERS)))
     for label, meta in sa.ADAPTERS.items():
         check(f"ADAPTERS[{label}]: has callable fn", callable(meta["fn"]))
         check(f"ADAPTERS[{label}]: needs is a tuple", isinstance(meta["needs"], tuple))
@@ -295,8 +308,10 @@ def run():
         ("ema_moat_balance", sa.adapt_ema_moat_balance, daily),
         ("supertrend", sa.adapt_supertrend, daily),
         ("market_profile", sa.adapt_market_profile, daily),
+        ("market_profile_fade", sa.adapt_market_profile_fade, daily),
         ("bollinger_pctb", sa.adapt_bollinger_pctb, daily),
         ("bollinger_asymmetry", sa.adapt_bollinger_asymmetry, daily),
+        ("bollinger_asymmetry_fade", sa.adapt_bollinger_asymmetry_fade, daily),
         ("rsi_weekly", sa.adapt_rsi_weekly, daily),
         ("rsi_alignment", sa.adapt_rsi_alignment, daily),
         ("rsi_exhaustion_fade", sa.adapt_rsi_exhaustion_fade, daily),
