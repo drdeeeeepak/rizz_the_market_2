@@ -163,10 +163,15 @@ def run():
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
+        "ema_momentum": lambda: sa.adapt_ema_momentum(daily),
+        "ema_moat_balance": lambda: sa.adapt_ema_moat_balance(daily),
         "supertrend": lambda: sa.adapt_supertrend(daily),
         "market_profile": lambda: sa.adapt_market_profile(daily),
         "bollinger_pctb": lambda: sa.adapt_bollinger_pctb(daily),
+        "bollinger_asymmetry": lambda: sa.adapt_bollinger_asymmetry(daily),
         "rsi_weekly": lambda: sa.adapt_rsi_weekly(daily),
+        "rsi_alignment": lambda: sa.adapt_rsi_alignment(daily),
+        "rsi_exhaustion_fade": lambda: sa.adapt_rsi_exhaustion_fade(daily),
         "oi_buildup": lambda: sa.adapt_oi_buildup(fut),
     }
     for label, fn in adapters_daily.items():
@@ -182,6 +187,7 @@ def run():
 
     adapters_1h = {
         "dow_theory": lambda: sa.adapt_dow_theory(h1),
+        "dow_leg_health": lambda: sa.adapt_dow_leg_health(h1),
         "ema_slope_phases": lambda: sa.adapt_ema_slope_phases(h1),
     }
     for label, fn in adapters_1h.items():
@@ -194,15 +200,28 @@ def run():
 
     # ── 7. Sign-convention check on a clean uptrend (adapters should lean bullish) ─
     bull_daily = make_perfectly_bullish_daily()
-    for label, fn in [("ema_ribbon", sa.adapt_ema_ribbon), ("supertrend", sa.adapt_supertrend)]:
+    for label, fn in [("ema_ribbon", sa.adapt_ema_ribbon), ("supertrend", sa.adapt_supertrend),
+                      ("ema_momentum", sa.adapt_ema_momentum), ("ema_moat_balance", sa.adapt_ema_moat_balance),
+                      ("bollinger_asymmetry", sa.adapt_bollinger_asymmetry),
+                      ("rsi_alignment", sa.adapt_rsi_alignment)]:
         s = fn(bull_daily).dropna()
         s = s[s.index >= s.index[len(s) // 3]]   # skip warm-up third
         mean_sign = float(np.sign(s).mean()) if len(s) else 0.0
         check(f"adapter[{label}]: leans bullish (+) on a clean uptrend", mean_sign > 0,
               f"mean_sign={mean_sign}")
 
+    # rsi_exhaustion_fade is a deliberate CONTRARIAN read — on a sustained clean
+    # uptrend it should predominantly fire the fade-DOWN flag (RSI pinned
+    # overbought), the opposite convention from the trend-following adapters above.
+    s_fade = sa.adapt_rsi_exhaustion_fade(bull_daily).dropna()
+    s_fade = s_fade[s_fade.index >= s_fade.index[len(s_fade) // 3]]
+    active_fade = s_fade[s_fade != 0]
+    check("adapter[rsi_exhaustion_fade]: fades DOWN (contrarian) on a sustained uptrend",
+          len(active_fade) > 0 and float((active_fade < 0).mean()) > 0.5,
+          f"active={len(active_fade)}, frac_negative={float((active_fade < 0).mean()) if len(active_fade) else None}")
+
     # ── 8. ADAPTERS registry sanity ─────────────────────────────────────────────
-    check("ADAPTERS registry: all 8 entries present", len(sa.ADAPTERS) == 8, str(len(sa.ADAPTERS)))
+    check("ADAPTERS registry: all 14 entries present", len(sa.ADAPTERS) == 14, str(len(sa.ADAPTERS)))
     for label, meta in sa.ADAPTERS.items():
         check(f"ADAPTERS[{label}]: has callable fn", callable(meta["fn"]))
         check(f"ADAPTERS[{label}]: needs is a tuple", isinstance(meta["needs"], tuple))
