@@ -234,6 +234,40 @@ def run():
           bool((aligned.fillna(0) == 0).all()) if len(aligned) else False,
           f"{aligned.tolist()}")
 
+    # ── 11. CAUSALITY GUARD — no look-ahead in ANY adapter ──────────────────────
+    # The whole backtest is invalid if an adapter's signal for a PAST day changes
+    # once future bars are added. Verify by running each adapter on the full series
+    # vs a series truncated at a full-day boundary, and requiring the overlapping
+    # PAST days (strictly before the cut day) to be bit-identical. Cutting on a day
+    # boundary (not mid-session) avoids a false positive from an incomplete last day.
+    def _assert_causal(label, fn, df):
+        s_full = fn(df)
+        days = sorted(set(pd.DatetimeIndex(df.index).normalize()))
+        if len(days) < 20 or s_full is None or s_full.empty:
+            check(f"causal: {label}", False, "insufficient data / empty signal")
+            return
+        cutday = days[int(len(days) * 0.8)]
+        s_tr = fn(df[pd.DatetimeIndex(df.index).normalize() <= cutday])
+        both = s_full.index.intersection(s_tr.index)
+        both = both[both < cutday]                       # strictly-past, fully-formed both runs
+        a, b = s_full.reindex(both), s_tr.reindex(both)
+        m = a.notna() & b.notna()
+        maxdiff = float((a[m] - b[m]).abs().max()) if int(m.sum()) else float("nan")
+        check(f"causal: {label} (past signals unchanged when future removed)",
+              int(m.sum()) > 0 and maxdiff < 1e-9, f"overlap={int(m.sum())} maxdiff={maxdiff}")
+
+    for _lbl, _fn, _df in [
+        ("ema_ribbon", sa.adapt_ema_ribbon, daily),
+        ("supertrend", sa.adapt_supertrend, daily),
+        ("market_profile", sa.adapt_market_profile, daily),
+        ("bollinger_pctb", sa.adapt_bollinger_pctb, daily),
+        ("rsi_weekly", sa.adapt_rsi_weekly, daily),
+        ("oi_buildup", sa.adapt_oi_buildup, fut),
+        ("dow_theory", sa.adapt_dow_theory, h1),
+        ("ema_slope_phases", sa.adapt_ema_slope_phases, h1),
+    ]:
+        _assert_causal(_lbl, _fn, _df)
+
 
 if __name__ == "__main__":
     run()
