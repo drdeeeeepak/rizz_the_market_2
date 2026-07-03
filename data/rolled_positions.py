@@ -66,19 +66,22 @@ def rolled_strikes(anchor: float) -> tuple:
 
 # ── Roll event check ─────────────────────────────────────────────────────────
 
-def check_roll_event(eod_close: float, anchor: float) -> str | None:
+def check_roll_event(eod_close: float, anchor: float,
+                      loss_thr: float = _DEF_THR, profit_thr: float = _OFF_THR) -> str | None:
     """
     Pure price check against current anchor.
     Returns event string or None.
     Priority: LOSS events before PROFIT events.
+    loss_thr / profit_thr let a backtest scan alternate roll triggers; live callers
+    rely on the defaults (2.5% / 1.8%) and never need to pass them.
     """
     if anchor <= 0 or eod_close <= 0:
         return None
     drift = (eod_close - anchor) / anchor * 100
-    if drift >= _DEF_THR:   return "CE_LOSS"
-    if drift <= -_DEF_THR:  return "PE_LOSS"
-    if drift <= -_OFF_THR:  return "CE_PROFIT"
-    if drift >= _OFF_THR:   return "PE_PROFIT"
+    if drift >= loss_thr:    return "CE_LOSS"
+    if drift <= -loss_thr:   return "PE_LOSS"
+    if drift <= -profit_thr: return "CE_PROFIT"
+    if drift >= profit_thr:  return "PE_PROFIT"
     return None
 
 

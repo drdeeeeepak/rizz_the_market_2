@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from analytics import intraday_conviction as ic
+from data.rolled_positions import check_roll_event as _check_roll_event
 
 # Columns we scan for cutoffs (numeric ones get binned; State is handled categorically).
 # Brd% / CVD are only meaningful once real volume + breadth are wired in (see
@@ -360,6 +361,103 @@ def build_conviction_history_real(daily: pd.DataFrame, fut_daily: pd.DataFrame,
     conv = pd.concat(parts).sort_index()
     conv["close"] = d["close"].reindex(conv.index)
     return conv
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 4 — Roll-threshold optimizer (anchor management: WHEN to roll, not just
+# how close to sell). Replays the same Tuesday-anchor / mid-week re-anchor
+# logic as data/rolled_positions.py (check_roll_event + eod_update), but with
+# configurable profit/loss triggers, over the full daily history. Answers:
+# which trigger keeps a cycle one-sided (only the threatened leg gets re-sold)
+# most often, vs. triggers that let both legs get touched in the same cycle
+# (whipsaw) or that let a hard loss event through.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _simulate_roll_cycles(daily: pd.DataFrame, profit_thr: float, loss_thr: float) -> list:
+    """Replay the anchor/roll logic (Tuesday hard reset + mid-week re-anchor on
+    any event, exactly like data/rolled_positions.eod_update) over the full
+    daily series. Returns one dict per completed Tue→Tue cycle:
+      ce_touched / pe_touched — whether that leg was re-sold (loss OR profit
+                                event) at any point in the cycle
+      loss_event  — whether a hard *_LOSS event fired (adverse breach)
+      n_events    — how many roll events fired in the cycle
+    """
+    d = _norm(daily)
+    cycles = []
+    anchor = None
+    ce_touched = pe_touched = loss_event = False
+    n_events = 0
+    cycle_start = None
+    for ts, row in d.iterrows():
+        close = float(row["close"])
+        if ts.weekday() == 1:                       # Tuesday — hard reset (set_expiry_anchor)
+            if anchor is not None:
+                cycles.append(dict(start=cycle_start, end=ts, ce_touched=ce_touched,
+                                    pe_touched=pe_touched, loss_event=loss_event,
+                                    n_events=n_events))
+            anchor = close
+            cycle_start = ts
+            ce_touched = pe_touched = loss_event = False
+            n_events = 0
+            continue
+        if anchor is None:
+            continue
+        event = _check_roll_event(close, anchor, loss_thr=loss_thr, profit_thr=profit_thr)
+        if event is None:
+            continue
+        n_events += 1
+        if event in ("CE_LOSS", "PE_LOSS"):
+            loss_event = ce_touched = pe_touched = True
+        elif event == "CE_PROFIT":
+            ce_touched = True
+        else:  # PE_PROFIT
+            pe_touched = True
+        anchor = close                               # mid-week re-anchor, same as eod_update
+    return cycles
+
+
+def roll_threshold_scan(daily: pd.DataFrame,
+                        profit_thrs=tuple(round(x, 2) for x in np.arange(1.0, 3.01, 0.25)),
+                        loss_thrs=tuple(round(x, 2) for x in np.arange(2.0, 4.01, 0.25))
+                        ) -> pd.DataFrame:
+    """Grid-scan candidate (profit_thr%, loss_thr%) roll triggers over every
+    historical Tue→Tue cycle. loss_thr must sit outside profit_thr (skipped
+    otherwise — the loss trigger has to be the wider, harder stop).
+    clean_pct = % of cycles where only the threatened leg ever got re-sold
+    (the opposite leg was left undisturbed) — the metric to maximise.
+    loss_pct = % of cycles that saw a hard loss reset — the metric to avoid.
+    score = clean_pct − 2×loss_pct (loss events weighted worse than whipsaw).
+    Sorted best-score first."""
+    rows = []
+    for pt in profit_thrs:
+        for lt in loss_thrs:
+            if lt <= pt:
+                continue
+            cycles = _simulate_roll_cycles(daily, profit_thr=pt, loss_thr=lt)
+            n = len(cycles)
+            if n == 0:
+                continue
+            both = sum(1 for c in cycles if c["ce_touched"] and c["pe_touched"])
+            loss = sum(1 for c in cycles if c["loss_event"])
+            quiet = sum(1 for c in cycles if c["n_events"] == 0)
+            avg_events = sum(c["n_events"] for c in cycles) / n
+            clean_pct = round((n - both) / n * 100, 1)
+            score = round(clean_pct - 2 * (loss / n * 100), 1)
+            rows.append(dict(profit_thr=pt, loss_thr=lt, n_cycles=n,
+                             clean_pct=clean_pct, both_touched_pct=round(both / n * 100, 1),
+                             loss_pct=round(loss / n * 100, 1), quiet_pct=round(quiet / n * 100, 1),
+                             avg_events_per_cycle=round(avg_events, 2), score=score))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def best_roll_threshold(scan: pd.DataFrame) -> dict:
+    """Top-scoring row from roll_threshold_scan as a plain dict, or {} if empty."""
+    if scan is None or scan.empty:
+        return {}
+    return scan.iloc[0].to_dict()
 
 
 def run_backtest_real(daily: pd.DataFrame, fut_daily: pd.DataFrame, breadth: pd.Series = None,
