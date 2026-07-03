@@ -18,13 +18,20 @@ import numpy as np
 import pandas as pd
 
 from analytics import dow_theory as dt
-from analytics.ema import EMAEngine, MTF_EMA_PERIODS
+from analytics.ema import (
+    EMAEngine, MTF_EMA_PERIODS, MOAT_SET,
+    MOM_STRONG_UP_THRESH, MOM_MODERATE_UP_THRESH,
+    MOM_MODERATE_DN_THRESH, MOM_STRONG_DN_THRESH,
+)
 from analytics.supertrend import compute_supertrend
 from analytics.market_profile import MarketProfileEngine
-from analytics.bollinger import BollingerOptionsEngine
+from analytics.bollinger import BollingerOptionsEngine, _classify_bw, _pct_b_zone, _BW_2H
 from analytics.rsi_engine import RSIEngine
 from analytics.ema_slope_phases import calculate_hourly_ema_slope_phases
-from config import DOW_N, DOW_PHASE_DAYS
+from config import (
+    DOW_N, DOW_PHASE_DAYS,
+    W_RSI_EXHAUST, D_RSI_EXHAUST, W_RSI_CAPIT, D_RSI_CAPIT,
+)
 
 
 def _to_dt_index(df: pd.DataFrame) -> pd.DataFrame:
@@ -39,25 +46,27 @@ def _to_dt_index(df: pd.DataFrame) -> pd.DataFrame:
 # Dow Theory (page 00) — analytics/dow_theory.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-def adapt_dow_theory(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> pd.Series:
-    """Dow Theory structure sign, one value per trading day: +1 UPTREND,
-    -1 DOWNTREND, 0 MIXED/CONSOLIDATING/insufficient pivots.
+def _dow_theory_frame(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
+    """Shared rolling-window Dow Theory computation, one row per trading day —
+    feeds both adapt_dow_theory (structure sign) and adapt_dow_leg_health (CE/PE
+    health imbalance) from a SINGLE pass over the 1H history rather than two.
 
-    Reuses the SAME pure pivot/structure functions as DowTheoryEngine.signals()
-    (_atr14, _detect_pivots, _extract_reference_pivots, _classify_structure) —
-    but calls them directly instead of .signals(), because .signals() writes
-    data/dow_score_history.json on every call and reads date.today() for a
-    display label, neither of which belong in a backtest loop.
+    Reuses the SAME pure pivot/structure/health functions as
+    DowTheoryEngine.signals() (_atr14, _detect_pivots, _extract_reference_pivots,
+    _classify_structure, _compute_health) — but calls them directly instead of
+    .signals(), because .signals() writes data/dow_score_history.json on every
+    call and reads date.today() for a display label, neither of which belong
+    in a backtest loop.
 
     Rolling window = the last `window_days` trading days of 1H data ending
     that day — the SAME fixed-size window the live engine uses (not an
     expanding one), so pivot confirmation lag matches production."""
     d = _to_dt_index(df_1h)
     if d.empty:
-        return pd.Series(dtype=float, name="dow_theory")
+        return pd.DataFrame(columns=["structure", "ce_health", "pe_health"])
     days = sorted(set(d.index.normalize()))
     target = window_days * 6   # ≈6 1H candles/session
-    out = {}
+    rows = {}
     for day in days:
         window = d[d.index.normalize() <= day].tail(target)
         if len(window) < DOW_N * 4 + 5:
@@ -66,11 +75,49 @@ def adapt_dow_theory(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> 
         df_piv = dt._detect_pivots(window, DOW_N)
         pivots = dt._extract_reference_pivots(df_piv)
         if pivots is None:
-            out[day] = 0.0
+            rows[day] = {"structure": None, "ce_health": None, "pe_health": None}
             continue
         structure = dt._classify_structure(pivots, atr14)
-        out[day] = {"UPTREND": 1.0, "DOWNTREND": -1.0}.get(structure, 0.0)
-    return pd.Series(out, name="dow_theory").sort_index()
+        spot = float(window["close"].iloc[-1])
+        last_high = float(window["high"].iloc[-1])
+        last_low = float(window["low"].iloc[-1])
+        ce_health, _, pe_health, _ = dt._compute_health(structure, spot, last_high, last_low, pivots)
+        rows[day] = {"structure": structure, "ce_health": ce_health, "pe_health": pe_health}
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def adapt_dow_theory(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> pd.Series:
+    """Dow Theory structure sign, one value per trading day: +1 UPTREND,
+    -1 DOWNTREND, 0 MIXED/CONSOLIDATING/insufficient pivots. See
+    _dow_theory_frame for the shared computation this reads from."""
+    frame = _dow_theory_frame(df_1h, window_days)
+    if frame.empty:
+        return pd.Series(dtype=float, name="dow_theory")
+    sig = frame["structure"].map({"UPTREND": 1.0, "DOWNTREND": -1.0}).fillna(0.0).astype(float)
+    sig.name = "dow_theory"
+    return sig.sort_index()
+
+
+_LEG_THREAT = {"BREACH": 4, "ALERT": 3, "WATCH": 2, "MODERATE": 1, "STRONG": 0}
+
+
+def adapt_dow_leg_health(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> pd.Series:
+    """Dow Theory CE/PE leg-health imbalance sign, one value per trading day:
+    signal = (ce_threat - pe_threat) / 4, where threat = BREACH(4) > ALERT(3)
+    > WATCH(2) > MODERATE(1) > STRONG(0) (via DowTheoryEngine._leg_health,
+    same severity ladder page 00 displays). A threatened CE leg means price
+    is at/through the resistance pivot → bullish; a threatened PE leg means
+    price is at/through the support pivot → bearish. Shares
+    _dow_theory_frame's single pass over the 1H history with adapt_dow_theory
+    rather than re-walking the window a second time."""
+    frame = _dow_theory_frame(df_1h, window_days)
+    if frame.empty:
+        return pd.Series(dtype=float, name="dow_leg_health")
+    ce_t = frame["ce_health"].map(_LEG_THREAT)
+    pe_t = frame["pe_health"].map(_LEG_THREAT)
+    sig = ((ce_t - pe_t) / 4.0).astype(float)
+    sig.name = "dow_leg_health"
+    return sig.sort_index()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -104,6 +151,76 @@ def adapt_ema_ribbon(daily: pd.DataFrame) -> pd.Series:
         regime, _, _ = eng._cluster_regime(row, spot)
         out[ts.normalize()] = _REGIME_SIGN.get(regime, 0.0)
     return pd.Series(out, name="ema_ribbon").sort_index()
+
+
+_MOM_SIGN = {"STRONG_UP": 1.0, "MODERATE_UP": 0.5, "FLAT": 0.0,
+            "MODERATE_DOWN": -0.5, "STRONG_DOWN": -1.0, "TRANSITIONING": 0.0}
+
+
+def adapt_ema_momentum(daily: pd.DataFrame) -> pd.Series:
+    """EMA momentum-state sign (pages 01/02's Component-3 read) — the page's
+    own trend-momentum classifier, distinct from the cluster regime tested in
+    adapt_ema_ribbon. TRANSITIONING (EMA3/EMA8 slopes disagree) scores 0 —
+    genuinely no directional lean, not a missing read.
+
+    EMAEngine._momentum_score() takes a trailing 4-row slice per call, so
+    calling it inside a per-day loop would be O(n²) over a 2y history;
+    instead this vectorises the SAME formula — EMA3/EMA8 3-bar slope scaled
+    by ATR14, weighted 0.6/0.4, against the SAME threshold constants imported
+    from analytics.ema (MOM_STRONG_UP_THRESH etc., not re-declared) — computed
+    once over the whole EMA/ATR series that adapt_ema_ribbon also builds."""
+    eng = EMAEngine()
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="ema_momentum")
+    d = eng.compute(d)
+    atr = d["atr14"].replace(0, np.nan)
+    ema3_slope = d["ema3"].diff(3) / 3.0
+    ema8_slope = d["ema8"].diff(3) / 3.0
+    combined = (ema3_slope / atr * 100) * 0.6 + (ema8_slope / atr * 100) * 0.4
+    state = pd.Series("FLAT", index=d.index)
+    state[combined > MOM_STRONG_UP_THRESH] = "STRONG_UP"
+    state[(combined > MOM_MODERATE_UP_THRESH) & (combined <= MOM_STRONG_UP_THRESH)] = "MODERATE_UP"
+    state[combined < MOM_STRONG_DN_THRESH] = "STRONG_DOWN"
+    state[(combined < MOM_MODERATE_DN_THRESH) & (combined >= MOM_STRONG_DN_THRESH)] = "MODERATE_DOWN"
+    transitioning = (ema3_slope > 0) != (ema8_slope > 0)   # same test as _momentum_score
+    state[transitioning] = "TRANSITIONING"
+    sig = state.map(_MOM_SIGN).astype(float)
+    sig.index = pd.to_datetime(sig.index).normalize()
+    sig.name = "ema_momentum"
+    return sig
+
+
+def adapt_ema_moat_balance(daily: pd.DataFrame) -> pd.Series:
+    """EMA moat-COUNT balance (pages 01/02): signal = (put_moats - call_moats)
+    / 5 — more EMA support clustered below spot (PUT moats) than resistance
+    above (CALL moats) → bullish structural lean, and vice versa (moat counts
+    typically run 0-5, so /5 keeps this in a comparable range to the other
+    adapters). Reuses EMAEngine._count_moats_put/_count_moats_call directly —
+    the SAME formulas the live moat-count display uses — fed by the SAME
+    ewm()-computed EMA/ATR columns adapt_ema_ribbon already builds (no
+    separate recompute); ema3_slope (needed for the degraded-EMA8 check
+    inside _count_moats_put) is the same 3-bar slope adapt_ema_momentum uses."""
+    eng = EMAEngine()
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="ema_moat_balance")
+    d = eng.compute(d)
+    ema3_slope = d["ema3"].diff(3) / 3.0
+    out = {}
+    warm_col = f"ema{MTF_EMA_PERIODS[-1]}"
+    for i, (ts, row) in enumerate(d.iterrows()):
+        if pd.isna(row.get("atr14")) or pd.isna(row.get(warm_col)):
+            continue
+        spot = float(row["close"])
+        atr = float(row.get("atr14", 0)) or 1.0
+        ema_vals = {p: float(row.get(f"ema{p}", spot)) for p in MOAT_SET}
+        slope = ema3_slope.iloc[i]
+        slope = float(slope) if pd.notna(slope) else 0.0
+        put_moats, _ = eng._count_moats_put(spot, ema_vals, atr, slope)
+        call_moats, _ = eng._count_moats_call(spot, ema_vals, atr)
+        out[ts.normalize()] = (put_moats - call_moats) / 5.0
+    return pd.Series(out, name="ema_moat_balance").sort_index()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -203,6 +320,44 @@ def adapt_bollinger_pctb(daily: pd.DataFrame) -> pd.Series:
     return sig
 
 
+_ASYMMETRY_SIGN = {"1:2": 1.0, "2:1": -1.0, "1:1": 0.0}
+
+
+def adapt_bollinger_asymmetry(daily: pd.DataFrame) -> pd.Series:
+    """Bollinger asymmetry-ratio sign (page 09's real headline output — which
+    leg needs more room) — CONTINUATION framed, the opposite convention from
+    adapt_bollinger_pctb's mean-reversion framing, worth testing both ways.
+    Ratio "1:2" means CE needs more room (primary_risk_side="CE" in the live
+    page — price pushing toward/through the upper band) → bullish (+1.0).
+    "2:1" (PE at risk, price toward the lower band) → bearish (-1.0).
+
+    Reuses BollingerOptionsEngine._squeeze_status/_base_ratio/_ma_pos/_apply_ma
+    directly — pure, row-wise functions once bb_bw/bb_pct_b/bb_basis are
+    computed (same eng.compute() call as adapt_bollinger_pctb). Daily proxy of
+    the live 2H/4H engine (same caveat as adapt_bollinger_pctb): the daily
+    reading stands in for BOTH the '2H' and '4H' inputs those functions
+    expect, since page 09's live TF is intraday and this harness is daily."""
+    eng = BollingerOptionsEngine()
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="bollinger_asymmetry")
+    d = eng.compute(d)
+    out = {}
+    for ts, row in d.iterrows():
+        bw, pb = row.get("bb_bw"), row.get("bb_pct_b")
+        basis, close = row.get("bb_basis"), row.get("close")
+        if pd.isna(bw) or pd.isna(pb) or pd.isna(basis):
+            continue
+        reg = _classify_bw(float(bw), _BW_2H)
+        zone = _pct_b_zone(float(pb))
+        sq = eng._squeeze_status(reg, reg)
+        ratio, _, _ = eng._base_ratio(zone, sq, float(pb))
+        ma = eng._ma_pos(float(close), float(basis))
+        ratio = eng._apply_ma(ratio, ma, ma)
+        out[ts.normalize()] = _ASYMMETRY_SIGN.get(ratio, 0.0)
+    return pd.Series(out, name="bollinger_asymmetry").sort_index()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # RSI Weekly (page 05) — analytics/rsi_engine.py — continuation framed
 # ══════════════════════════════════════════════════════════════════════════════
@@ -225,6 +380,76 @@ def adapt_rsi_weekly(daily: pd.DataFrame) -> pd.Series:
     sig = (pd.to_numeric(d["rsi_weekly"], errors="coerce") - 50.0) / 50.0
     sig.index = pd.to_datetime(sig.index).normalize()
     sig.name = "rsi_weekly"
+    return sig
+
+
+_ALIGN_SIGN = {
+    "ALIGNED_BULL": 1.0, "ALIGNED_BULL_NEUTRAL": 0.3, "ALIGNED_BEAR": -1.0,
+    "COUNTER_TRAP_BEAR": 0.5, "COUNTER_TRAP_BULL": -0.5, "MIXED": 0.0,
+}
+
+
+def adapt_rsi_alignment(daily: pd.DataFrame) -> pd.Series:
+    """RSI weekly-vs-daily MTF alignment sign (page 05's own combined read).
+    ALIGNED_BULL/_BEAR = both timeframes agree (+1.0/-1.0). COUNTER_TRAP_* is
+    page 05's own built-in contrarian read: a same-day move AGAINST the
+    WEEKLY regime is read as a trap that fails, so the signal leans back
+    toward the weekly direction rather than the daily one — COUNTER_TRAP_BEAR
+    (bearish daily dip inside a bullish weekly regime) → +0.5, COUNTER_TRAP_BULL
+    → -0.5.
+
+    Reuses RSIEngine._weekly_regime/_daily_zone/_alignment directly — pure,
+    row-wise once rsi_daily/rsi_weekly are computed (same eng.compute() call
+    as adapt_rsi_weekly)."""
+    eng = RSIEngine()
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="rsi_alignment")
+    d = eng.compute(d)
+    out = {}
+    for ts, row in d.iterrows():
+        w_rsi, d_rsi = row.get("rsi_weekly"), row.get("rsi_daily")
+        if pd.isna(w_rsi) or pd.isna(d_rsi):
+            continue
+        w_regime = eng._weekly_regime(float(w_rsi))
+        d_zone = eng._daily_zone(float(d_rsi))
+        alignment = eng._alignment(w_regime, d_zone)
+        out[ts.normalize()] = _ALIGN_SIGN.get(alignment, 0.0)
+    return pd.Series(out, name="rsi_alignment").sort_index()
+
+
+def adapt_rsi_exhaustion_fade(daily: pd.DataFrame) -> pd.Series:
+    """RSI exhaustion-fade signal: page 05's own RSI_DUAL_EXHAUSTION /
+    RSI_DAILY_EXHAUSTION_REVERSAL kill-switches, re-read as a MEAN-REVERSION
+    (fade) call rather than a binary veto — the natural companion to the
+    overbought-fade edge already confirmed on the Conviction table.
+        both weekly+daily overbought, OR daily overbought + slope turning
+        down → -1.0 (fade down)
+        both weekly+daily oversold → +1.0 (fade up)
+    The original engine has no daily-only bullish-reversal counterpart
+    (asymmetric by design) — consistent with the overbought-fade-ONLY
+    pattern already found; this harness run will show whether that asymmetry
+    holds here too.
+
+    Formulas and thresholds (W_RSI_EXHAUST/D_RSI_EXHAUST/W_RSI_CAPIT/
+    D_RSI_CAPIT) copied 1:1 from RSIEngine._kill_switches; both conditions
+    only need the current row (no trailing-window lookback), so computed
+    vectorised rather than via a per-day loop."""
+    eng = RSIEngine()
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="rsi_exhaustion_fade")
+    d = eng.compute(d)
+    w, r_, s1 = d["rsi_weekly"], d["rsi_daily"], d["d_slope_1d"]
+    dual_bear = (w > W_RSI_EXHAUST) & (r_ > D_RSI_EXHAUST)
+    dual_bull = (w < W_RSI_CAPIT) & (r_ < D_RSI_CAPIT)
+    daily_rev_bear = (r_ > D_RSI_EXHAUST) & (s1 < 0)
+    sig = pd.Series(0.0, index=d.index)
+    sig[dual_bull] = 1.0
+    sig[dual_bear] = -1.0
+    sig[daily_rev_bear] = -1.0
+    sig.index = pd.to_datetime(sig.index).normalize()
+    sig.name = "rsi_exhaustion_fade"
     return sig
 
 
@@ -318,12 +543,18 @@ def adapt_oi_buildup(fut_daily: pd.DataFrame) -> pd.Series:
 # ══════════════════════════════════════════════════════════════════════════════
 
 ADAPTERS = {
-    "Dow Theory":         {"fn": adapt_dow_theory,       "needs": ("h1",),        "cadence": "1H window, daily read"},
-    "EMA Ribbon":         {"fn": adapt_ema_ribbon,       "needs": ("daily",),     "cadence": "daily"},
-    "SuperTrend (daily)": {"fn": adapt_supertrend,       "needs": ("daily",),     "cadence": "daily"},
-    "Market Profile":     {"fn": adapt_market_profile,   "needs": ("daily",),     "cadence": "daily (Wed→day VA)"},
-    "Bollinger %B":       {"fn": adapt_bollinger_pctb,   "needs": ("daily",),     "cadence": "daily proxy of 2H/4H"},
-    "RSI Weekly":         {"fn": adapt_rsi_weekly,       "needs": ("daily",),     "cadence": "weekly, ffilled daily"},
-    "EMA Slope Phases":   {"fn": adapt_ema_slope_phases, "needs": ("h1",),        "cadence": "1H, daily read"},
-    "Futures OI Buildup": {"fn": adapt_oi_buildup,       "needs": ("fut_daily",), "cadence": "daily (needs OI history)"},
+    "Dow Theory":            {"fn": adapt_dow_theory,        "needs": ("h1",),        "cadence": "1H window, daily read"},
+    "Dow Leg Health":        {"fn": adapt_dow_leg_health,    "needs": ("h1",),        "cadence": "1H window, daily read"},
+    "EMA Ribbon":            {"fn": adapt_ema_ribbon,        "needs": ("daily",),     "cadence": "daily"},
+    "EMA Momentum":          {"fn": adapt_ema_momentum,      "needs": ("daily",),     "cadence": "daily"},
+    "EMA Moat Balance":      {"fn": adapt_ema_moat_balance,  "needs": ("daily",),     "cadence": "daily"},
+    "SuperTrend (daily)":    {"fn": adapt_supertrend,        "needs": ("daily",),     "cadence": "daily"},
+    "Market Profile":        {"fn": adapt_market_profile,    "needs": ("daily",),     "cadence": "daily (Wed→day VA)"},
+    "Bollinger %B":          {"fn": adapt_bollinger_pctb,    "needs": ("daily",),     "cadence": "daily proxy of 2H/4H"},
+    "Bollinger Asymmetry":   {"fn": adapt_bollinger_asymmetry, "needs": ("daily",),   "cadence": "daily proxy of 2H/4H"},
+    "RSI Weekly":            {"fn": adapt_rsi_weekly,        "needs": ("daily",),     "cadence": "weekly, ffilled daily"},
+    "RSI Alignment":         {"fn": adapt_rsi_alignment,     "needs": ("daily",),     "cadence": "daily+weekly combined"},
+    "RSI Exhaustion Fade":   {"fn": adapt_rsi_exhaustion_fade, "needs": ("daily",),   "cadence": "daily+weekly combined"},
+    "EMA Slope Phases":      {"fn": adapt_ema_slope_phases,  "needs": ("h1",),        "cadence": "1H, daily read"},
+    "Futures OI Buildup":    {"fn": adapt_oi_buildup,        "needs": ("fut_daily",), "cadence": "daily (needs OI history)"},
 }
