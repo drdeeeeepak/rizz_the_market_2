@@ -101,10 +101,26 @@ h1_days = st.slider("1H lookback for Dow Theory / EMA Slope Phases (trading days
 all_labels = list(sa.ADAPTERS.keys())
 selected = st.multiselect("Signals to run", all_labels, default=all_labels)
 
-if not st.button("▶ Run Signal Library", type="primary"):
+# Gate on a session_state flag rather than the button's own return value: st.button()
+# is only True on the ONE rerun triggered by that exact click — clicking ANY other
+# widget further down the page (the §2 selectbox, §3 radio, §4 re-run button) triggers
+# its own rerun where this button is False again, so a raw `if not st.button(...):
+# st.stop()` gate would wipe the whole page on every one of those clicks before the
+# script ever reached them. Stash the controls too, so later reruns keep using the
+# last-run settings instead of needing a fresh click every time.
+if st.button("▶ Run Signal Library", type="primary"):
+    st.session_state.p23_ran = True
+    st.session_state.p23_inputs = dict(lookback=lookback, h1_days=h1_days, selected=selected,
+                                       call_pct=call_pct, put_pct=put_pct, nbins=nbins)
+
+if not st.session_state.get("p23_ran"):
     st.info("Pick your lookback and signals, then click Run. First run pulls ~2y of daily "
             "candles + ~1y of 1H candles and scores every selected adapter (~15-30s).")
     st.stop()
+
+_in = st.session_state.p23_inputs
+lookback, h1_days, selected = _in["lookback"], _in["h1_days"], _in["selected"]
+call_pct, put_pct, nbins = _in["call_pct"], _in["put_pct"], _in["nbins"]
 
 with st.spinner("Fetching history and scoring every signal…"):
     daily = _load_daily(lookback)
@@ -213,20 +229,34 @@ st.caption("Price stays on the INDEX, not continuous futures directly: Kite's "
           "rollover prints a real price jump (cost-of-carry basis, not a market move) that "
           "would corrupt RSI/VWAP/Stretch and the forward-outcome labels. Futures contributes "
           "real VOLUME only here.")
+# Same session_state pattern as the top gate: store the result (or error) on click,
+# then render it unconditionally below — otherwise it would only exist inside this
+# `if st.button(...):` block and vanish the instant you touch the §2 selectbox or §3
+# radio (each of those triggers a rerun where THIS button is False again).
 if st.button("▶ Run real-volume + breadth-on re-run"):
     with st.spinner("Fetching continuous futures + 50-constituent daily history…"):
         fut2 = _load_fut_continuous(lookback)
         stock_daily = _load_nifty50_daily(lookback)
     if fut2 is None or fut2.empty:
-        st.error("Could not load continuous futures history. Log in via Home → Kite, then retry.")
+        st.session_state.p23_real_error = "Could not load continuous futures history. Log in via Home → Kite, then retry."
+        st.session_state.pop("p23_real_result", None)
     else:
         breadth = bt.daily_advance_breadth(stock_daily) if stock_daily else None
         real = bt.run_backtest_real(daily, fut2, breadth=breadth, horizons=(5, 10),
                                     call_pct=float(call_pct), put_pct=float(put_pct), nbins=int(nbins))
-        st.success(f"Analysed **{real['n_rows']}** daily rows on real futures · {real['span']} · "
-                  f"breadth from **{len(stock_daily)}** constituents")
-        st.dataframe(real["distribution"], use_container_width=True, hide_index=True)
-        for col in ["State", "Final", "Bull−Bear", "Conf%", "RSI", "ΔVWAP", "Stretch", "Brd%"]:
-            if col in real["cutoffs"]:
-                st.markdown(f"**{col}**")
-                st.dataframe(real["cutoffs"][col].reset_index(), use_container_width=True, hide_index=True)
+        st.session_state.p23_real_result = {"real": real, "n_constituents": len(stock_daily)}
+        st.session_state.pop("p23_real_error", None)
+
+if st.session_state.get("p23_real_error"):
+    st.error(st.session_state.p23_real_error)
+
+if "p23_real_result" in st.session_state:
+    real = st.session_state.p23_real_result["real"]
+    n_constituents = st.session_state.p23_real_result["n_constituents"]
+    st.success(f"Analysed **{real['n_rows']}** daily rows on real futures · {real['span']} · "
+              f"breadth from **{n_constituents}** constituents")
+    st.dataframe(real["distribution"], use_container_width=True, hide_index=True)
+    for col in ["State", "Final", "Bull−Bear", "Conf%", "RSI", "ΔVWAP", "Stretch", "Brd%"]:
+        if col in real["cutoffs"]:
+            st.markdown(f"**{col}**")
+            st.dataframe(real["cutoffs"][col].reset_index(), use_container_width=True, hide_index=True)
