@@ -48,22 +48,27 @@ def _to_dt_index(df: pd.DataFrame) -> pd.DataFrame:
 
 def _dow_theory_frame(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
     """Shared rolling-window Dow Theory computation, one row per trading day —
-    feeds both adapt_dow_theory (structure sign) and adapt_dow_leg_health (CE/PE
-    health imbalance) from a SINGLE pass over the 1H history rather than two.
+    feeds adapt_dow_theory (structure sign), adapt_dow_leg_health (CE/PE
+    health imbalance), and signal_lab.dow_retrace_bucket_scan (retrace-%
+    entry-timing study) from a SINGLE pass over the 1H history rather than
+    walking the window separately for each.
 
-    Reuses the SAME pure pivot/structure/health functions as
+    Reuses the SAME pure pivot/structure/sequence/retrace/health functions as
     DowTheoryEngine.signals() (_atr14, _detect_pivots, _extract_reference_pivots,
-    _classify_structure, _compute_health) — but calls them directly instead of
-    .signals(), because .signals() writes data/dow_score_history.json on every
-    call and reads date.today() for a display label, neither of which belong
-    in a backtest loop.
+    _classify_structure, _sequence_check, _retrace_depth, _compute_health) —
+    but calls them directly instead of .signals(), because .signals() writes
+    data/dow_score_history.json on every call and reads date.today() for a
+    display label, neither of which belong in a backtest loop.
 
     Rolling window = the last `window_days` trading days of 1H data ending
     that day — the SAME fixed-size window the live engine uses (not an
-    expanding one), so pivot confirmation lag matches production."""
+    expanding one), so pivot confirmation lag matches production.
+
+    Columns: structure, sequence (RISING/FALLING — see _sequence_check),
+    retrace_pct, ce_health, pe_health."""
     d = _to_dt_index(df_1h)
     if d.empty:
-        return pd.DataFrame(columns=["structure", "ce_health", "pe_health"])
+        return pd.DataFrame(columns=["structure", "sequence", "retrace_pct", "ce_health", "pe_health"])
     days = sorted(set(d.index.normalize()))
     target = window_days * 6   # ≈6 1H candles/session
     rows = {}
@@ -75,14 +80,18 @@ def _dow_theory_frame(df_1h: pd.DataFrame, window_days: int = DOW_PHASE_DAYS) ->
         df_piv = dt._detect_pivots(window, DOW_N)
         pivots = dt._extract_reference_pivots(df_piv)
         if pivots is None:
-            rows[day] = {"structure": None, "ce_health": None, "pe_health": None}
+            rows[day] = {"structure": None, "sequence": None, "retrace_pct": None,
+                        "ce_health": None, "pe_health": None}
             continue
         structure = dt._classify_structure(pivots, atr14)
         spot = float(window["close"].iloc[-1])
         last_high = float(window["high"].iloc[-1])
         last_low = float(window["low"].iloc[-1])
+        sequence = dt._sequence_check(pivots)
+        retrace_pct = dt._retrace_depth(spot, pivots, sequence)
         ce_health, _, pe_health, _ = dt._compute_health(structure, spot, last_high, last_low, pivots)
-        rows[day] = {"structure": structure, "ce_health": ce_health, "pe_health": pe_health}
+        rows[day] = {"structure": structure, "sequence": sequence, "retrace_pct": retrace_pct,
+                    "ce_health": ce_health, "pe_health": pe_health}
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
