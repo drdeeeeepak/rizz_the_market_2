@@ -224,13 +224,14 @@ st.divider()
 st.subheader("Strike-shift ladder backtest — fixed asymmetric roll schedule")
 st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
           "candles. Your rule: keep CALL/PUT at their starting OTM %; whichever leg sits on "
-          "the OPPOSITE side of the move is the 'safe' leg, and it shifts INWARD by a flat "
-          "%-of-anchor amount (not compounding on the current strike) each time |drift| from "
-          "anchor reaches the next trigger — CALL shifts down on a fall, PUT shifts up on a "
-          "rise. Each direction's ladder is independent (a reversal doesn't reset it), and "
-          "once all steps are used the leg stays put for the rest of the cycle. Runs against "
-          "BOTH the near (this Tuesday) and biweekly (next Tuesday) windows, each alongside a "
-          "no-shift baseline on the identical cycles for direct comparison.")
+          "the OPPOSITE side of the move is the 'safe' leg, and it shifts INWARD by a FIXED "
+          "Nifty-point amount (absolute, not a % of anchor — so it lands on real strike "
+          "spacing regardless of index level) each time |drift| from anchor reaches the next "
+          "trigger — CALL shifts down on a fall, PUT shifts up on a rise. Each direction's "
+          "ladder is independent (a reversal doesn't reset it), and once all steps are used "
+          "the leg stays put for the rest of the cycle. Runs against BOTH the near (this "
+          "Tuesday) and biweekly (next Tuesday) windows, each alongside a no-shift baseline "
+          "on the identical cycles for direct comparison.")
 
 lc1, lc2 = st.columns(2)
 with lc1:
@@ -242,29 +243,29 @@ with lc3:
     ladder_triggers_str = st.text_input("Triggers — cumulative |drift| % from anchor (comma-separated)",
                                         "1.0,2.0,2.5", key="ladder_triggers")
 with lc4:
-    ladder_shifts_str = st.text_input("Shifts — % of anchor the safe leg moves at each trigger",
-                                      "0.25,0.25,1.0", key="ladder_shifts")
+    ladder_shift_pts_str = st.text_input("Shifts — FIXED Nifty points the safe leg moves at each trigger",
+                                         "50,50,200", key="ladder_shift_pts")
 try:
     ladder_triggers = tuple(float(x.strip()) for x in ladder_triggers_str.split(","))
-    ladder_shifts = tuple(float(x.strip()) for x in ladder_shifts_str.split(","))
-    ladder_valid = len(ladder_triggers) == len(ladder_shifts)
+    ladder_shift_pts = tuple(float(x.strip()) for x in ladder_shift_pts_str.split(","))
+    ladder_valid = len(ladder_triggers) == len(ladder_shift_pts)
 except ValueError:
-    ladder_triggers, ladder_shifts, ladder_valid = (), (), False
+    ladder_triggers, ladder_shift_pts, ladder_valid = (), (), False
 if not ladder_valid:
-    st.caption("Triggers and shifts must both parse and have the same number of steps — "
-              "using default 1.0,2.0,2.5 / 0.25,0.25,1.0.")
-    ladder_triggers, ladder_shifts = sl.LADDER_TRIGGERS_DEFAULT, sl.LADDER_SHIFTS_DEFAULT
+    st.caption("Triggers and shift points must both parse and have the same number of steps — "
+              "using default 1.0,2.0,2.5 / 50,50,200.")
+    ladder_triggers, ladder_shift_pts = sl.LADDER_TRIGGERS_DEFAULT, sl.LADDER_SHIFT_PTS_DEFAULT
 
 if st.button("▶ Run strike-shift ladder backtest"):
     with st.spinner("Fetching daily history and simulating every cycle…"):
         st.session_state.p23_ladder_result = sl.strike_shift_ladder_scan(
             _load_daily(lookback), call_pct=float(ladder_call_pct), put_pct=float(ladder_put_pct),
-            triggers=ladder_triggers, shifts=ladder_shifts)
+            triggers=ladder_triggers, shift_pts=ladder_shift_pts)
 
 if "p23_ladder_result" in st.session_state:
     lr = st.session_state.p23_ladder_result
     st.success(f"Simulated **{lr['n_cycles']}** weekly cycles · CALL {lr['call_pct']}% / "
-              f"PUT {lr['put_pct']}% · triggers {lr['triggers']} · shifts {lr['shifts']}")
+              f"PUT {lr['put_pct']}% · triggers {lr['triggers']} · shift_pts {lr['shift_pts']}")
 
     ld1, ld2 = st.columns(2)
     _ladder_keys = ("n", "survival_rate%", "baseline_survival_rate%", "avg_steps_used",

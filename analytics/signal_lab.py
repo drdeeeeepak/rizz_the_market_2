@@ -585,22 +585,26 @@ def anchor_close_distribution_scan(daily: pd.DataFrame, bin_width: float = 0.5,
 # ══════════════════════════════════════════════════════════════════════════════
 # Strike-shift ladder — a FIXED, asymmetric roll schedule (as opposed to
 # roll_rule_scan's grid search): whichever leg sits opposite the move is the
-# 'safe' leg, and it shifts inward by a flat %-of-anchor amount (not
-# compounding on the current strike) each time |drift| from anchor reaches
-# the next trigger — CALL shifts down on a fall, PUT shifts up on a rise.
+# 'safe' leg, and it shifts inward by a flat, ABSOLUTE Nifty-point amount
+# (matching real strike spacing — NOT a %-of-anchor, which would drift with
+# the index level and stop landing on clean strikes) each time |drift| from
+# anchor reaches the next trigger — CALL shifts down on a fall, PUT shifts
+# up on a rise.
 # ══════════════════════════════════════════════════════════════════════════════
 
-LADDER_TRIGGERS_DEFAULT = (1.0, 2.0, 2.5)   # cumulative |drift from anchor| % that arms each step
-LADDER_SHIFTS_DEFAULT = (0.25, 0.25, 1.0)   # % of ANCHOR the safe leg moves at each step
+LADDER_TRIGGERS_DEFAULT = (1.0, 2.0, 2.5)      # cumulative |drift from anchor| % that arms each step
+LADDER_SHIFT_PTS_DEFAULT = (50.0, 50.0, 200.0)  # FIXED Nifty points the safe leg moves at each step
 
 
 def _strike_shift_ladder_simulate(d: pd.DataFrame, anchor_ts, end_ts, call_pct: float,
-                                  put_pct: float, triggers, shifts) -> dict:
-    """One cycle, ONE fixed ladder (no grid search — triggers()/shifts() are an
-    empty tuple for the no-shift baseline). Each direction's ladder position
-    (up_step / dn_step) is tracked independently, so drift crossing triggers
-    on one side, then reversing and climbing the OTHER side's ladder, is
-    handled correctly — neither counter resets when direction flips.
+                                  put_pct: float, triggers, shift_pts) -> dict:
+    """One cycle, ONE fixed ladder (no grid search — triggers()/shift_pts() are
+    an empty tuple for the no-shift baseline). Each direction's ladder
+    position (up_step / dn_step) is tracked independently, so drift crossing
+    triggers on one side, then reversing and climbing the OTHER side's
+    ladder, is handled correctly — neither counter resets when direction
+    flips. shift_pts are ABSOLUTE index points (e.g. 50, 50, 200), applied
+    the same regardless of the anchor's level — NOT scaled by anchor.
     Breach = a day's CLOSE (not intraday high/low) at/beyond a strike."""
     anchor = float(d.loc[anchor_ts, "close"])
     ce = anchor * (1 + call_pct / 100)
@@ -611,10 +615,10 @@ def _strike_shift_ladder_simulate(d: pd.DataFrame, anchor_ts, end_ts, call_pct: 
         close = float(row["close"])
         drift = (close - anchor) / anchor * 100
         while up_step < len(triggers) and drift >= triggers[up_step]:
-            pe += anchor * shifts[up_step] / 100   # PUT is the safe leg on an up-move
+            pe += shift_pts[up_step]   # PUT is the safe leg on an up-move
             up_step += 1
         while dn_step < len(triggers) and -drift >= triggers[dn_step]:
-            ce -= anchor * shifts[dn_step] / 100   # CALL is the safe leg on a down-move
+            ce -= shift_pts[dn_step]   # CALL is the safe leg on a down-move
             dn_step += 1
         if close >= ce:
             return {"survived": False, "steps_used": up_step + dn_step,
@@ -646,18 +650,21 @@ def _ladder_aggregate(results: list) -> dict:
 
 def strike_shift_ladder_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct: float = 3.5,
                              triggers=LADDER_TRIGGERS_DEFAULT,
-                             shifts=LADDER_SHIFTS_DEFAULT) -> dict:
+                             shift_pts=LADDER_SHIFT_PTS_DEFAULT) -> dict:
     """Backtests ONE fixed strike-shift ladder (not a parameter grid) against
     every weekly (near) and biweekly (far) Tuesday-anchor cycle, alongside a
     no-shift baseline computed on the SAME cycles for direct comparison.
 
     Default ladder matches: CALL 3% / PUT 3.5% OTM; whichever leg is safe
-    shifts inward by 0.25% of anchor the first time |drift| reaches 1%,
-    another 0.25% at 2%, then 1.0% at 2.5% (three steps, then the ladder is
-    exhausted — no further shifts past that for the rest of the cycle).
+    shifts inward by a FIXED 50 Nifty points the first time |drift| reaches
+    1%, another 50 points at 2%, then 200 points at 2.5% (three steps, then
+    the ladder is exhausted — no further shifts past that for the rest of
+    the cycle). Points are absolute, not scaled by the anchor's level —
+    matching real strike spacing (Nifty strikes step in 50s) regardless of
+    where the index is trading.
 
     Returns {'near': {'agg': dict, 'detail': DataFrame}, 'far': {...},
-    'call_pct':, 'put_pct':, 'triggers':, 'shifts':, 'n_cycles':}. `detail`
+    'call_pct':, 'put_pct':, 'triggers':, 'shift_pts':, 'n_cycles':}. `detail`
     has one row per cycle (anchor date, survived, steps_used, breach info) —
     'agg' additionally carries 'baseline_survival_rate%' from the no-shift
     run on the identical cycles."""
@@ -673,13 +680,13 @@ def strike_shift_ladder_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct
     near_ladder, near_base, near_detail = [], [], []
     far_ladder, far_base, far_detail = [], [], []
     for anchor_ts, near_end, far_end in cycles:
-        r_near = _strike_shift_ladder_simulate(d, anchor_ts, near_end, call_pct, put_pct, triggers, shifts)
+        r_near = _strike_shift_ladder_simulate(d, anchor_ts, near_end, call_pct, put_pct, triggers, shift_pts)
         b_near = _strike_shift_ladder_simulate(d, anchor_ts, near_end, call_pct, put_pct, (), ())
         near_ladder.append(r_near)
         near_base.append(b_near)
         near_detail.append({"anchor": anchor_ts, **r_near})
         if far_end is not None:
-            r_far = _strike_shift_ladder_simulate(d, anchor_ts, far_end, call_pct, put_pct, triggers, shifts)
+            r_far = _strike_shift_ladder_simulate(d, anchor_ts, far_end, call_pct, put_pct, triggers, shift_pts)
             b_far = _strike_shift_ladder_simulate(d, anchor_ts, far_end, call_pct, put_pct, (), ())
             far_ladder.append(r_far)
             far_base.append(b_far)
@@ -693,4 +700,4 @@ def strike_shift_ladder_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct
     return {"near": _bundle(near_ladder, near_base, near_detail),
             "far": _bundle(far_ladder, far_base, far_detail),
             "call_pct": call_pct, "put_pct": put_pct,
-            "triggers": list(triggers), "shifts": list(shifts), "n_cycles": len(cycles)}
+            "triggers": list(triggers), "shift_pts": list(shift_pts), "n_cycles": len(cycles)}
