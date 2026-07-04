@@ -295,6 +295,70 @@ if "p23_ladder_result" in st.session_state:
                            lr["far"]["detail"].to_csv(index=False).encode("utf-8"),
                            file_name="strike_shift_ladder_far.csv", mime="text/csv", key="dl_ladder_far")
 
+# ── Standalone: strike-shift ladder v2 — 4th escalation on actual breach ────
+st.divider()
+st.subheader("Strike-shift ladder — 4th (final) adjustment on actual breach")
+st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
+          "candles. Adds ONE more escalation on top of the 3-step drift ladder above: if the "
+          "ORIGINAL sold strike (CALL 3% / PUT 3.5%) is actually breached on an EOD close, the "
+          "OTHER (still-safe/profit) leg shifts one more FIXED 300 points, then the run keeps "
+          "going to check whether that leg is ALSO breached before cycle-end (a 'double "
+          "breach'). survival_rate% here means the same as above (any breach at all) and can't "
+          "change from this step — it only fires AFTER the first breach. What it DOES answer: "
+          "among cycles that breach, does the extra 300-pt shift make a second, opposite-side "
+          "breach MORE or LESS likely, vs. the identical price path with no 4th shift at all.")
+
+vc1, vc2 = st.columns(2)
+with vc1:
+    v2_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="v2_call_pct")
+with vc2:
+    v2_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="v2_put_pct")
+v2_breach_shift_pts = st.number_input("Extra points the profit leg shifts once the sold strike breaches",
+                                      50.0, 1000.0, 300.0, 25.0, key="v2_breach_shift_pts")
+
+if st.button("▶ Run 4th-adjustment (breach-triggered) backtest"):
+    with st.spinner("Fetching daily history and simulating every cycle…"):
+        st.session_state.p23_ladder_v2_result = sl.strike_shift_ladder_v2_scan(
+            _load_daily(lookback), call_pct=float(v2_call_pct), put_pct=float(v2_put_pct),
+            triggers=ladder_triggers, shift_pts=ladder_shift_pts,
+            breach_shift_pts=float(v2_breach_shift_pts))
+
+if "p23_ladder_v2_result" in st.session_state:
+    v2r = st.session_state.p23_ladder_v2_result
+    st.success(f"Simulated **{v2r['n_cycles']}** weekly cycles · CALL {v2r['call_pct']}% / "
+              f"PUT {v2r['put_pct']}% · triggers {v2r['triggers']} · shift_pts {v2r['shift_pts']} · "
+              f"breach shift {v2r['breach_shift_pts']}pts")
+
+    v2d1, v2d2 = st.columns(2)
+    _v2_keys = ("n", "survival_rate%", "n_breached", "double_breach_rate%",
+               "double_breach_rate_without_step4%", "avg_steps_used")
+    for _key, _label, _col in (("near", "Near expiry (this week)", v2d1),
+                               ("far", "Biweekly (through next expiry)", v2d2)):
+        bundle = v2r[_key]
+        with _col:
+            st.markdown(f"**{_label}**")
+            st.json({k: bundle["agg"][k] for k in _v2_keys})
+
+    st.markdown("**Per-cycle detail — near expiry**")
+    if v2r["near"]["detail"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(v2r["near"]["detail"], height=min(60 + 28 * len(v2r["near"]["detail"]), 460), reset=False)
+        st.download_button("⬇ Download near-expiry detail CSV",
+                           v2r["near"]["detail"].to_csv(index=False).encode("utf-8"),
+                           file_name="strike_shift_ladder_v2_near.csv", mime="text/csv",
+                           key="dl_ladder_v2_near")
+
+    st.markdown("**Per-cycle detail — biweekly**")
+    if v2r["far"]["detail"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(v2r["far"]["detail"], height=min(60 + 28 * len(v2r["far"]["detail"]), 460), reset=False)
+        st.download_button("⬇ Download biweekly detail CSV",
+                           v2r["far"]["detail"].to_csv(index=False).encode("utf-8"),
+                           file_name="strike_shift_ladder_v2_far.csv", mime="text/csv",
+                           key="dl_ladder_v2_far")
+
 # Gate on a session_state flag rather than the button's own return value: st.button()
 # is only True on the ONE rerun triggered by that exact click — clicking ANY other
 # widget further down the page (the §2 selectbox, §3 radio, §4 re-run button) triggers

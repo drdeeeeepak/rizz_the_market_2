@@ -701,3 +701,149 @@ def strike_shift_ladder_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct
             "far": _bundle(far_ladder, far_base, far_detail),
             "call_pct": call_pct, "put_pct": put_pct,
             "triggers": list(triggers), "shift_pts": list(shift_pts), "n_cycles": len(cycles)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Strike-shift ladder v2 — adds a 4th, FINAL escalation on top of the 3-step
+# drift ladder above: if the ORIGINAL sold strike itself is breached on any
+# EOD close, shift the OTHER (still-safe/profit) leg by one more fixed point
+# amount, then keep watching whether THAT leg also gets breached before
+# cycle-end (a 'double breach' — the emergency shift backfiring).
+# ══════════════════════════════════════════════════════════════════════════════
+
+BREACH_SHIFT_PTS_DEFAULT = 300.0   # extra points the profit leg moves in when the sold strike breaches
+
+
+def _strike_shift_ladder_v2_simulate(d: pd.DataFrame, anchor_ts, end_ts, call_pct: float,
+                                     put_pct: float, triggers, shift_pts, breach_shift_pts: float,
+                                     apply_breach_shift: bool) -> dict:
+    """Runs the SAME 3-step drift ladder as _strike_shift_ladder_simulate, but
+    does NOT stop at the first breach: the first time the ORIGINAL sold
+    strike is crossed, that's recorded as the primary breach, and — if
+    apply_breach_shift — the OTHER (opposite, still-safe) leg is shifted
+    inward by one more `breach_shift_pts`, one time only. The simulation then
+    keeps running to see whether that leg is ALSO breached before cycle-end
+    (a 'double breach'). apply_breach_shift=False reruns the identical price
+    path with NO 4th-step shift, as the baseline for the double-breach-rate
+    comparison — the primary breach (and its timing) is unaffected by
+    apply_breach_shift, since the shift only fires AFTER that breach already
+    happened."""
+    anchor = float(d.loc[anchor_ts, "close"])
+    ce = anchor * (1 + call_pct / 100)
+    pe = anchor * (1 - put_pct / 100)
+    up_step = dn_step = 0
+    orig_breach_side = None
+    emergency_used = False
+    double_breach = False
+    window = d[(d.index > anchor_ts) & (d.index <= end_ts)]
+    for ts, row in window.iterrows():
+        close = float(row["close"])
+        drift = (close - anchor) / anchor * 100
+        while up_step < len(triggers) and drift >= triggers[up_step]:
+            pe += shift_pts[up_step]
+            up_step += 1
+        while dn_step < len(triggers) and -drift >= triggers[dn_step]:
+            ce -= shift_pts[dn_step]
+            dn_step += 1
+
+        if close >= ce:
+            if orig_breach_side is None:
+                orig_breach_side = "call"
+                if apply_breach_shift:
+                    pe += breach_shift_pts
+                    emergency_used = True
+            elif orig_breach_side == "put":
+                double_breach = True
+                break
+        elif close <= pe:
+            if orig_breach_side is None:
+                orig_breach_side = "put"
+                if apply_breach_shift:
+                    ce -= breach_shift_pts
+                    emergency_used = True
+            elif orig_breach_side == "call":
+                double_breach = True
+                break
+
+    return {
+        "survived": orig_breach_side is None,
+        "steps_used": up_step + dn_step + (1 if emergency_used else 0),
+        "breach_side": orig_breach_side,
+        "double_breach": double_breach if orig_breach_side is not None else None,
+        "emergency_shift_used": emergency_used,
+    }
+
+
+def _ladder_v2_aggregate(results: list) -> dict:
+    n = len(results)
+    if n == 0:
+        return {"n": 0, "survival_rate%": np.nan, "n_breached": 0,
+                "double_breach_rate%": np.nan, "avg_steps_used": np.nan}
+    survived = sum(1 for r in results if r["survived"])
+    breached = [r for r in results if not r["survived"]]
+    n_breached = len(breached)
+    double = sum(1 for r in breached if r["double_breach"])
+    avg_steps = float(np.mean([r["steps_used"] for r in results]))
+    return {
+        "n": n,
+        "survival_rate%": round(survived / n * 100, 1),
+        "n_breached": n_breached,
+        "double_breach_rate%": round(double / n_breached * 100, 1) if n_breached else np.nan,
+        "avg_steps_used": round(avg_steps, 2),
+    }
+
+
+def strike_shift_ladder_v2_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct: float = 3.5,
+                                triggers=LADDER_TRIGGERS_DEFAULT, shift_pts=LADDER_SHIFT_PTS_DEFAULT,
+                                breach_shift_pts: float = BREACH_SHIFT_PTS_DEFAULT) -> dict:
+    """Same weekly/biweekly cycle sweep as strike_shift_ladder_scan, but with
+    the 4th escalation step active: when the sold strike is actually breached,
+    the profit leg shifts one more `breach_shift_pts` (300 by default), and
+    the run keeps going to check for a double breach.
+
+    survival_rate% here means the SAME thing as in strike_shift_ladder_scan
+    (any breach at all) and is identical with or without the 4th step, since
+    that step can't prevent a breach that already happened. The NEW thing
+    this backtest answers: among the cycles that DO breach, does shifting the
+    profit leg by 300 more points make a second, opposite-side breach more or
+    less likely? 'agg' carries both 'double_breach_rate%' (with the 4th step)
+    and 'double_breach_rate_without_step4%' (identical price paths, no 4th
+    shift) for direct comparison. `detail` has one row per cycle."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    cycles = []
+    for i in range(len(tuesdays) - 1):
+        anchor_ts = tuesdays[i]
+        near_end = tuesdays[i + 1]
+        far_end = tuesdays[i + 2] if i + 2 < len(tuesdays) else None
+        cycles.append((anchor_ts, near_end, far_end))
+
+    near_v2, near_base, near_detail = [], [], []
+    far_v2, far_base, far_detail = [], [], []
+    for anchor_ts, near_end, far_end in cycles:
+        r_near = _strike_shift_ladder_v2_simulate(d, anchor_ts, near_end, call_pct, put_pct,
+                                                  triggers, shift_pts, breach_shift_pts, True)
+        b_near = _strike_shift_ladder_v2_simulate(d, anchor_ts, near_end, call_pct, put_pct,
+                                                  triggers, shift_pts, breach_shift_pts, False)
+        near_v2.append(r_near)
+        near_base.append(b_near)
+        near_detail.append({"anchor": anchor_ts, **r_near})
+        if far_end is not None:
+            r_far = _strike_shift_ladder_v2_simulate(d, anchor_ts, far_end, call_pct, put_pct,
+                                                     triggers, shift_pts, breach_shift_pts, True)
+            b_far = _strike_shift_ladder_v2_simulate(d, anchor_ts, far_end, call_pct, put_pct,
+                                                     triggers, shift_pts, breach_shift_pts, False)
+            far_v2.append(r_far)
+            far_base.append(b_far)
+            far_detail.append({"anchor": anchor_ts, **r_far})
+
+    def _bundle(v2_results, base_results, detail_rows):
+        agg = _ladder_v2_aggregate(v2_results)
+        agg["double_breach_rate_without_step4%"] = _ladder_v2_aggregate(base_results)["double_breach_rate%"]
+        return {"agg": agg, "detail": pd.DataFrame(detail_rows)}
+
+    return {"near": _bundle(near_v2, near_base, near_detail),
+            "far": _bundle(far_v2, far_base, far_detail),
+            "call_pct": call_pct, "put_pct": put_pct, "triggers": list(triggers),
+            "shift_pts": list(shift_pts), "breach_shift_pts": breach_shift_pts,
+            "n_cycles": len(cycles)}
