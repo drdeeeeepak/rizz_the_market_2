@@ -85,7 +85,8 @@ def _frozen(df: pd.DataFrame, height=360, reset=True):
     st.markdown(uict.candle_table_frozen_html(d, height=height), unsafe_allow_html=True)
 
 
-def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_rule=None) -> str:
+def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_rule=None,
+                        anchor_drift=None) -> str:
     """Bundle every table this page can produce into ONE text/csv file, each
     block prefixed with a '## N. TITLE' header — a single thing to hand back
     for review instead of juggling one download per section."""
@@ -133,16 +134,20 @@ def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_ru
             parts.append(f"## 6b. REAL-VOLUME + BREADTH-ON — CUTOFF: {col}\n"
                          + cdf.reset_index().to_csv())
 
+    if anchor_drift is not None and not anchor_drift.empty:
+        parts.append("## 7. ANCHOR-DRIFT CONTINUATION-VS-REVERSION SCAN\n"
+                     + anchor_drift.to_csv(index=False))
+
     if roll_rule is not None:
         if not roll_rule["near"].empty:
-            parts.append("## 7. ROLL-RULE SCAN — NEAR EXPIRY GRID\n"
+            parts.append("## 8. ROLL-RULE SCAN — NEAR EXPIRY GRID\n"
                          + roll_rule["near"].to_csv(index=False))
         if not roll_rule["far"].empty:
-            parts.append("## 7b. ROLL-RULE SCAN — BIWEEKLY (NEXT EXPIRY) GRID\n"
+            parts.append("## 8b. ROLL-RULE SCAN — BIWEEKLY (NEXT EXPIRY) GRID\n"
                          + roll_rule["far"].to_csv(index=False))
         best = pd.DataFrame([roll_rule["best_near"], roll_rule["best_far"]],
                             index=["best_near", "best_far"])
-        parts.append("## 7c. ROLL-RULE SCAN — BEST (X%, Y%)\n" + best.to_csv())
+        parts.append("## 8c. ROLL-RULE SCAN — BEST (X%, Y%)\n" + best.to_csv())
 
     return "\n\n".join(parts)
 
@@ -343,9 +348,34 @@ else:
     st.download_button("⬇ Download Dow retrace scan CSV", dow_scan.to_csv(index=False).encode("utf-8"),
                        file_name="dow_retrace_bucket_scan.csv", mime="text/csv")
 
-# ── 6. Roll-rule optimizer ───────────────────────────────────────────────────
+# ── 6. Anchor-drift — does Nifty mean-revert or continue? ───────────────────
 st.divider()
-st.subheader("6 · Roll-rule optimizer — find the best X%/Y% roll rule")
+st.subheader("6 · Anchor-drift — does Nifty mean-revert or continue?")
+st.caption("Buckets every day inside a weekly cycle by its CURRENT |drift| from the Tuesday "
+          "anchor, then checks where price ends up by THAT SAME cycle's close (next Tuesday): "
+          "did drift extend further the same way (**continuation**) or shrink/flip back toward "
+          "anchor (**mean-reversion**)? Tests claims like 'reverts below 2%, continues above 2%' "
+          "against real numbers instead of a hunch. avg_extension_pts > 0 → continuation on "
+          "average in that bucket; < 0 → reversion.")
+drift_bins_str = st.text_input("Drift bucket edges (%, comma-separated)", "0,1,2,3,5,100",
+                               key="drift_bins")
+try:
+    drift_bins = tuple(float(x.strip()) for x in drift_bins_str.split(","))
+except ValueError:
+    drift_bins = (0, 1, 2, 3, 5, 100)
+    st.caption("Couldn't parse bucket edges — using default 0,1,2,3,5,100.")
+
+adr = sl.anchor_drift_reversion_scan(daily, drift_bins=drift_bins)
+if adr.empty:
+    st.caption("Not enough Tuesday-anchored cycles in this history.")
+else:
+    _frozen(adr, height=min(60 + 30 * len(adr), 360), reset=False)
+    st.download_button("⬇ Download anchor-drift scan CSV", adr.to_csv(index=False).encode("utf-8"),
+                       file_name="anchor_drift_reversion_scan.csv", mime="text/csv")
+
+# ── 7. Roll-rule optimizer ───────────────────────────────────────────────────
+st.divider()
+st.subheader("7 · Roll-rule optimizer — find the best X%/Y% roll rule")
 st.caption("Your rule: sell CALL/PUT at a fixed % from the Tuesday anchor. Every time drift from "
           "anchor reaches a NEW multiple of X%, roll the OTHER (now-safer) leg inward by Y% of "
           "its OWN current strike — repeatable, as many times as drift keeps extending. Checks "
@@ -415,14 +445,15 @@ if "p23_roll_rule" in st.session_state:
         st.download_button("⬇ Download biweekly grid CSV", rr["far"].to_csv(index=False).encode("utf-8"),
                            file_name="roll_rule_far.csv", mime="text/csv", key="dl_roll_far")
 
-# ── 7. Download everything as one CSV ───────────────────────────────────────
+# ── 8. Download everything as one CSV ───────────────────────────────────────
 st.divider()
-st.subheader("7 · Download everything as one CSV")
+st.subheader("8 · Download everything as one CSV")
 st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
-          "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, and the "
-          "real-volume rerun / roll-rule scan if you ran them — into ONE file with "
-          "'## N. TITLE' section headers. Easiest single thing to hand back for review.")
+          "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, the "
+          "anchor-drift scan, and the real-volume rerun / roll-rule scan if you ran them — into "
+          "ONE file with '## N. TITLE' section headers. Easiest single thing to hand back for "
+          "review.")
 combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"),
-                               st.session_state.get("p23_roll_rule"))
+                               st.session_state.get("p23_roll_rule"), adr)
 st.download_button("⬇ Download everything (combined CSV)", combined.encode("utf-8"),
                    file_name="signal_library_full_export.csv", mime="text/csv", type="primary")

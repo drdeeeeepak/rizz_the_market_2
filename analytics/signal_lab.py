@@ -399,3 +399,61 @@ def roll_rule_scan(daily: pd.DataFrame, x_grid=(0.5, 1.0, 1.5, 2.0, 2.5),
 
     return {"near": near_df, "far": far_df, "best_near": _best(near_df), "best_far": _best(far_df),
             "call_pct": call_pct, "put_pct": put_pct, "n_cycles": len(cycles)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Anchor-drift continuation vs. mean-reversion — "does Nifty revert below X%
+# drift and continue above it?"
+# ══════════════════════════════════════════════════════════════════════════════
+
+def anchor_drift_reversion_scan(daily: pd.DataFrame,
+                                drift_bins=(0, 1, 2, 3, 5, 100)) -> pd.DataFrame:
+    """For every non-Tuesday day inside a weekly Tuesday-anchor cycle, buckets
+    that day's CURRENT |drift| from anchor, then checks where price ends up
+    at THAT SAME cycle's close (the following Tuesday): did drift EXTEND
+    further in the same direction (continuation) or shrink/flip back toward
+    anchor (mean-reversion)? Directly tests claims like 'reverts below 2%,
+    continues above 2%' with real numbers instead of a hunch.
+
+    extension = sign(drift_t) * (final_drift - drift_t):
+        > 0  → price kept moving the SAME way (continuation)
+        < 0  → price gave back ground toward/through anchor (reversion)
+    continuation_rate% = share of days in that bucket where extension > 0.
+
+    Shares the same Tuesday-anchor cycle definition as roll_rule_scan (each
+    calendar Tuesday actually present in `daily`; a Tuesday market holiday
+    just skips that week's anchor)."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    labels = [f"{drift_bins[i]}-{drift_bins[i + 1]}%" for i in range(len(drift_bins) - 1)]
+
+    rows = []
+    for i in range(len(tuesdays) - 1):
+        anchor_ts, end_ts = tuesdays[i], tuesdays[i + 1]
+        anchor = float(d.loc[anchor_ts, "close"])
+        final_drift = (float(d.loc[end_ts, "close"]) - anchor) / anchor * 100
+        window = d[(d.index > anchor_ts) & (d.index < end_ts)]
+        for ts, row in window.iterrows():
+            close = float(row["close"])
+            drift_t = (close - anchor) / anchor * 100
+            if drift_t == 0:
+                continue
+            extension = np.sign(drift_t) * (final_drift - drift_t)
+            rows.append({
+                "abs_drift_t": abs(drift_t),
+                "extension": extension,
+                "days_remaining": int((end_ts - ts).days),
+            })
+
+    if not rows:
+        return pd.DataFrame()
+
+    obs = pd.DataFrame(rows)
+    obs["bucket"] = pd.cut(obs["abs_drift_t"], bins=drift_bins, labels=labels, right=False)
+    agg = obs.groupby("bucket", observed=True).agg(
+        n=("extension", "size"),
+        **{"continuation_rate%": ("extension", lambda s: round(float((s > 0).mean() * 100), 1))},
+        avg_extension_pts=("extension", lambda s: round(float(s.mean()), 3)),
+        avg_days_remaining=("days_remaining", lambda s: round(float(s.mean()), 1)),
+    )
+    return agg.reset_index()
