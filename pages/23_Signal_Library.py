@@ -5,6 +5,7 @@
 #
 # You just: log in (Home → Kite) so the token is fresh, then click "Run Signal Library".
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -84,7 +85,7 @@ def _frozen(df: pd.DataFrame, height=360, reset=True):
     st.markdown(uict.candle_table_frozen_html(d, height=height), unsafe_allow_html=True)
 
 
-def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None) -> str:
+def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_rule=None) -> str:
     """Bundle every table this page can produce into ONE text/csv file, each
     block prefixed with a '## N. TITLE' header — a single thing to hand back
     for review instead of juggling one download per section."""
@@ -131,6 +132,17 @@ def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None) -> str:
         for col, cdf in real["cutoffs"].items():
             parts.append(f"## 6b. REAL-VOLUME + BREADTH-ON — CUTOFF: {col}\n"
                          + cdf.reset_index().to_csv())
+
+    if roll_rule is not None:
+        if not roll_rule["near"].empty:
+            parts.append("## 7. ROLL-RULE SCAN — NEAR EXPIRY GRID\n"
+                         + roll_rule["near"].to_csv(index=False))
+        if not roll_rule["far"].empty:
+            parts.append("## 7b. ROLL-RULE SCAN — BIWEEKLY (NEXT EXPIRY) GRID\n"
+                         + roll_rule["far"].to_csv(index=False))
+        best = pd.DataFrame([roll_rule["best_near"], roll_rule["best_far"]],
+                            index=["best_near", "best_far"])
+        parts.append("## 7c. ROLL-RULE SCAN — BEST (X%, Y%)\n" + best.to_csv())
 
     return "\n\n".join(parts)
 
@@ -331,13 +343,86 @@ else:
     st.download_button("⬇ Download Dow retrace scan CSV", dow_scan.to_csv(index=False).encode("utf-8"),
                        file_name="dow_retrace_bucket_scan.csv", mime="text/csv")
 
-# ── 6. Download everything as one CSV ───────────────────────────────────────
+# ── 7. Roll-rule optimizer ───────────────────────────────────────────────────
 st.divider()
-st.subheader("6 · Download everything as one CSV")
+st.subheader("7 · Roll-rule optimizer — find the best X%/Y% roll rule")
+st.caption("Your rule: sell CALL/PUT at a fixed % from the Tuesday anchor. Every time drift from "
+          "anchor reaches a NEW multiple of X%, roll the OTHER (now-safer) leg inward by Y% of "
+          "its OWN current strike — repeatable, as many times as drift keeps extending. Checks "
+          "whether that rolled leg avoids a CLOSE-based breach (not intraday wicks) through both "
+          "the near (this Tuesday) and biweekly (next Tuesday too, since positions run two "
+          "cycles) expiry windows.")
+st.caption("No real option premium/IV data in a spot-only backtest — 'best' is picked by "
+          "survival rate; avg_rolls is a rough stand-in for 'more premium captured', not a real "
+          "number. breach_on_rolled_leg% / breach_on_original_leg% split WHY a cycle failed: the "
+          "rule itself getting caught by a reversal, vs. the untouched original leg finally "
+          "giving way (a risk this rule was never trying to solve).")
+
+rc1, rc2 = st.columns(2)
+with rc1:
+    roll_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="roll_call_pct")
+with rc2:
+    roll_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="roll_put_pct")
+rc3, rc4 = st.columns(2)
+with rc3:
+    x_range = st.slider("X% grid range (drift trigger)", 0.25, 4.0, (0.5, 2.5), 0.25, key="roll_x_range")
+    x_step = st.select_slider("X% step", options=[0.25, 0.5, 1.0], value=0.5, key="roll_x_step")
+with rc4:
+    y_range = st.slider("Y% grid range (roll-in size)", 0.1, 3.0, (0.25, 1.5), 0.15, key="roll_y_range")
+    y_step = st.select_slider("Y% step", options=[0.1, 0.25, 0.5], value=0.25, key="roll_y_step")
+
+x_grid = tuple(np.round(np.arange(x_range[0], x_range[1] + 1e-9, x_step), 3))
+y_grid = tuple(np.round(np.arange(y_range[0], y_range[1] + 1e-9, y_step), 3))
+st.caption(f"Grid: X ∈ {list(x_grid)} · Y ∈ {list(y_grid)} → {len(x_grid) * len(y_grid)} combinations "
+          f"× {len(daily)} daily rows.")
+
+if st.button("▶ Run roll-rule scan"):
+    with st.spinner(f"Simulating {len(x_grid) * len(y_grid)} (X, Y) combinations across every weekly cycle…"):
+        rr = sl.roll_rule_scan(daily, x_grid=x_grid, y_grid=y_grid,
+                               call_pct=float(roll_call_pct), put_pct=float(roll_put_pct))
+    st.session_state.p23_roll_rule = rr
+
+if "p23_roll_rule" in st.session_state:
+    rr = st.session_state.p23_roll_rule
+    st.success(f"Simulated **{rr['n_cycles']}** weekly cycles · CALL {rr['call_pct']}% / "
+              f"PUT {rr['put_pct']}% from anchor")
+
+    _rr_keys = ("x%", "y%", "n", "survival_rate%", "avg_rolls",
+               "breach_on_rolled_leg%", "breach_on_original_leg%")
+    cA, cB = st.columns(2)
+    with cA:
+        st.markdown("**Best — near expiry (this week)**")
+        if rr["best_near"]:
+            st.json({k: rr["best_near"][k] for k in _rr_keys})
+    with cB:
+        st.markdown("**Best — biweekly (through next expiry too)**")
+        if rr["best_far"]:
+            st.json({k: rr["best_far"][k] for k in _rr_keys})
+
+    st.markdown("**Full grid — near expiry**")
+    if rr["near"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(rr["near"], height=min(60 + 28 * len(rr["near"]), 460), reset=False)
+        st.download_button("⬇ Download near-expiry grid CSV", rr["near"].to_csv(index=False).encode("utf-8"),
+                           file_name="roll_rule_near.csv", mime="text/csv", key="dl_roll_near")
+
+    st.markdown("**Full grid — biweekly (through next expiry)**")
+    if rr["far"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(rr["far"], height=min(60 + 28 * len(rr["far"]), 460), reset=False)
+        st.download_button("⬇ Download biweekly grid CSV", rr["far"].to_csv(index=False).encode("utf-8"),
+                           file_name="roll_rule_far.csv", mime="text/csv", key="dl_roll_far")
+
+# ── 8. Download everything as one CSV ───────────────────────────────────────
+st.divider()
+st.subheader("8 · Download everything as one CSV")
 st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
           "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, and the "
-          "real-volume rerun if you ran it — into ONE file with '## N. TITLE' section headers. "
-          "Easiest single thing to hand back for review.")
-combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"))
+          "real-volume rerun / roll-rule scan if you ran them — into ONE file with "
+          "'## N. TITLE' section headers. Easiest single thing to hand back for review.")
+combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"),
+                               st.session_state.get("p23_roll_rule"))
 st.download_button("⬇ Download everything (combined CSV)", combined.encode("utf-8"),
                    file_name="signal_library_full_export.csv", mime="text/csv", type="primary")

@@ -174,6 +174,48 @@ def run():
               set(dow_scan["sequence"].unique()) <= {"RISING", "FALLING"})
         check("dow_retrace_bucket_scan: n counts are positive", bool((dow_scan["n"] > 0).all()))
 
+    # ── 5c. roll_rule_scan — grid shape, best-pick, and a from-scratch baseline check ──
+    roll_daily = make_daily(n=800, seed=7)   # ~3y, plenty of Tuesdays
+    rr = sl.roll_rule_scan(roll_daily, x_grid=(0.5, 1.5, 3.0), y_grid=(0.25, 0.75, 1.5),
+                           call_pct=3.0, put_pct=3.5)
+    check("roll_rule_scan: near table nonempty", not rr["near"].empty, f"rows={len(rr['near'])}")
+    check("roll_rule_scan: far table nonempty", not rr["far"].empty, f"rows={len(rr['far'])}")
+    expected_cols = {"x%", "y%", "n", "survival_rate%", "avg_rolls",
+                     "breach_on_rolled_leg%", "breach_on_original_leg%"}
+    check("roll_rule_scan: near has expected columns", expected_cols.issubset(rr["near"].columns))
+    check("roll_rule_scan: grid size matches x_grid*y_grid", len(rr["near"]) == 3 * 3, str(len(rr["near"])))
+    check("roll_rule_scan: best_near is the max-survival row",
+          rr["best_near"]["survival_rate%"] == rr["near"]["survival_rate%"].max())
+    check("roll_rule_scan: best_far is the max-survival row",
+          rr["best_far"]["survival_rate%"] == rr["far"]["survival_rate%"].max())
+    # Within a fixed X, a BIGGER Y (larger roll-in) should never survive MORE than a smaller
+    # Y — rolling further in is strictly riskier, never safer, for the same trigger.
+    monotone = True
+    for x in (0.5, 1.5, 3.0):
+        sub = rr["near"][rr["near"]["x%"] == x].sort_values("y%")
+        if not (sub["survival_rate%"].diff().dropna() <= 1e-9).all():
+            monotone = False
+    check("roll_rule_scan: survival rate is non-increasing in Y for fixed X", monotone)
+
+    # Baseline sanity: with an effectively infinite X (never triggers, so never rolls), the
+    # near-window survival rate must exactly equal a plain "did spot ever close beyond the
+    # ORIGINAL static strikes" check computed independently, with no roll logic at all.
+    d_norm = sl._norm_daily(roll_daily)
+    tuesdays = sorted(d_norm.index[d_norm.index.weekday == 1])
+    manual_survivals = []
+    for i in range(len(tuesdays) - 1):
+        a_ts, end_ts = tuesdays[i], tuesdays[i + 1]
+        anchor = float(d_norm.loc[a_ts, "close"])
+        ce0, pe0 = anchor * 1.03, anchor * 0.965
+        window = d_norm[(d_norm.index > a_ts) & (d_norm.index <= end_ts)]
+        manual_survivals.append(bool(((window["close"] < ce0) & (window["close"] > pe0)).all()))
+    manual_rate = round(sum(manual_survivals) / len(manual_survivals) * 100, 1)
+    rr_baseline = sl.roll_rule_scan(roll_daily, x_grid=(1000.0,), y_grid=(0.5,),
+                                    call_pct=3.0, put_pct=3.5)
+    baseline_rate = float(rr_baseline["near"]["survival_rate%"].iloc[0])
+    check("roll_rule_scan: no-roll case matches an independent never-roll baseline",
+          abs(manual_rate - baseline_rate) < 0.2, f"{manual_rate} vs {baseline_rate}")
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
