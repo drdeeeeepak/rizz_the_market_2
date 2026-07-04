@@ -397,6 +397,59 @@ def run():
           "so the 40880 bounce survives — a %-of-anchor bug would shift to 40600 and breach)",
           r_ladder2["survived"], str(r_ladder2))
 
+    # ── 5h. strike_shift_ladder_v2_scan — shape + hand-built exact double-breach check ──
+    v2 = sl.strike_shift_ladder_v2_scan(roll_daily, call_pct=3.0, put_pct=3.5)
+    check("strike_shift_ladder_v2_scan: returns near and far keys",
+          set(v2.keys()) >= {"near", "far"}, str(list(v2.keys())))
+    for _k in ("near", "far"):
+        agg = v2[_k]["agg"]
+        check(f"strike_shift_ladder_v2_scan: {_k} agg has n>0", agg["n"] > 0, f"n={agg['n']}")
+        check(f"strike_shift_ladder_v2_scan: {_k} survival_rate% within [0,100]",
+              0 <= agg["survival_rate%"] <= 100, str(agg["survival_rate%"]))
+        _implied_survival = round((agg["n"] - agg["n_breached"]) / agg["n"] * 100, 1)
+        check(f"strike_shift_ladder_v2_scan: {_k} n_breached is consistent with survival_rate%",
+              abs(_implied_survival - agg["survival_rate%"]) < 0.15,
+              f"implied={_implied_survival} vs reported={agg['survival_rate%']}")
+        check(f"strike_shift_ladder_v2_scan: {_k} detail has one row per cycle",
+              len(v2[_k]["detail"]) == agg["n"],
+              f"detail_rows={len(v2[_k]['detail'])} vs n={agg['n']}")
+
+    # Hand-built exact check at anchor=20000 (CALL=20600, PUT=19300): Wed/Thu/Fri drift
+    # +1%/+2%/+2.5% exhausts the up-ladder (PUT shifted to 19600 via 50+50+200), Mon jumps to
+    # 20640 — BREACHES the original 20600 CALL (up-ladder already maxed, so no further drift
+    # shift fires) — the 4th step then shifts PUT one more 300pts to 19900. Tue crashes to
+    # 19800: WITH the 4th shift, 19800 <= 19900 -> a DOUBLE BREACH. WITHOUT it (baseline), PUT
+    # would still be at 19600, and 19800 > 19600 -> NO second breach — demonstrating the 4th
+    # step can turn a contained single-leg loss into a double breach.
+    v2_idx = pd.bdate_range("2023-02-07", periods=6, freq="B")   # Tue,Wed,Thu,Fri,Mon,Tue
+    v2_close = [20000.0, 20200.0, 20400.0, 20500.0, 20640.0, 19800.0]
+    v2_df = pd.DataFrame({
+        "open": v2_close, "high": [c * 1.001 for c in v2_close],
+        "low": [c * 0.999 for c in v2_close], "close": v2_close,
+        "volume": [1000.0] * 6,
+    }, index=v2_idx)
+    d_v2 = sl._norm_daily(v2_df)
+    r_v2_with = sl._strike_shift_ladder_v2_simulate(d_v2, v2_idx[0], v2_idx[5], call_pct=3.0,
+                                                    put_pct=3.5, triggers=(1.0, 2.0, 2.5),
+                                                    shift_pts=(50.0, 50.0, 200.0),
+                                                    breach_shift_pts=300.0, apply_breach_shift=True)
+    check("strike_shift_ladder_v2_scan: hand-built — primary breach is CALL, emergency shift used",
+          not r_v2_with["survived"] and r_v2_with["breach_side"] == "call"
+          and r_v2_with["emergency_shift_used"] is True, str(r_v2_with))
+    check("strike_shift_ladder_v2_scan: hand-built — WITH the 4th step, the crash to 19800 "
+          "double-breaches (19800 <= shifted PUT 19900)", r_v2_with["double_breach"] is True,
+          str(r_v2_with))
+    r_v2_without = sl._strike_shift_ladder_v2_simulate(d_v2, v2_idx[0], v2_idx[5], call_pct=3.0,
+                                                       put_pct=3.5, triggers=(1.0, 2.0, 2.5),
+                                                       shift_pts=(50.0, 50.0, 200.0),
+                                                       breach_shift_pts=300.0, apply_breach_shift=False)
+    check("strike_shift_ladder_v2_scan: hand-built — WITHOUT the 4th step (baseline), the same "
+          "19800 crash does NOT double-breach (19800 > un-shifted PUT 19600) — the 4th "
+          "adjustment made this specific cycle strictly worse",
+          not r_v2_without["survived"] and r_v2_without["breach_side"] == "call"
+          and r_v2_without["double_breach"] is False and r_v2_without["emergency_shift_used"] is False,
+          str(r_v2_without))
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
