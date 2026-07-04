@@ -216,6 +216,39 @@ def run():
     check("roll_rule_scan: no-roll case matches an independent never-roll baseline",
           abs(manual_rate - baseline_rate) < 0.2, f"{manual_rate} vs {baseline_rate}")
 
+    # ── 5d. anchor_drift_reversion_scan — shape + a hand-computed extension check ────
+    adr = sl.anchor_drift_reversion_scan(roll_daily)
+    check("anchor_drift_reversion_scan: returns a nonempty DataFrame", not adr.empty, f"rows={len(adr)}")
+    if not adr.empty:
+        expected_cols = {"bucket", "n", "continuation_rate%", "avg_extension_pts", "avg_days_remaining"}
+        check("anchor_drift_reversion_scan: has expected columns", expected_cols.issubset(adr.columns),
+              str(list(adr.columns)))
+        check("anchor_drift_reversion_scan: n counts are positive", bool((adr["n"] > 0).all()))
+        check("anchor_drift_reversion_scan: continuation_rate% is a valid percentage",
+              bool(((adr["continuation_rate%"] >= 0) & (adr["continuation_rate%"] <= 100)).all()))
+
+    # Hand-built cycle: Tue anchor=100, Wed=100.5 (drift +0.5%, bucket 0-1%), Thu=103.0
+    # (drift +3.0%, bucket 3-5%), next Tue close=100.3 (final_drift=+0.3%).
+    # Wed extension = +1 * (0.3 - 0.5)  = -0.2  (reverted — final ended BELOW Wed's own reading)
+    # Thu extension = +1 * (0.3 - 3.0)  = -2.7  (reverted hard — fell from +3% back to +0.3%)
+    hand_idx = pd.bdate_range("2023-02-07", periods=6, freq="B")   # Tue,Wed,Thu,Fri,Mon,Tue
+    check("hand-built calendar starts on a Tuesday", hand_idx[0].weekday() == 1, str(hand_idx[0]))
+    hand_close = [100.0, 100.5, 103.0, 102.0, 101.0, 100.3]
+    hand_df = pd.DataFrame({
+        "open": hand_close, "high": [c * 1.001 for c in hand_close],
+        "low": [c * 0.999 for c in hand_close], "close": hand_close,
+        "volume": [1000.0] * 6,
+    }, index=hand_idx)
+    hand_res = sl.anchor_drift_reversion_scan(hand_df, drift_bins=(0, 1, 3, 100))
+    row_0_1 = hand_res[hand_res["bucket"] == "0-1%"]
+    row_3_100 = hand_res[hand_res["bucket"] == "3-100%"]
+    check("anchor_drift_reversion_scan: hand-built Wed (0-1% bucket) extension matches -0.2",
+          not row_0_1.empty and abs(float(row_0_1["avg_extension_pts"].iloc[0]) - (-0.2)) < 1e-6,
+          str(row_0_1["avg_extension_pts"].tolist() if not row_0_1.empty else "bucket missing"))
+    check("anchor_drift_reversion_scan: hand-built Thu (3-100% bucket) extension matches -2.7",
+          not row_3_100.empty and abs(float(row_3_100["avg_extension_pts"].iloc[0]) - (-2.7)) < 1e-6,
+          str(row_3_100["avg_extension_pts"].tolist() if not row_3_100.empty else "bucket missing"))
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
