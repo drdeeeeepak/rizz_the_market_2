@@ -406,6 +406,35 @@ def roll_rule_scan(daily: pd.DataFrame, x_grid=(0.5, 1.0, 1.5, 2.0, 2.5),
 # drift and continue above it?"
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _anchor_drift_observations(d: pd.DataFrame, weeks: int = 1) -> pd.DataFrame:
+    """Shared row-builder for the anchor-drift scans. anchor_ts is a Tuesday's
+    close; end_ts is `weeks` Tuesdays later (1 = the immediately following
+    Tuesday, 2 = the Tuesday after that — the biweekly/'far' cycle). Every
+    other-than-anchor day strictly inside that window contributes one row:
+    its |drift| from anchor at that point, and the signed 'extension' between
+    then and the cycle's end (>0 = continuation, <0 = reversion toward/through
+    anchor). Same cycle definition as roll_rule_scan."""
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    rows = []
+    for i in range(len(tuesdays) - weeks):
+        anchor_ts, end_ts = tuesdays[i], tuesdays[i + weeks]
+        anchor = float(d.loc[anchor_ts, "close"])
+        final_drift = (float(d.loc[end_ts, "close"]) - anchor) / anchor * 100
+        window = d[(d.index > anchor_ts) & (d.index < end_ts)]
+        for ts, row in window.iterrows():
+            close = float(row["close"])
+            drift_t = (close - anchor) / anchor * 100
+            if drift_t == 0:
+                continue
+            extension = np.sign(drift_t) * (final_drift - drift_t)
+            rows.append({
+                "abs_drift_t": abs(drift_t),
+                "extension": extension,
+                "days_remaining": int((end_ts - ts).days),
+            })
+    return pd.DataFrame(rows)
+
+
 def anchor_drift_reversion_scan(daily: pd.DataFrame,
                                 drift_bins=(0, 1, 2, 3, 5, 100)) -> pd.DataFrame:
     """For every non-Tuesday day inside a weekly Tuesday-anchor cycle, buckets
@@ -424,31 +453,12 @@ def anchor_drift_reversion_scan(daily: pd.DataFrame,
     calendar Tuesday actually present in `daily`; a Tuesday market holiday
     just skips that week's anchor)."""
     d = _norm_daily(daily)
-    tuesdays = sorted(d.index[d.index.weekday == 1])
     labels = [f"{drift_bins[i]}-{drift_bins[i + 1]}%" for i in range(len(drift_bins) - 1)]
-
-    rows = []
-    for i in range(len(tuesdays) - 1):
-        anchor_ts, end_ts = tuesdays[i], tuesdays[i + 1]
-        anchor = float(d.loc[anchor_ts, "close"])
-        final_drift = (float(d.loc[end_ts, "close"]) - anchor) / anchor * 100
-        window = d[(d.index > anchor_ts) & (d.index < end_ts)]
-        for ts, row in window.iterrows():
-            close = float(row["close"])
-            drift_t = (close - anchor) / anchor * 100
-            if drift_t == 0:
-                continue
-            extension = np.sign(drift_t) * (final_drift - drift_t)
-            rows.append({
-                "abs_drift_t": abs(drift_t),
-                "extension": extension,
-                "days_remaining": int((end_ts - ts).days),
-            })
-
-    if not rows:
+    obs = _anchor_drift_observations(d, weeks=1)
+    if obs.empty:
         return pd.DataFrame()
 
-    obs = pd.DataFrame(rows)
+    obs = obs.copy()
     obs["bucket"] = pd.cut(obs["abs_drift_t"], bins=drift_bins, labels=labels, right=False)
     agg = obs.groupby("bucket", observed=True).agg(
         n=("extension", "size"),
@@ -457,3 +467,61 @@ def anchor_drift_reversion_scan(daily: pd.DataFrame,
         avg_days_remaining=("days_remaining", lambda s: round(float(s.mean()), 1)),
     )
     return agg.reset_index()
+
+
+def anchor_drift_optimum_threshold_scan(daily: pd.DataFrame, drift_grid=None,
+                                        min_n_per_side: int = 15) -> dict:
+    """Find the single drift% breakpoint that best separates 'reverts below
+    it' from 'continues above it' — instead of pre-picked buckets, scans a
+    grid of candidate thresholds X and scores each one by how well the split
+    (abs_drift_t < X) vs (abs_drift_t >= X) matches (reversion) vs
+    (continuation), for BOTH the one-week and two-week (biweekly) cycle.
+
+    For each threshold X:
+      reversion_rate_below%     = % of below-X observations where extension < 0
+      continuation_rate_above%  = % of at/above-X observations where extension > 0
+      accuracy%                 = n-weighted average of those two rates — how
+                                   often the 'below reverts / above continues'
+                                   rule of thumb would have been right overall
+
+    Thresholds where either side has fewer than `min_n_per_side` observations
+    are dropped (too few samples to trust). The 'best' row per horizon is the
+    threshold with the highest accuracy%.
+
+    Returns {'1_week': {'scan': DataFrame, 'best': dict|None},
+             '2_week': {'scan': DataFrame, 'best': dict|None}}."""
+    d = _norm_daily(daily)
+    if drift_grid is None:
+        drift_grid = np.arange(0.25, 5.01, 0.25)
+
+    out = {}
+    for weeks, key in ((1, "1_week"), (2, "2_week")):
+        obs = _anchor_drift_observations(d, weeks=weeks)
+        if obs.empty:
+            out[key] = {"scan": pd.DataFrame(), "best": None}
+            continue
+        rows = []
+        for x in drift_grid:
+            x = float(x)
+            below = obs[obs["abs_drift_t"] < x]
+            above = obs[obs["abs_drift_t"] >= x]
+            n_below, n_above = int(len(below)), int(len(above))
+            if n_below < min_n_per_side or n_above < min_n_per_side:
+                continue
+            reversion_rate_below = round(float((below["extension"] < 0).mean() * 100), 1)
+            continuation_rate_above = round(float((above["extension"] > 0).mean() * 100), 1)
+            accuracy = round(
+                (n_below * reversion_rate_below + n_above * continuation_rate_above)
+                / (n_below + n_above), 1)
+            rows.append({
+                "threshold%": round(x, 2),
+                "n_below": n_below, "reversion_rate_below%": reversion_rate_below,
+                "n_above": n_above, "continuation_rate_above%": continuation_rate_above,
+                "accuracy%": accuracy,
+            })
+        scan_df = pd.DataFrame(rows)
+        best = None
+        if not scan_df.empty:
+            best = scan_df.loc[scan_df["accuracy%"].idxmax()].to_dict()
+        out[key] = {"scan": scan_df, "best": best}
+    return out
