@@ -297,6 +297,41 @@ def run():
     check("anchor_drift_optimum_threshold_scan: hand-built 2_week is empty (only 2 Tuesdays present)",
           hand_opt["2_week"]["scan"].empty and hand_opt["2_week"]["best"] is None)
 
+    # ── 5f. anchor_close_distribution_scan — shape + hand-built exact check ─────
+    dist = sl.anchor_close_distribution_scan(roll_daily)
+    check("anchor_close_distribution_scan: returns 1_week and 2_week keys",
+          set(dist.keys()) == {"1_week", "2_week"}, str(list(dist.keys())))
+    dist_1w = dist["1_week"]
+    check("anchor_close_distribution_scan: 1_week is nonempty", not dist_1w.empty,
+          f"rows={len(dist_1w)}")
+    if not dist_1w.empty:
+        expected_cols = {"direction", "bucket", "n", "pct_of_all_cycles%"}
+        check("anchor_close_distribution_scan: has expected columns",
+              expected_cols.issubset(dist_1w.columns), str(list(dist_1w.columns)))
+        check("anchor_close_distribution_scan: direction is only up/down",
+              set(dist_1w["direction"].unique()) <= {"up", "down"},
+              str(dist_1w["direction"].unique().tolist()))
+        check("anchor_close_distribution_scan: pct_of_all_cycles% across up+down sums to ~100%",
+              abs(float(dist_1w["pct_of_all_cycles%"].sum()) - 100.0) < 0.5,
+              str(dist_1w["pct_of_all_cycles%"].sum()))
+        check("anchor_close_distribution_scan: has the 5%+ catch-all bucket",
+              "5%+" in set(dist_1w["bucket"]), str(sorted(dist_1w["bucket"].unique().tolist())))
+
+    # Hand-built exact check, same 6-day calendar: single 1-week cycle, anchor=100,
+    # final close=100.3 → final_drift=+0.3% → "up" direction, "0-0.5%" bucket, the ONLY
+    # nonzero cell across the entire table (n=1, pct_of_all_cycles%=100.0).
+    hand_dist = sl.anchor_close_distribution_scan(hand_df)
+    hand_1w = hand_dist["1_week"]
+    up_row = hand_1w[(hand_1w["direction"] == "up") & (hand_1w["bucket"] == "0-0.5%")]
+    check("anchor_close_distribution_scan: hand-built single cycle lands in up/0-0.5% at 100%",
+          not up_row.empty and int(up_row["n"].iloc[0]) == 1
+          and abs(float(up_row["pct_of_all_cycles%"].iloc[0]) - 100.0) < 1e-9,
+          str(up_row.to_dict("records")) if not up_row.empty else "row missing")
+    check("anchor_close_distribution_scan: hand-built — every other bucket/direction is n=0",
+          int(hand_1w["n"].sum()) == 1, f"total_n={hand_1w['n'].sum()}")
+    check("anchor_close_distribution_scan: hand-built 2_week is empty (only 2 Tuesdays present)",
+          hand_dist["2_week"].empty)
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),

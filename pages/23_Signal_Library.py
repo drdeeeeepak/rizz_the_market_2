@@ -182,6 +182,42 @@ h1_days = st.slider("1H lookback for Dow Theory / EMA Slope Phases (trading days
 all_labels = list(sa.ADAPTERS.keys())
 selected = st.multiselect("Signals to run", all_labels, default=all_labels)
 
+# ── Standalone: anchor close-distribution scan ──────────────────────────────
+# Deliberately placed BEFORE the "Run Signal Library" gate below (and given
+# its OWN session_state flag) so this can run on its own — it only needs
+# daily Nifty candles, not the 1H data / futures data / adapter suite the
+# full leaderboard run below pulls in.
+st.divider()
+st.subheader("Anchor close-distribution — % of weeks/biweeks closing in each 0.5% band")
+st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
+          "candles. For every Tuesday-anchored cycle, buckets the FINAL close-to-close drift "
+          "from anchor (next Tuesday for 1-week, the Tuesday after that for 2-week/biweekly) "
+          "into fixed 0.5% bands, split by direction (up-close vs down-close), with anything "
+          "beyond 5% grouped into one '5%+' catch-all. pct_of_all_cycles% is out of ALL cycles "
+          "for that window — the up-row and down-row percentages sum to 100% together. This is "
+          "the direct histogram behind picking a strike distance.")
+
+if st.button("▶ Run anchor close-distribution scan"):
+    with st.spinner("Fetching daily history…"):
+        st.session_state.p23_dist_result = sl.anchor_close_distribution_scan(_load_daily(lookback))
+
+if "p23_dist_result" in st.session_state:
+    dist = st.session_state.p23_dist_result
+    dc1, dc2 = st.columns(2)
+    for _key, _label, _col in (("1_week", "1-week (Tuesday → next Tuesday)", dc1),
+                               ("2_week", "2-week / biweekly (Tuesday → Tuesday after next)", dc2)):
+        ddf = dist[_key]
+        with _col:
+            st.markdown(f"**{_label}**")
+            if ddf.empty:
+                st.caption("Not enough Tuesday-anchored cycles in this history.")
+            else:
+                _frozen(ddf, height=min(60 + 24 * len(ddf), 460), reset=False)
+                st.download_button(f"⬇ Download {_label} distribution CSV",
+                                   ddf.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"anchor_close_distribution_{_key}.csv",
+                                   mime="text/csv", key=f"dl_dist_{_key}")
+
 # Gate on a session_state flag rather than the button's own return value: st.button()
 # is only True on the ONE rerun triggered by that exact click — clicking ANY other
 # widget further down the page (the §2 selectbox, §3 radio, §4 re-run button) triggers

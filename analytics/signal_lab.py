@@ -525,3 +525,58 @@ def anchor_drift_optimum_threshold_scan(daily: pd.DataFrame, drift_grid=None,
             best = scan_df.loc[scan_df["accuracy%"].idxmax()].to_dict()
         out[key] = {"scan": scan_df, "best": best}
     return out
+
+
+def anchor_close_distribution_scan(daily: pd.DataFrame, bin_width: float = 0.5,
+                                   cap: float = 5.0) -> dict:
+    """Histogram of where Nifty actually CLOSES relative to the Tuesday anchor
+    at cycle-end — 1-week (next Tuesday) and 2-week/biweekly (the Tuesday
+    after that) — split by direction (up-close vs down-close) and bucketed
+    into fixed bin_width% bands, with everything beyond `cap`% grouped into
+    one '{cap}%+' catch-all. Unlike anchor_drift_reversion_scan (which tracks
+    MID-CYCLE readings vs where the cycle ends up), this only looks at the
+    single final close of each cycle — the direct histogram behind picking a
+    strike distance: 'what % of weeks/biweeks end up beyond X% from anchor,
+    and in which direction'.
+
+    pct_of_all_cycles% is out of ALL cycles for that window (not just that
+    direction), so the up-row and down-row percentages for one window sum to
+    100% together.
+
+    Only needs `daily` — no 1H/futures data, no adapter suite — so this can
+    run standalone without the full Signal Library pipeline.
+
+    Returns {'1_week': DataFrame, '2_week': DataFrame}, each with columns
+    direction / bucket / n / pct_of_all_cycles%."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+
+    edges = list(np.arange(0, cap, bin_width)) + [cap, np.inf]
+    labels = [f"{edges[i]:g}-{edges[i + 1]:g}%" for i in range(len(edges) - 2)] + [f"{cap:g}%+"]
+
+    def _one(weeks: int) -> pd.DataFrame:
+        rows = []
+        for i in range(len(tuesdays) - weeks):
+            anchor_ts, end_ts = tuesdays[i], tuesdays[i + weeks]
+            anchor = float(d.loc[anchor_ts, "close"])
+            final_drift = (float(d.loc[end_ts, "close"]) - anchor) / anchor * 100
+            rows.append({"direction": "up" if final_drift >= 0 else "down",
+                        "abs_drift": abs(final_drift)})
+        if not rows:
+            return pd.DataFrame()
+        obs = pd.DataFrame(rows)
+        total = len(obs)
+        obs["bucket"] = pd.cut(obs["abs_drift"], bins=edges, labels=labels, right=False)
+        out_rows = []
+        for direction in ("up", "down"):
+            sub = obs[obs["direction"] == direction]
+            for label in labels:
+                n = int((sub["bucket"] == label).sum())
+                out_rows.append({"direction": direction, "bucket": label, "n": n,
+                                 "pct_of_all_cycles%": round(n / total * 100, 1)})
+        out = pd.DataFrame(out_rows)
+        order = {lbl: i for i, lbl in enumerate(labels)}
+        out["_o"] = out["bucket"].map(order)
+        return out.sort_values(["direction", "_o"]).drop(columns="_o").reset_index(drop=True)
+
+    return {"1_week": _one(1), "2_week": _one(2)}
