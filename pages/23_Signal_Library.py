@@ -86,7 +86,7 @@ def _frozen(df: pd.DataFrame, height=360, reset=True):
 
 
 def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_rule=None,
-                        anchor_drift=None) -> str:
+                        anchor_drift=None, anchor_drift_opt=None) -> str:
     """Bundle every table this page can produce into ONE text/csv file, each
     block prefixed with a '## N. TITLE' header — a single thing to hand back
     for review instead of juggling one download per section."""
@@ -137,6 +137,19 @@ def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_ru
     if anchor_drift is not None and not anchor_drift.empty:
         parts.append("## 7. ANCHOR-DRIFT CONTINUATION-VS-REVERSION SCAN\n"
                      + anchor_drift.to_csv(index=False))
+
+    if anchor_drift_opt is not None:
+        for key, label in (("1_week", "1-WEEK"), ("2_week", "2-WEEK (BIWEEKLY)")):
+            bundle = anchor_drift_opt.get(key) or {}
+            scan_df = bundle.get("scan")
+            if scan_df is None or scan_df.empty:
+                continue
+            parts.append(f"## 7b. ANCHOR-DRIFT OPTIMUM THRESHOLD SCAN — {label}\n"
+                         + scan_df.to_csv(index=False))
+            best = bundle.get("best")
+            if best:
+                parts.append(f"## 7c. ANCHOR-DRIFT OPTIMUM THRESHOLD — BEST ({label})\n"
+                             + pd.DataFrame([best]).to_csv(index=False))
 
     if roll_rule is not None:
         if not roll_rule["near"].empty:
@@ -373,6 +386,44 @@ else:
     st.download_button("⬇ Download anchor-drift scan CSV", adr.to_csv(index=False).encode("utf-8"),
                        file_name="anchor_drift_reversion_scan.csv", mime="text/csv")
 
+# ── 6b. Anchor-drift — optimum threshold (best breakpoint) ─────────────────
+st.divider()
+st.subheader("6b · Anchor-drift — optimum threshold (best breakpoint)")
+st.caption("Instead of fixed buckets, scans every candidate drift% threshold X and scores the "
+          "'reverts below X% / continues above X%' rule of thumb directly: "
+          "**reversion_rate_below%** = among days already under X% drift, how often price gave "
+          "ground back by that cycle's close; **continuation_rate_above%** = among days at/over "
+          "X%, how often it kept extending; **accuracy%** is the n-weighted blend of the two — "
+          "the single X% with the highest accuracy% is the cleanest breakpoint this history "
+          "supports. Run for BOTH the 1-week cycle (Tuesday → next Tuesday) and the 2-week/"
+          "biweekly cycle (Tuesday → the Tuesday after next), since positions are held both.")
+
+opt = sl.anchor_drift_optimum_threshold_scan(daily)
+
+oc1, oc2 = st.columns(2)
+for _key, _label, _col in (("1_week", "Best — 1-week", oc1),
+                           ("2_week", "Best — 2-week (biweekly)", oc2)):
+    bundle = opt[_key]
+    with _col:
+        st.markdown(f"**{_label}**")
+        if bundle["best"] is None:
+            st.caption("Not enough Tuesday-anchored cycles / observations per side in this history.")
+        else:
+            st.json({k: bundle["best"][k] for k in
+                    ("threshold%", "n_below", "reversion_rate_below%",
+                     "n_above", "continuation_rate_above%", "accuracy%")})
+
+for _key, _label in (("1_week", "1-week"), ("2_week", "2-week / biweekly")):
+    scan_df = opt[_key]["scan"]
+    if scan_df.empty:
+        continue
+    st.markdown(f"**Full threshold scan — {_label}**")
+    _frozen(scan_df, height=min(60 + 24 * len(scan_df), 420), reset=False)
+    st.download_button(f"⬇ Download {_label} threshold scan CSV",
+                       scan_df.to_csv(index=False).encode("utf-8"),
+                       file_name=f"anchor_drift_optimum_threshold_{_key}.csv", mime="text/csv",
+                       key=f"dl_opt_{_key}")
+
 # ── 7. Roll-rule optimizer ───────────────────────────────────────────────────
 st.divider()
 st.subheader("7 · Roll-rule optimizer — find the best X%/Y% roll rule")
@@ -450,10 +501,10 @@ st.divider()
 st.subheader("8 · Download everything as one CSV")
 st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
           "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, the "
-          "anchor-drift scan, and the real-volume rerun / roll-rule scan if you ran them — into "
-          "ONE file with '## N. TITLE' section headers. Easiest single thing to hand back for "
-          "review.")
+          "anchor-drift scan and its optimum-threshold scan, and the real-volume rerun / "
+          "roll-rule scan if you ran them — into ONE file with '## N. TITLE' section headers. "
+          "Easiest single thing to hand back for review.")
 combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"),
-                               st.session_state.get("p23_roll_rule"), adr)
+                               st.session_state.get("p23_roll_rule"), adr, opt)
 st.download_button("⬇ Download everything (combined CSV)", combined.encode("utf-8"),
                    file_name="signal_library_full_export.csv", mime="text/csv", type="primary")

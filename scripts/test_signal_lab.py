@@ -249,6 +249,54 @@ def run():
           not row_3_100.empty and abs(float(row_3_100["avg_extension_pts"].iloc[0]) - (-2.7)) < 1e-6,
           str(row_3_100["avg_extension_pts"].tolist() if not row_3_100.empty else "bucket missing"))
 
+    # ── 5e. anchor_drift_optimum_threshold_scan — shape + exhaustiveness on real-ish data ──
+    obs_1w = sl._anchor_drift_observations(sl._norm_daily(roll_daily), weeks=1)
+    opt = sl.anchor_drift_optimum_threshold_scan(roll_daily, min_n_per_side=10)
+    check("anchor_drift_optimum_threshold_scan: returns 1_week and 2_week keys",
+          set(opt.keys()) == {"1_week", "2_week"}, str(list(opt.keys())))
+    scan_1w = opt["1_week"]["scan"]
+    check("anchor_drift_optimum_threshold_scan: 1_week scan is nonempty", not scan_1w.empty,
+          f"rows={len(scan_1w)}")
+    if not scan_1w.empty:
+        expected_cols = {"threshold%", "n_below", "reversion_rate_below%",
+                         "n_above", "continuation_rate_above%", "accuracy%"}
+        check("anchor_drift_optimum_threshold_scan: has expected columns",
+              expected_cols.issubset(scan_1w.columns), str(list(scan_1w.columns)))
+        check("anchor_drift_optimum_threshold_scan: every threshold's n_below+n_above covers ALL "
+              "1-week observations exactly (below/above is a full partition)",
+              bool((scan_1w["n_below"] + scan_1w["n_above"] == len(obs_1w)).all()),
+              f"len(obs_1w)={len(obs_1w)}")
+        check("anchor_drift_optimum_threshold_scan: accuracy% within [0, 100]",
+              bool(((scan_1w["accuracy%"] >= 0) & (scan_1w["accuracy%"] <= 100)).all()))
+        check("anchor_drift_optimum_threshold_scan: both sides respect min_n_per_side",
+              bool((scan_1w["n_below"] >= 10).all() and (scan_1w["n_above"] >= 10).all()))
+        best_1w = opt["1_week"]["best"]
+        check("anchor_drift_optimum_threshold_scan: 'best' row is the max-accuracy row in the scan",
+              best_1w is not None and abs(best_1w["accuracy%"] - scan_1w["accuracy%"].max()) < 1e-9)
+
+    # Hand-built exact check, reusing the same 6-day calendar as the bucket-scan test above
+    # (Wed/Thu/Fri/Mon drift = 0.5/3.0/2.0/1.0%, ALL of which reverted toward final_drift=0.3%,
+    # so reversion_rate_below is always 100% and continuation_rate_above is always 0% —
+    # accuracy% reduces to exactly 100 * n_below / total, which can be hand-verified per threshold).
+    hand_opt = sl.anchor_drift_optimum_threshold_scan(hand_df, drift_grid=(1.0, 2.0, 3.0),
+                                                      min_n_per_side=1)
+    hand_scan = hand_opt["1_week"]["scan"]
+    check("anchor_drift_optimum_threshold_scan: hand-built scan has one row per grid threshold",
+          len(hand_scan) == 3, f"rows={len(hand_scan)}")
+    _expected_acc = {1.0: 25.0, 2.0: 50.0, 3.0: 75.0}
+    _acc_ok = len(hand_scan) == 3 and all(
+        abs(float(hand_scan.loc[hand_scan["threshold%"] == t, "accuracy%"].iloc[0]) - acc) < 1e-6
+        for t, acc in _expected_acc.items())
+    check("anchor_drift_optimum_threshold_scan: hand-built accuracy% matches exact computation "
+          "(25.0 / 50.0 / 75.0 at thresholds 1.0 / 2.0 / 3.0)", _acc_ok,
+          str(hand_scan[["threshold%", "n_below", "n_above", "accuracy%"]].to_dict("records"))
+          if not hand_scan.empty else "scan empty")
+    check("anchor_drift_optimum_threshold_scan: hand-built best threshold is 3.0 (highest accuracy)",
+          hand_opt["1_week"]["best"] is not None and hand_opt["1_week"]["best"]["threshold%"] == 3.0,
+          str(hand_opt["1_week"]["best"]))
+    check("anchor_drift_optimum_threshold_scan: hand-built 2_week is empty (only 2 Tuesdays present)",
+          hand_opt["2_week"]["scan"].empty and hand_opt["2_week"]["best"] is None)
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
