@@ -347,14 +347,16 @@ def run():
               len(ladder[_k]["detail"]) == agg["n"],
               f"detail_rows={len(ladder[_k]['detail'])} vs n={agg['n']}")
 
-    # Hand-built exact check — reproduces the user's worked example (anchor=100, CALL=103,
-    # PUT=96.5): Wed -1% (-> dn_step=1, CALL 102.75), Thu -2% (-> dn_step=2, CALL 102.50),
-    # Fri -2.5% (-> dn_step=3, CALL 101.50 — matches 'still 4% from a 97.5 cmp'), then Mon
-    # BOUNCES to 102: the ORIGINAL 103 strike would NOT breach (102 < 103), but the
-    # ladder-shifted 101.50 strike DOES (102 >= 101.50) — demonstrating the whipsaw risk of
-    # shifting the safe leg inward: the ladder can turn a survivable week into a breach.
+    # Hand-built exact check at a realistic Nifty scale (anchor=20000, so the FIXED-point
+    # shifts (50, 50, 200) are meaningful — reproduces the user's worked example: CALL
+    # starts at 20600 (3%), PUT at 19300 (3.5%). Wed -1% (19800 -> dn_step=1, CALL 20550),
+    # Thu -2% (19600 -> dn_step=2, CALL 20500), Fri -2.5% (19500 -> dn_step=3, CALL 20300 —
+    # distance to 19500 is 800pts = 4.0% of anchor, matching 'still 4% from cmp'), then Mon
+    # BOUNCES to 20450 (+2.25%): the ORIGINAL 20600 strike would NOT breach (20450 < 20600),
+    # but the ladder-shifted 20300 strike DOES (20450 >= 20300) — demonstrating the whipsaw
+    # risk of shifting the safe leg inward: the ladder can turn a survivable week into a breach.
     ladder_idx = pd.bdate_range("2023-02-07", periods=6, freq="B")   # Tue,Wed,Thu,Fri,Mon,Tue
-    ladder_close = [100.0, 99.0, 98.0, 97.5, 102.0, 101.0]
+    ladder_close = [20000.0, 19800.0, 19600.0, 19500.0, 20450.0, 20100.0]
     ladder_df = pd.DataFrame({
         "open": ladder_close, "high": [c * 1.001 for c in ladder_close],
         "low": [c * 0.999 for c in ladder_close], "close": ladder_close,
@@ -363,17 +365,37 @@ def run():
     d_ladder = sl._norm_daily(ladder_df)
     r_ladder = sl._strike_shift_ladder_simulate(d_ladder, ladder_idx[0], ladder_idx[5],
                                                 call_pct=3.0, put_pct=3.5,
-                                                triggers=(1.0, 2.0, 2.5), shifts=(0.25, 0.25, 1.0))
+                                                triggers=(1.0, 2.0, 2.5), shift_pts=(50.0, 50.0, 200.0))
     check("strike_shift_ladder_scan: hand-built whipsaw breaches on the shifted CALL leg",
           not r_ladder["survived"] and r_ladder["breach_side"] == "call"
           and r_ladder["breach_was_shifted"] is True, str(r_ladder))
     check("strike_shift_ladder_scan: hand-built whipsaw used all 3 dn-steps + 2 up-steps (5 total)",
           r_ladder["steps_used"] == 5, str(r_ladder["steps_used"]))
     r_baseline = sl._strike_shift_ladder_simulate(d_ladder, ladder_idx[0], ladder_idx[5],
-                                                  call_pct=3.0, put_pct=3.5, triggers=(), shifts=())
+                                                  call_pct=3.0, put_pct=3.5, triggers=(), shift_pts=())
     check("strike_shift_ladder_scan: hand-built — the SAME week survives with NO shifting "
-          "(the 102 bounce never reaches the original 103 CALL)", r_baseline["survived"],
+          "(the 20450 bounce never reaches the original 20600 CALL)", r_baseline["survived"],
           str(r_baseline))
+    # Anchor-scale invariance check: the SAME % drift pattern replayed at DOUBLE the anchor
+    # (40000) with the SAME shift_pts config must still shift CALL by exactly 50+50+200=300pts
+    # to 40900 — if shift_pts were wrongly scaled by anchor (the old %-of-anchor bug), it would
+    # instead move by 100+100+400=600pts to 40600, breaching on a 40880 bounce that the correct,
+    # flat-point implementation survives (40880 < 40900).
+    ladder_idx2 = pd.bdate_range("2023-02-07", periods=6, freq="B")
+    ladder_close2 = [40000.0, 39600.0, 39200.0, 39000.0, 40880.0, 40500.0]
+    ladder_df2 = pd.DataFrame({
+        "open": ladder_close2, "high": [c * 1.001 for c in ladder_close2],
+        "low": [c * 0.999 for c in ladder_close2], "close": ladder_close2,
+        "volume": [1000.0] * 6,
+    }, index=ladder_idx2)
+    d_ladder2 = sl._norm_daily(ladder_df2)
+    r_ladder2 = sl._strike_shift_ladder_simulate(d_ladder2, ladder_idx2[0], ladder_idx2[5],
+                                                 call_pct=3.0, put_pct=3.5,
+                                                 triggers=(1.0, 2.0, 2.5), shift_pts=(50.0, 50.0, 200.0))
+    check("strike_shift_ladder_scan: shift_pts is a FLAT point amount, NOT scaled by anchor "
+          "level (same 50/50/200 ladder at double the anchor still only shifts CALL to 40900, "
+          "so the 40880 bounce survives — a %-of-anchor bug would shift to 40600 and breach)",
+          r_ladder2["survived"], str(r_ladder2))
 
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
