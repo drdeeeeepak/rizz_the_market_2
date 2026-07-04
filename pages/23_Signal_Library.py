@@ -218,6 +218,82 @@ if "p23_dist_result" in st.session_state:
                                    file_name=f"anchor_close_distribution_{_key}.csv",
                                    mime="text/csv", key=f"dl_dist_{_key}")
 
+# ── Standalone: strike-shift ladder backtest ────────────────────────────────
+# Also placed BEFORE the main gate, own session_state flag, only needs daily.
+st.divider()
+st.subheader("Strike-shift ladder backtest — fixed asymmetric roll schedule")
+st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
+          "candles. Your rule: keep CALL/PUT at their starting OTM %; whichever leg sits on "
+          "the OPPOSITE side of the move is the 'safe' leg, and it shifts INWARD by a flat "
+          "%-of-anchor amount (not compounding on the current strike) each time |drift| from "
+          "anchor reaches the next trigger — CALL shifts down on a fall, PUT shifts up on a "
+          "rise. Each direction's ladder is independent (a reversal doesn't reset it), and "
+          "once all steps are used the leg stays put for the rest of the cycle. Runs against "
+          "BOTH the near (this Tuesday) and biweekly (next Tuesday) windows, each alongside a "
+          "no-shift baseline on the identical cycles for direct comparison.")
+
+lc1, lc2 = st.columns(2)
+with lc1:
+    ladder_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="ladder_call_pct")
+with lc2:
+    ladder_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="ladder_put_pct")
+lc3, lc4 = st.columns(2)
+with lc3:
+    ladder_triggers_str = st.text_input("Triggers — cumulative |drift| % from anchor (comma-separated)",
+                                        "1.0,2.0,2.5", key="ladder_triggers")
+with lc4:
+    ladder_shifts_str = st.text_input("Shifts — % of anchor the safe leg moves at each trigger",
+                                      "0.25,0.25,1.0", key="ladder_shifts")
+try:
+    ladder_triggers = tuple(float(x.strip()) for x in ladder_triggers_str.split(","))
+    ladder_shifts = tuple(float(x.strip()) for x in ladder_shifts_str.split(","))
+    ladder_valid = len(ladder_triggers) == len(ladder_shifts)
+except ValueError:
+    ladder_triggers, ladder_shifts, ladder_valid = (), (), False
+if not ladder_valid:
+    st.caption("Triggers and shifts must both parse and have the same number of steps — "
+              "using default 1.0,2.0,2.5 / 0.25,0.25,1.0.")
+    ladder_triggers, ladder_shifts = sl.LADDER_TRIGGERS_DEFAULT, sl.LADDER_SHIFTS_DEFAULT
+
+if st.button("▶ Run strike-shift ladder backtest"):
+    with st.spinner("Fetching daily history and simulating every cycle…"):
+        st.session_state.p23_ladder_result = sl.strike_shift_ladder_scan(
+            _load_daily(lookback), call_pct=float(ladder_call_pct), put_pct=float(ladder_put_pct),
+            triggers=ladder_triggers, shifts=ladder_shifts)
+
+if "p23_ladder_result" in st.session_state:
+    lr = st.session_state.p23_ladder_result
+    st.success(f"Simulated **{lr['n_cycles']}** weekly cycles · CALL {lr['call_pct']}% / "
+              f"PUT {lr['put_pct']}% · triggers {lr['triggers']} · shifts {lr['shifts']}")
+
+    ld1, ld2 = st.columns(2)
+    _ladder_keys = ("n", "survival_rate%", "baseline_survival_rate%", "avg_steps_used",
+                   "breach_on_shifted_leg%", "breach_on_original_leg%")
+    for _key, _label, _col in (("near", "Near expiry (this week)", ld1),
+                               ("far", "Biweekly (through next expiry)", ld2)):
+        bundle = lr[_key]
+        with _col:
+            st.markdown(f"**{_label}**")
+            st.json({k: bundle["agg"][k] for k in _ladder_keys})
+
+    st.markdown("**Per-cycle detail — near expiry**")
+    if lr["near"]["detail"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(lr["near"]["detail"], height=min(60 + 28 * len(lr["near"]["detail"]), 460), reset=False)
+        st.download_button("⬇ Download near-expiry detail CSV",
+                           lr["near"]["detail"].to_csv(index=False).encode("utf-8"),
+                           file_name="strike_shift_ladder_near.csv", mime="text/csv", key="dl_ladder_near")
+
+    st.markdown("**Per-cycle detail — biweekly**")
+    if lr["far"]["detail"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(lr["far"]["detail"], height=min(60 + 28 * len(lr["far"]["detail"]), 460), reset=False)
+        st.download_button("⬇ Download biweekly detail CSV",
+                           lr["far"]["detail"].to_csv(index=False).encode("utf-8"),
+                           file_name="strike_shift_ladder_far.csv", mime="text/csv", key="dl_ladder_far")
+
 # Gate on a session_state flag rather than the button's own return value: st.button()
 # is only True on the ONE rerun triggered by that exact click — clicking ANY other
 # widget further down the page (the §2 selectbox, §3 radio, §4 re-run button) triggers

@@ -580,3 +580,117 @@ def anchor_close_distribution_scan(daily: pd.DataFrame, bin_width: float = 0.5,
         return out.sort_values(["direction", "_o"]).drop(columns="_o").reset_index(drop=True)
 
     return {"1_week": _one(1), "2_week": _one(2)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Strike-shift ladder — a FIXED, asymmetric roll schedule (as opposed to
+# roll_rule_scan's grid search): whichever leg sits opposite the move is the
+# 'safe' leg, and it shifts inward by a flat %-of-anchor amount (not
+# compounding on the current strike) each time |drift| from anchor reaches
+# the next trigger — CALL shifts down on a fall, PUT shifts up on a rise.
+# ══════════════════════════════════════════════════════════════════════════════
+
+LADDER_TRIGGERS_DEFAULT = (1.0, 2.0, 2.5)   # cumulative |drift from anchor| % that arms each step
+LADDER_SHIFTS_DEFAULT = (0.25, 0.25, 1.0)   # % of ANCHOR the safe leg moves at each step
+
+
+def _strike_shift_ladder_simulate(d: pd.DataFrame, anchor_ts, end_ts, call_pct: float,
+                                  put_pct: float, triggers, shifts) -> dict:
+    """One cycle, ONE fixed ladder (no grid search — triggers()/shifts() are an
+    empty tuple for the no-shift baseline). Each direction's ladder position
+    (up_step / dn_step) is tracked independently, so drift crossing triggers
+    on one side, then reversing and climbing the OTHER side's ladder, is
+    handled correctly — neither counter resets when direction flips.
+    Breach = a day's CLOSE (not intraday high/low) at/beyond a strike."""
+    anchor = float(d.loc[anchor_ts, "close"])
+    ce = anchor * (1 + call_pct / 100)
+    pe = anchor * (1 - put_pct / 100)
+    up_step = dn_step = 0
+    window = d[(d.index > anchor_ts) & (d.index <= end_ts)]
+    for ts, row in window.iterrows():
+        close = float(row["close"])
+        drift = (close - anchor) / anchor * 100
+        while up_step < len(triggers) and drift >= triggers[up_step]:
+            pe += anchor * shifts[up_step] / 100   # PUT is the safe leg on an up-move
+            up_step += 1
+        while dn_step < len(triggers) and -drift >= triggers[dn_step]:
+            ce -= anchor * shifts[dn_step] / 100   # CALL is the safe leg on a down-move
+            dn_step += 1
+        if close >= ce:
+            return {"survived": False, "steps_used": up_step + dn_step,
+                    "breach_side": "call", "breach_was_shifted": dn_step > 0}
+        if close <= pe:
+            return {"survived": False, "steps_used": up_step + dn_step,
+                    "breach_side": "put", "breach_was_shifted": up_step > 0}
+    return {"survived": True, "steps_used": up_step + dn_step,
+            "breach_side": None, "breach_was_shifted": None}
+
+
+def _ladder_aggregate(results: list) -> dict:
+    n = len(results)
+    if n == 0:
+        return {"n": 0, "survival_rate%": np.nan, "avg_steps_used": np.nan,
+                "breach_on_shifted_leg%": np.nan, "breach_on_original_leg%": np.nan}
+    survived = sum(1 for r in results if r["survived"])
+    avg_steps = float(np.mean([r["steps_used"] for r in results]))
+    shifted_breach = sum(1 for r in results if not r["survived"] and r["breach_was_shifted"])
+    orig_breach = sum(1 for r in results if not r["survived"] and r["breach_was_shifted"] is False)
+    return {
+        "n": n,
+        "survival_rate%": round(survived / n * 100, 1),
+        "avg_steps_used": round(avg_steps, 2),
+        "breach_on_shifted_leg%": round(shifted_breach / n * 100, 1),
+        "breach_on_original_leg%": round(orig_breach / n * 100, 1),
+    }
+
+
+def strike_shift_ladder_scan(daily: pd.DataFrame, call_pct: float = 3.0, put_pct: float = 3.5,
+                             triggers=LADDER_TRIGGERS_DEFAULT,
+                             shifts=LADDER_SHIFTS_DEFAULT) -> dict:
+    """Backtests ONE fixed strike-shift ladder (not a parameter grid) against
+    every weekly (near) and biweekly (far) Tuesday-anchor cycle, alongside a
+    no-shift baseline computed on the SAME cycles for direct comparison.
+
+    Default ladder matches: CALL 3% / PUT 3.5% OTM; whichever leg is safe
+    shifts inward by 0.25% of anchor the first time |drift| reaches 1%,
+    another 0.25% at 2%, then 1.0% at 2.5% (three steps, then the ladder is
+    exhausted — no further shifts past that for the rest of the cycle).
+
+    Returns {'near': {'agg': dict, 'detail': DataFrame}, 'far': {...},
+    'call_pct':, 'put_pct':, 'triggers':, 'shifts':, 'n_cycles':}. `detail`
+    has one row per cycle (anchor date, survived, steps_used, breach info) —
+    'agg' additionally carries 'baseline_survival_rate%' from the no-shift
+    run on the identical cycles."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    cycles = []
+    for i in range(len(tuesdays) - 1):
+        anchor_ts = tuesdays[i]
+        near_end = tuesdays[i + 1]
+        far_end = tuesdays[i + 2] if i + 2 < len(tuesdays) else None
+        cycles.append((anchor_ts, near_end, far_end))
+
+    near_ladder, near_base, near_detail = [], [], []
+    far_ladder, far_base, far_detail = [], [], []
+    for anchor_ts, near_end, far_end in cycles:
+        r_near = _strike_shift_ladder_simulate(d, anchor_ts, near_end, call_pct, put_pct, triggers, shifts)
+        b_near = _strike_shift_ladder_simulate(d, anchor_ts, near_end, call_pct, put_pct, (), ())
+        near_ladder.append(r_near)
+        near_base.append(b_near)
+        near_detail.append({"anchor": anchor_ts, **r_near})
+        if far_end is not None:
+            r_far = _strike_shift_ladder_simulate(d, anchor_ts, far_end, call_pct, put_pct, triggers, shifts)
+            b_far = _strike_shift_ladder_simulate(d, anchor_ts, far_end, call_pct, put_pct, (), ())
+            far_ladder.append(r_far)
+            far_base.append(b_far)
+            far_detail.append({"anchor": anchor_ts, **r_far})
+
+    def _bundle(ladder_results, base_results, detail_rows):
+        agg = _ladder_aggregate(ladder_results)
+        agg["baseline_survival_rate%"] = _ladder_aggregate(base_results)["survival_rate%"]
+        return {"agg": agg, "detail": pd.DataFrame(detail_rows)}
+
+    return {"near": _bundle(near_ladder, near_base, near_detail),
+            "far": _bundle(far_ladder, far_base, far_detail),
+            "call_pct": call_pct, "put_pct": put_pct,
+            "triggers": list(triggers), "shifts": list(shifts), "n_cycles": len(cycles)}

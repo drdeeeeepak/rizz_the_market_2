@@ -332,6 +332,49 @@ def run():
     check("anchor_close_distribution_scan: hand-built 2_week is empty (only 2 Tuesdays present)",
           hand_dist["2_week"].empty)
 
+    # ── 5g. strike_shift_ladder_scan — shape + hand-built exact ladder arithmetic ────
+    ladder = sl.strike_shift_ladder_scan(roll_daily, call_pct=3.0, put_pct=3.5)
+    check("strike_shift_ladder_scan: returns near and far keys",
+          set(ladder.keys()) >= {"near", "far"}, str(list(ladder.keys())))
+    for _k in ("near", "far"):
+        agg = ladder[_k]["agg"]
+        check(f"strike_shift_ladder_scan: {_k} agg has n>0", agg["n"] > 0, f"n={agg['n']}")
+        check(f"strike_shift_ladder_scan: {_k} survival_rate% within [0,100]",
+              0 <= agg["survival_rate%"] <= 100, str(agg["survival_rate%"]))
+        check(f"strike_shift_ladder_scan: {_k} baseline_survival_rate% within [0,100]",
+              0 <= agg["baseline_survival_rate%"] <= 100, str(agg["baseline_survival_rate%"]))
+        check(f"strike_shift_ladder_scan: {_k} detail has one row per cycle",
+              len(ladder[_k]["detail"]) == agg["n"],
+              f"detail_rows={len(ladder[_k]['detail'])} vs n={agg['n']}")
+
+    # Hand-built exact check — reproduces the user's worked example (anchor=100, CALL=103,
+    # PUT=96.5): Wed -1% (-> dn_step=1, CALL 102.75), Thu -2% (-> dn_step=2, CALL 102.50),
+    # Fri -2.5% (-> dn_step=3, CALL 101.50 — matches 'still 4% from a 97.5 cmp'), then Mon
+    # BOUNCES to 102: the ORIGINAL 103 strike would NOT breach (102 < 103), but the
+    # ladder-shifted 101.50 strike DOES (102 >= 101.50) — demonstrating the whipsaw risk of
+    # shifting the safe leg inward: the ladder can turn a survivable week into a breach.
+    ladder_idx = pd.bdate_range("2023-02-07", periods=6, freq="B")   # Tue,Wed,Thu,Fri,Mon,Tue
+    ladder_close = [100.0, 99.0, 98.0, 97.5, 102.0, 101.0]
+    ladder_df = pd.DataFrame({
+        "open": ladder_close, "high": [c * 1.001 for c in ladder_close],
+        "low": [c * 0.999 for c in ladder_close], "close": ladder_close,
+        "volume": [1000.0] * 6,
+    }, index=ladder_idx)
+    d_ladder = sl._norm_daily(ladder_df)
+    r_ladder = sl._strike_shift_ladder_simulate(d_ladder, ladder_idx[0], ladder_idx[5],
+                                                call_pct=3.0, put_pct=3.5,
+                                                triggers=(1.0, 2.0, 2.5), shifts=(0.25, 0.25, 1.0))
+    check("strike_shift_ladder_scan: hand-built whipsaw breaches on the shifted CALL leg",
+          not r_ladder["survived"] and r_ladder["breach_side"] == "call"
+          and r_ladder["breach_was_shifted"] is True, str(r_ladder))
+    check("strike_shift_ladder_scan: hand-built whipsaw used all 3 dn-steps + 2 up-steps (5 total)",
+          r_ladder["steps_used"] == 5, str(r_ladder["steps_used"]))
+    r_baseline = sl._strike_shift_ladder_simulate(d_ladder, ladder_idx[0], ladder_idx[5],
+                                                  call_pct=3.0, put_pct=3.5, triggers=(), shifts=())
+    check("strike_shift_ladder_scan: hand-built — the SAME week survives with NO shifting "
+          "(the 102 bounce never reaches the original 103 CALL)", r_baseline["survived"],
+          str(r_baseline))
+
     # ── 6. Adapters run on synthetic data and return a daily-indexed Series ────
     adapters_daily = {
         "ema_ribbon": lambda: sa.adapt_ema_ribbon(daily),
