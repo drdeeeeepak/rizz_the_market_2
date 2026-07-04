@@ -343,9 +343,9 @@ else:
     st.download_button("⬇ Download Dow retrace scan CSV", dow_scan.to_csv(index=False).encode("utf-8"),
                        file_name="dow_retrace_bucket_scan.csv", mime="text/csv")
 
-# ── 7. Roll-rule optimizer ───────────────────────────────────────────────────
+# ── 6. Roll-rule optimizer ───────────────────────────────────────────────────
 st.divider()
-st.subheader("7 · Roll-rule optimizer — find the best X%/Y% roll rule")
+st.subheader("6 · Roll-rule optimizer — find the best X%/Y% roll rule")
 st.caption("Your rule: sell CALL/PUT at a fixed % from the Tuesday anchor. Every time drift from "
           "anchor reaches a NEW multiple of X%, roll the OTHER (now-safer) leg inward by Y% of "
           "its OWN current strike — repeatable, as many times as drift keeps extending. Checks "
@@ -415,9 +415,9 @@ if "p23_roll_rule" in st.session_state:
         st.download_button("⬇ Download biweekly grid CSV", rr["far"].to_csv(index=False).encode("utf-8"),
                            file_name="roll_rule_far.csv", mime="text/csv", key="dl_roll_far")
 
-# ── 8. Download everything as one CSV ───────────────────────────────────────
+# ── 7. Download everything as one CSV ───────────────────────────────────────
 st.divider()
-st.subheader("8 · Download everything as one CSV")
+st.subheader("7 · Download everything as one CSV")
 st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
           "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, and the "
           "real-volume rerun / roll-rule scan if you ran them — into ONE file with "
