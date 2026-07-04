@@ -285,3 +285,117 @@ def dow_retrace_bucket_scan(daily: pd.DataFrame, df_1h: pd.DataFrame,
     out["_qo"] = out["sequence"].map(seq_order)
     out = out.sort_values(["_so", "_qo", "retrace_bucket"]).drop(columns=["_so", "_qo"])
     return out.reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Roll-rule optimizer — "when drift from anchor hits X%, roll the profit leg in
+# by Y%, does it survive to expiry?"
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _roll_rule_simulate(d: pd.DataFrame, anchor_ts, end_ts, x_pct: float, y_pct: float,
+                        call_pct: float, put_pct: float) -> dict:
+    """One weekly cycle, one (X, Y) pair. Starting CALL = anchor*(1+call_pct%),
+    PUT = anchor*(1-put_pct%). Each time drift from ANCHOR reaches a NEW
+    multiple of X% in one direction, the leg on the OTHER side (now safer)
+    rolls inward by Y% of its OWN current strike (not re-centered to spot/
+    anchor — a shift of the strike itself, so repeated rolls compound).
+    Breach = a day's CLOSE (not intraday high/low) at or beyond a strike.
+    Walks day-by-day from the day after anchor_ts through end_ts (inclusive);
+    a single big gap can cross multiple X-thresholds in one day (handled by
+    the while loops, not just an if)."""
+    anchor = float(d.loc[anchor_ts, "close"])
+    ce = anchor * (1 + call_pct / 100)
+    pe = anchor * (1 - put_pct / 100)
+    roll_up = roll_down = 0   # how many X-multiples already used, upside/downside
+    window = d[(d.index > anchor_ts) & (d.index <= end_ts)]
+    for ts, row in window.iterrows():
+        close = float(row["close"])
+        drift = (close - anchor) / anchor * 100
+        while drift >= (roll_up + 1) * x_pct:
+            pe *= (1 + y_pct / 100)   # PUT is the profit leg on an up-move — roll it up/inward
+            roll_up += 1
+        while drift <= -(roll_down + 1) * x_pct:
+            ce *= (1 - y_pct / 100)   # CALL is the profit leg on a down-move — roll it down/inward
+            roll_down += 1
+        if close >= ce:
+            return {"survived": False, "rolls": roll_up + roll_down,
+                    "breach_side": "call", "breach_was_rolled": roll_down > 0}
+        if close <= pe:
+            return {"survived": False, "rolls": roll_up + roll_down,
+                    "breach_side": "put", "breach_was_rolled": roll_up > 0}
+    return {"survived": True, "rolls": roll_up + roll_down,
+            "breach_side": None, "breach_was_rolled": None}
+
+
+def _roll_rule_aggregate(results: list) -> dict:
+    n = len(results)
+    if n == 0:
+        return {"n": 0, "survival_rate%": np.nan, "avg_rolls": np.nan,
+                "breach_on_rolled_leg%": np.nan, "breach_on_original_leg%": np.nan}
+    survived = sum(1 for r in results if r["survived"])
+    avg_rolls = float(np.mean([r["rolls"] for r in results]))
+    rolled_breach = sum(1 for r in results if not r["survived"] and r["breach_was_rolled"])
+    orig_breach = sum(1 for r in results if not r["survived"] and r["breach_was_rolled"] is False)
+    return {
+        "n": n,
+        "survival_rate%": round(survived / n * 100, 1),
+        "avg_rolls": round(avg_rolls, 2),
+        "breach_on_rolled_leg%": round(rolled_breach / n * 100, 1),
+        "breach_on_original_leg%": round(orig_breach / n * 100, 1),
+    }
+
+
+def roll_rule_scan(daily: pd.DataFrame, x_grid=(0.5, 1.0, 1.5, 2.0, 2.5),
+                   y_grid=(0.25, 0.5, 0.75, 1.0, 1.5), call_pct: float = 3.0,
+                   put_pct: float = 3.5) -> dict:
+    """Grid-search which (X% drift trigger, Y% roll-in size) survives best,
+    for BOTH the near (this-week) and biweekly (next-week, since positions
+    are held two cycles) expiry windows.
+
+    Anchor = each Tuesday's close actually present in `daily` (a Tuesday
+    market holiday just skips that week's anchor — same simplification the
+    rest of this app makes only implicitly). near_end = the following
+    Tuesday; far_end = the Tuesday after THAT (two cycles out).
+
+    Returns {'near': DataFrame, 'far': DataFrame, 'best_near': dict,
+    'best_far': dict, 'call_pct':, 'put_pct':} — each DataFrame has one row
+    per (x%, y%) with n / survival_rate% / avg_rolls / breach_on_rolled_leg%
+    / breach_on_original_leg% (the last two only among the FAILURES, telling
+    you whether a loss came from the rule itself reversing on you, or from
+    the original untouched threatened leg finally giving way — a risk this
+    rule was never trying to solve)."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    cycles = []
+    for i in range(len(tuesdays) - 1):
+        anchor_ts = tuesdays[i]
+        near_end = tuesdays[i + 1]
+        far_end = tuesdays[i + 2] if i + 2 < len(tuesdays) else None
+        cycles.append((anchor_ts, near_end, far_end))
+
+    rows_near, rows_far = [], []
+    for x in x_grid:
+        for y in y_grid:
+            near_res, far_res = [], []
+            for anchor_ts, near_end, far_end in cycles:
+                near_res.append(_roll_rule_simulate(d, anchor_ts, near_end, x, y, call_pct, put_pct))
+                if far_end is not None:
+                    far_res.append(_roll_rule_simulate(d, anchor_ts, far_end, x, y, call_pct, put_pct))
+            rows_near.append({"x%": x, "y%": y, **_roll_rule_aggregate(near_res)})
+            if far_res:
+                rows_far.append({"x%": x, "y%": y, **_roll_rule_aggregate(far_res)})
+
+    near_df = pd.DataFrame(rows_near)
+    far_df = pd.DataFrame(rows_far)
+
+    def _best(tbl: pd.DataFrame):
+        if tbl.empty:
+            return None
+        # Highest survival rate first; among ties, more rolls = more of the
+        # profit leg's premium captured (our only available proxy — no real
+        # option premium/IV data in a spot-only backtest).
+        t = tbl.sort_values(["survival_rate%", "avg_rolls"], ascending=[False, False])
+        return t.iloc[0].to_dict()
+
+    return {"near": near_df, "far": far_df, "best_near": _best(near_df), "best_far": _best(far_df),
+            "call_pct": call_pct, "put_pct": put_pct, "n_cycles": len(cycles)}
