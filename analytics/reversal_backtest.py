@@ -97,6 +97,18 @@ def reversal_threshold_scan_daily(daily: pd.DataFrame, episodes: pd.DataFrame,
                                   thresholds=DEFAULT_THRESHOLDS,
                                   forward_horizons=(3, 5, 10),
                                   max_track_days: int = 30) -> dict:
+    """For each threshold, scores the forward outcome from the trigger day
+    over EVERY horizon in forward_horizons separately (not just the longest
+    one), with two different notions of "the low broke again":
+      - close_fail_{h}d  : CLOSING price fell back below the anchor low
+                           within h days of the trigger (whipsaw on a
+                           closing basis — the original metric).
+      - touch_low_{h}d   : the day's LOW (intraday) touched/breached the
+                           anchor low again within h days of the trigger —
+                           the relevant one for an option SELLER, since a
+                           strike parked below the anchor low can get
+                           threatened intraday even on a day that closes
+                           back above it."""
     if episodes is None or episodes.empty:
         return {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
 
@@ -105,6 +117,7 @@ def reversal_threshold_scan_daily(daily: pd.DataFrame, episodes: pd.DataFrame,
     dates = d.index
     n = len(d)
     thresholds = tuple(float(t) for t in thresholds)
+    max_h = max(forward_horizons)
 
     detail_rows = []
     for _, ep in episodes.iterrows():
@@ -131,11 +144,13 @@ def reversal_threshold_scan_daily(daily: pd.DataFrame, episodes: pd.DataFrame,
             row = {"episode_low_date": ep["low_date"], "threshold%": t,
                   "trigger_date": dates[trig_idx], "trigger_close": round(float(trig_close), 2),
                   "anchor_low_at_trigger": round(anchor_low, 2)}
-            end_k = min(trig_idx + max(forward_horizons), n - 1)
-            row["failed_back_below_low"] = bool(end_k > trig_idx and
-                                                (close[trig_idx + 1:end_k + 1] < anchor_low).any())
             for h in forward_horizons:
                 k = trig_idx + h
+                end_k = min(k, n - 1)
+                window_close = close[trig_idx + 1:end_k + 1]
+                window_low = low[trig_idx + 1:end_k + 1]
+                row[f"close_fail_{h}d"] = bool(len(window_close) and (window_close < anchor_low).any())
+                row[f"touch_low_{h}d"] = bool(len(window_low) and (window_low < anchor_low).any())
                 row[f"fwd_ret_{h}d%"] = round((close[k] - trig_close) / trig_close * 100, 2) \
                     if k < n else np.nan
             detail_rows.append(row)
@@ -151,13 +166,14 @@ def reversal_threshold_scan_daily(daily: pd.DataFrame, episodes: pd.DataFrame,
         if sub.empty:
             continue
         row = {"threshold%": t, "n_triggered": len(sub),
-              "pct_of_episodes_triggered%": round(len(sub) / n_episodes * 100, 1),
-              "failure_rate%": round(sub["failed_back_below_low"].mean() * 100, 1)}
+              "pct_of_episodes_triggered%": round(len(sub) / n_episodes * 100, 1)}
         for h in forward_horizons:
-            col = f"fwd_ret_{h}d%"
-            valid = sub[col].dropna()
+            ret_col = f"fwd_ret_{h}d%"
+            valid = sub[ret_col].dropna()
             row[f"hit_rate_{h}d%"] = round((valid > 0).mean() * 100, 1) if len(valid) else np.nan
             row[f"avg_fwd_ret_{h}d%"] = round(valid.mean(), 2) if len(valid) else np.nan
+            row[f"close_fail_rate_{h}d%"] = round(sub[f"close_fail_{h}d"].mean() * 100, 1)
+            row[f"touch_low_rate_{h}d%"] = round(sub[f"touch_low_{h}d"].mean() * 100, 1)
         scan_rows.append(row)
     return {"scan": pd.DataFrame(scan_rows), "detail": detail}
 
@@ -175,6 +191,25 @@ def pick_min_reliable_threshold(scan: pd.DataFrame, horizon: int, min_hit_rate: 
     if col not in scan.columns:
         return None
     ok = scan[(scan[col] >= min_hit_rate) & (scan["n_triggered"] >= min_n)]
+    if ok.empty:
+        return None
+    return ok.sort_values("threshold%").iloc[0].to_dict()
+
+
+def pick_min_safe_threshold(scan: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                            min_n: int = 10) -> dict | None:
+    """Smallest reversal% threshold whose intraday touch-the-low-again rate
+    at `horizon` trading days is at/below `max_touch_rate` (default 0.0 —
+    never touched in this sample), with at least `min_n` triggered episodes
+    behind it. Answers: 'what's the minimum bounce after which a put strike
+    sitting below the low would have stayed safe for `horizon` days?' None
+    if nothing in the scan clears the bar."""
+    if scan is None or scan.empty:
+        return None
+    col = f"touch_low_rate_{horizon}d%"
+    if col not in scan.columns:
+        return None
+    ok = scan[(scan[col] <= max_touch_rate) & (scan["n_triggered"] >= min_n)]
     if ok.empty:
         return None
     return ok.sort_values("threshold%").iloc[0].to_dict()

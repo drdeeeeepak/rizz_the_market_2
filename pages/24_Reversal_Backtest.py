@@ -40,12 +40,21 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "- **Reversal tracking:** walking forward day-by-day from the anchor low, a NEW lower "
         "low resets the anchor (the fall isn't over). Once the running high since the "
         "(current) anchor first climbs your threshold% above it, that's the **trigger day**.\n"
-        "- **Scored per threshold:** forward return + hit-rate (share that closed higher) at "
-        "each horizon from the trigger day, and **failure_rate%** — how often price closed "
-        "back below the anchor low again before the longest horizon (a whipsaw reversal).\n"
-        "- **Recommended threshold** = the SMALLEST reversal% whose hit-rate clears your "
-        "target, with enough triggered episodes to trust it. This is a base-rate cutoff from "
-        "history, not a guarantee — always keep your stop.\n"
+        "- **Scored per threshold, PER horizon (1d/2d/3d/5d...):** forward return + hit-rate "
+        "(share that closed higher), and two different 'broke again' checks from the trigger "
+        "day — **close_fail_rate%** (closing price fell back below the anchor low) and "
+        "**touch_low_rate%** (the day's intraday LOW touched/breached the anchor low, even if "
+        "it closed back above it). touch_low is the one that matters for an option SELLER: a "
+        "strike parked below the low can get threatened intraday on a day that still closes "
+        "back above it.\n"
+        "- **Recommended (continuation) threshold** = the SMALLEST reversal% whose hit-rate "
+        "clears your target — 'will it keep going up'.\n"
+        "- **Recommended (safety) threshold** = the SMALLEST reversal% whose touch_low_rate at "
+        "your horizon is at/below your tolerance — 'will a strike below the low stay "
+        "untouched' — see section 2 below.\n"
+        "- Both are base-rate cutoffs from history, not guarantees — always keep your stop, "
+        "and treat 0% observed touch-rate as 'not seen yet in this sample', not 'can't happen' "
+        "(small samples can easily hide a rare tail event).\n"
         "- Runs on years of index daily OHLC, reference = prior close(s).")
 
 
@@ -73,6 +82,21 @@ def _summary_block(scan, horizons, min_hit, min_n):
                                f"{int(best['n_triggered'])} triggered episodes")
 
 
+def _safety_block(scan, horizons, max_touch, min_n):
+    cols = st.columns(len(horizons))
+    for col, h in zip(cols, horizons):
+        best = rb.pick_min_safe_threshold(scan, horizon=h, max_touch_rate=max_touch, min_n=min_n)
+        with col:
+            if best is None:
+                st.metric(f"Min safe bounce @ {h}d", "—")
+                st.caption(f"No threshold kept the touch-rate at/below {max_touch:.0f}% "
+                          f"with >= {min_n} episodes.")
+            else:
+                st.metric(f"Min safe bounce @ {h}d", f"{best['threshold%']:.2f}%",
+                          help=f"touch_low_rate {best[f'touch_low_rate_{h}d%']:.1f}% on "
+                               f"{int(best['n_triggered'])} triggered episodes")
+
+
 c1, c2, c3 = st.columns(3)
 with c1:
     lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24_lb")
@@ -96,6 +120,10 @@ with c6:
 horizons = st.multiselect("Forward horizons (trading days)", [1, 2, 3, 5, 10, 15, 20],
                           default=[3, 5, 10], key="p24_hor")
 
+max_touch = st.number_input(
+    "Max acceptable intraday touch-rate % — for the put-seller safety threshold below "
+    "(0 = never touched the low again in this sample)", 0.0, 50.0, 0.0, 1.0, key="p24_touch")
+
 require_green = st.checkbox(
     "Require a green-candle confirmation — low day itself closes green, or the next "
     "trading day does", value=True, key="p24_green",
@@ -106,7 +134,7 @@ if st.button("▶ Run reversal backtest", type="primary", key="p24_run"):
     st.session_state.p24_ran = True
     st.session_state.p24_inputs = dict(
         lookback=lookback, fall1=fall1, fall2=fall2, require_green=require_green,
-        thr_lo=thr_lo, thr_hi=thr_hi, thr_step=thr_step,
+        thr_lo=thr_lo, thr_hi=thr_hi, thr_step=thr_step, max_touch=max_touch,
         min_hit=min_hit, horizons=tuple(sorted(horizons)) or (3, 5, 10))
 
 if not st.session_state.get("p24_ran"):
@@ -138,14 +166,25 @@ if episodes.empty:
 st.success(f"Found **{len(episodes)}** fall episodes over **{len(daily)}** daily rows "
           f"({daily.index.min().date()} → {daily.index.max().date()}).")
 
-st.markdown("**Recommended minimum reversal — smallest threshold clearing your target hit-rate**")
+st.markdown("**1 · Recommended minimum reversal — smallest threshold clearing your target hit-rate**")
+st.caption("'Will Nifty keep going up' — for a long/continuation read.")
 _summary_block(res["scan"], _in["horizons"], _in["min_hit"], min_n=10)
 
 st.divider()
+st.markdown("**2 · Put-seller safety — smallest bounce after which the low was never intraday-touched again**")
+st.caption("'Will a put strike parked below the low stay safe' — checks the day's LOW, not the "
+          "close, so it also catches a wick through the low that recovers by end of day. This "
+          "is the number that answers 'after a 1%+ fall, how much bounce before I can relax "
+          "about my sold put for the next N days.'")
+_safety_block(res["scan"], _in["horizons"], _in["max_touch"], min_n=10)
+
+st.divider()
 st.markdown("**Full threshold scan**")
-st.caption("hit_rate = share of triggered episodes closing higher N days later · "
-          "avg_fwd_ret = mean forward return · failure_rate = % that closed back "
-          "below the anchor low again before the longest horizon.")
+st.caption("hit_rate_Xd = share of triggered episodes closing higher X days later · "
+          "avg_fwd_ret_Xd = mean forward return · close_fail_rate_Xd = % where the CLOSE fell "
+          "back below the anchor low within X days of the trigger · touch_low_rate_Xd = % "
+          "where the day's LOW (intraday) touched/breached the anchor low within X days — the "
+          "one relevant to a sold put strike parked below the low.")
 if res["scan"].empty:
     st.caption("No threshold in the scan range ever triggered — widen the range.")
 else:
