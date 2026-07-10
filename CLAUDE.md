@@ -7,7 +7,9 @@
 - EOD automation: `scripts/eod_compute.py` via GitHub Actions at 3:35 PM IST Mon–Fri
 
 ## Branch
-- Always develop on `claude/check-repo-state-5nvle`, push to both that branch AND `main`
+- Develop on whatever feature branch the session is assigned — but ALWAYS also push every
+  commit to `main` (fast-forward when possible), without waiting to be asked. Don't leave
+  work sitting only on the feature branch.
 
 ## Key files
 | File | Purpose |
