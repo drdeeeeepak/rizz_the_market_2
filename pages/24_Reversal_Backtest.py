@@ -52,9 +52,12 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "- **Recommended (safety) threshold** = the SMALLEST reversal% whose touch_low_rate at "
         "your horizon is at/below your tolerance — 'will a strike below the low stay "
         "untouched' — see section 2 below.\n"
-        "- Both are base-rate cutoffs from history, not guarantees — always keep your stop, "
-        "and treat 0% observed touch-rate as 'not seen yet in this sample', not 'can't happen' "
-        "(small samples can easily hide a rare tail event).\n"
+        "- **Fall-size scan (section 3)** is a different question: instead of varying the "
+        "bounce, it varies the FALL SIZE itself and checks the low with NO bounce wait at all "
+        "— 'how big a fall, on its own, needs to be before its low holds.'\n"
+        "- All of these are base-rate cutoffs from history, not guarantees — always keep your "
+        "stop, and treat 0% observed touch-rate as 'not seen yet in this sample', not 'can't "
+        "happen' (small samples can easily hide a rare tail event).\n"
         "- Runs on years of index daily OHLC, reference = prior close(s).")
 
 
@@ -97,6 +100,21 @@ def _safety_block(scan, horizons, max_touch, min_n):
                                f"{int(best['n_triggered'])} triggered episodes")
 
 
+def _fall_size_block(scan, horizons, max_touch, min_n):
+    cols = st.columns(len(horizons))
+    for col, h in zip(cols, horizons):
+        best = rb.pick_min_certain_fall(scan, horizon=h, max_touch_rate=max_touch, min_n=min_n)
+        with col:
+            if best is None:
+                st.metric(f"Min certain fall @ {h}d", "—")
+                st.caption(f"No fall-size cutoff kept the touch-rate at/below {max_touch:.0f}% "
+                          f"with >= {min_n} episodes.")
+            else:
+                st.metric(f"Min certain fall @ {h}d", f"{best['fall_pct']:.2f}%",
+                          help=f"touch_low_rate {best[f'touch_low_rate_{h}d%']:.1f}% on "
+                               f"{int(best['n_episodes'])} episodes at this fall size")
+
+
 c1, c2, c3 = st.columns(3)
 with c1:
     lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24_lb")
@@ -130,11 +148,23 @@ require_green = st.checkbox(
     help="Drops any fall episode where neither the low day nor the day right after it "
          "closed above its own open — i.e. no visible sign buyers stepped in at the low.")
 
+st.markdown("**Fall-size scan (section 3 below)** — separate from the bounce-threshold scan "
+           "above: varies the SIZE OF THE FALL itself and checks the low with NO bounce wait "
+           "required at all.")
+fc1, fc2 = st.columns(2)
+with fc1:
+    fall_lo, fall_hi = st.slider("Fall-size scan range (%)", 0.1, 6.0, (0.25, 3.0), 0.05,
+                                 key="p24_fall_range")
+with fc2:
+    fall_step = st.select_slider("Fall-size scan step (%)", options=[0.1, 0.25, 0.5], value=0.25,
+                                 key="p24_fall_step")
+
 if st.button("▶ Run reversal backtest", type="primary", key="p24_run"):
     st.session_state.p24_ran = True
     st.session_state.p24_inputs = dict(
         lookback=lookback, fall1=fall1, fall2=fall2, require_green=require_green,
         thr_lo=thr_lo, thr_hi=thr_hi, thr_step=thr_step, max_touch=max_touch,
+        fall_lo=fall_lo, fall_hi=fall_hi, fall_step=fall_step,
         min_hit=min_hit, horizons=tuple(sorted(horizons)) or (3, 5, 10))
 
 if not st.session_state.get("p24_ran"):
@@ -144,16 +174,19 @@ if not st.session_state.get("p24_ran"):
 
 _in = st.session_state.p24_inputs
 thresholds = tuple(round(x, 2) for x in np.arange(_in["thr_lo"], _in["thr_hi"] + 1e-9, _in["thr_step"]))
+fall_pcts = tuple(round(x, 2) for x in np.arange(_in["fall_lo"], _in["fall_hi"] + 1e-9, _in["fall_step"]))
 with st.spinner("Fetching daily history and scanning reversal thresholds…"):
     daily = _load_daily(_in["lookback"])
     if daily is None or daily.empty:
-        episodes, res = pd.DataFrame(), {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
+        episodes, res, fall_scan = pd.DataFrame(), {"scan": pd.DataFrame(), "detail": pd.DataFrame()}, pd.DataFrame()
     else:
         episodes = rb.find_fall_episodes_daily(daily, fall_1d_pct=_in["fall1"], fall_2d_pct=_in["fall2"],
                                                require_green_confirmation=_in["require_green"])
         res = rb.reversal_threshold_scan_daily(daily, episodes, thresholds=thresholds,
                                                forward_horizons=_in["horizons"]) \
             if not episodes.empty else {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
+        fall_scan = rb.fall_size_safety_scan(daily, fall_pcts=fall_pcts, forward_horizons=_in["horizons"],
+                                             require_green_confirmation=_in["require_green"])
 
 if daily is None or daily.empty:
     st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
@@ -179,7 +212,26 @@ st.caption("'Will a put strike parked below the low stay safe' — checks the da
 _safety_block(res["scan"], _in["horizons"], _in["max_touch"], min_n=10)
 
 st.divider()
-st.markdown("**Full threshold scan**")
+st.markdown("**3 · Minimum fall size for a 'certain' low — no bounce required at all**")
+st.caption("A different question from section 2: instead of varying the BOUNCE size, this "
+          "varies the FALL size itself, and checks the low with NO bounce/confirmation wait — "
+          "straight from the low day forward. Answers: 'how big does the fall itself need to "
+          "be before its own low reliably holds, before any bounce even happens?' Always uses "
+          "the pure 1-day fall trigger only (2-day path muted) so the fall-size axis isn't "
+          "confounded with a different trigger shape.")
+if fall_scan.empty:
+    st.caption("No fall-size cutoff in the scan range found any episodes — widen the range.")
+else:
+    _fall_size_block(fall_scan, _in["horizons"], _in["max_touch"], min_n=10)
+    with st.expander("Full fall-size scan"):
+        _render(fall_scan)
+        st.download_button("⬇ Download fall-size scan CSV",
+                           fall_scan.to_csv(index=False).encode("utf-8"),
+                           file_name="fall_size_safety_scan.csv", mime="text/csv",
+                           key="p24_dl_fallscan")
+
+st.divider()
+st.markdown("**4 · Full bounce-threshold scan (detail behind sections 1 & 2)**")
 st.caption("hit_rate_Xd = share of triggered episodes closing higher X days later · "
           "avg_fwd_ret_Xd = mean forward return · close_fail_rate_Xd = % where the CLOSE fell "
           "back below the anchor low within X days of the trigger · touch_low_rate_Xd = % "

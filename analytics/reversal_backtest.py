@@ -213,3 +213,88 @@ def pick_min_safe_threshold(scan: pd.DataFrame, horizon: int, max_touch_rate: fl
     if ok.empty:
         return None
     return ok.sort_values("threshold%").iloc[0].to_dict()
+
+
+def fall_size_safety_scan(daily: pd.DataFrame, fall_pcts=DEFAULT_THRESHOLDS,
+                          forward_horizons=(1, 2, 3, 5), merge_gap_days: int = 1,
+                          require_green_confirmation: bool = False) -> pd.DataFrame:
+    """A DIFFERENT scan from reversal_threshold_scan_daily: instead of
+    varying how big a BOUNCE off the low needs to be, this varies how big
+    the FALL itself needs to be, and checks — with NO bounce or confirmation
+    wait at all, straight from the low day forward — whether the low ever
+    got touched (intraday) or closed through again within each horizon.
+
+    Answers: 'how big does a single-day fall need to be before its own low
+    reliably holds on its own, before any bounce even happens?' The 2-day
+    fall path is always muted here (fall_2d_pct effectively off) so the
+    fall-size axis being scanned isn't confounded with a different-shaped
+    trigger; each fall_pct in fall_pcts is its own independent episode
+    search (a bigger cutoff finds fewer, deeper-fall episodes, not a subset
+    of the smaller cutoff's episodes)."""
+    fall_pcts = tuple(round(float(x), 2) for x in fall_pcts)
+    d = _norm_ohlc(daily)
+    close, low = d["close"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+
+    rows = []
+    for fp in fall_pcts:
+        episodes = find_fall_episodes_daily(daily, fall_1d_pct=fp, fall_2d_pct=1e9,
+                                            merge_gap_days=merge_gap_days,
+                                            require_green_confirmation=require_green_confirmation)
+        n_eps = len(episodes)
+        row = {"fall_pct": fp, "n_episodes": n_eps}
+        if n_eps == 0:
+            for h in forward_horizons:
+                row[f"hit_rate_{h}d%"] = np.nan
+                row[f"avg_fwd_ret_{h}d%"] = np.nan
+                row[f"close_fail_rate_{h}d%"] = np.nan
+                row[f"touch_low_rate_{h}d%"] = np.nan
+            rows.append(row)
+            continue
+
+        per_h = {h: {"touch": [], "close_fail": [], "ret": []} for h in forward_horizons}
+        for _, ep in episodes.iterrows():
+            low_idx = int(ep["low_idx"])
+            anchor_low = float(ep["low"])
+            base_close = close[low_idx]
+            for h in forward_horizons:
+                k = low_idx + h
+                end_k = min(k, n - 1)
+                window_low = low[low_idx + 1:end_k + 1]
+                window_close = close[low_idx + 1:end_k + 1]
+                per_h[h]["touch"].append(bool(len(window_low) and (window_low < anchor_low).any()))
+                per_h[h]["close_fail"].append(bool(len(window_close) and (window_close < anchor_low).any()))
+                if k < n:
+                    per_h[h]["ret"].append((close[k] - base_close) / base_close * 100)
+
+        for h in forward_horizons:
+            touches, closes_fail, rets = per_h[h]["touch"], per_h[h]["close_fail"], per_h[h]["ret"]
+            row[f"touch_low_rate_{h}d%"] = round(float(np.mean(touches)) * 100, 1) if touches else np.nan
+            row[f"close_fail_rate_{h}d%"] = round(float(np.mean(closes_fail)) * 100, 1) if closes_fail else np.nan
+            if rets:
+                rets_arr = np.array(rets)
+                row[f"hit_rate_{h}d%"] = round(float((rets_arr > 0).mean()) * 100, 1)
+                row[f"avg_fwd_ret_{h}d%"] = round(float(rets_arr.mean()), 2)
+            else:
+                row[f"hit_rate_{h}d%"] = np.nan
+                row[f"avg_fwd_ret_{h}d%"] = np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def pick_min_certain_fall(scan: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                          min_n: int = 10) -> dict | None:
+    """Smallest fall%-cutoff whose intraday touch-the-low-again rate at
+    `horizon` trading days is at/below `max_touch_rate` (default 0.0 —
+    never touched in this sample) — the minimum single-day fall size that,
+    on its own low with no bounce confirmation required at all, held for
+    `horizon` days. None if nothing in the scan clears the bar."""
+    if scan is None or scan.empty:
+        return None
+    col = f"touch_low_rate_{horizon}d%"
+    if col not in scan.columns:
+        return None
+    ok = scan[(scan[col] <= max_touch_rate) & (scan["n_episodes"] >= min_n)]
+    if ok.empty:
+        return None
+    return ok.sort_values("fall_pct").iloc[0].to_dict()
