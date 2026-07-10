@@ -33,6 +33,10 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "drops >= your 2-day %.\n"
         "- **Episode:** consecutive/near-consecutive flagged days are merged into one episode, "
         "anchored on the LOWEST low in the run.\n"
+        "- **Green-candle confirmation (optional, on by default):** drops any episode unless "
+        "the low day itself closes green (close > open) OR the very next trading day does — "
+        "a visible sign buyers stepped in at/right after the low, not just a quiet low that "
+        "could still break.\n"
         "- **Reversal tracking:** walking forward day-by-day from the anchor low, a NEW lower "
         "low resets the anchor (the fall isn't over). Once the running high since the "
         "(current) anchor first climbs your threshold% above it, that's the **trigger day**.\n"
@@ -92,10 +96,16 @@ with c6:
 horizons = st.multiselect("Forward horizons (trading days)", [1, 2, 3, 5, 10, 15, 20],
                           default=[3, 5, 10], key="p24_hor")
 
+require_green = st.checkbox(
+    "Require a green-candle confirmation — low day itself closes green, or the next "
+    "trading day does", value=True, key="p24_green",
+    help="Drops any fall episode where neither the low day nor the day right after it "
+         "closed above its own open — i.e. no visible sign buyers stepped in at the low.")
+
 if st.button("▶ Run reversal backtest", type="primary", key="p24_run"):
     st.session_state.p24_ran = True
     st.session_state.p24_inputs = dict(
-        lookback=lookback, fall1=fall1, fall2=fall2,
+        lookback=lookback, fall1=fall1, fall2=fall2, require_green=require_green,
         thr_lo=thr_lo, thr_hi=thr_hi, thr_step=thr_step,
         min_hit=min_hit, horizons=tuple(sorted(horizons)) or (3, 5, 10))
 
@@ -111,7 +121,8 @@ with st.spinner("Fetching daily history and scanning reversal thresholds…"):
     if daily is None or daily.empty:
         episodes, res = pd.DataFrame(), {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
     else:
-        episodes = rb.find_fall_episodes_daily(daily, fall_1d_pct=_in["fall1"], fall_2d_pct=_in["fall2"])
+        episodes = rb.find_fall_episodes_daily(daily, fall_1d_pct=_in["fall1"], fall_2d_pct=_in["fall2"],
+                                               require_green_confirmation=_in["require_green"])
         res = rb.reversal_threshold_scan_daily(daily, episodes, thresholds=thresholds,
                                                forward_horizons=_in["horizons"]) \
             if not episodes.empty else {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
@@ -121,7 +132,7 @@ if daily is None or daily.empty:
     st.stop()
 if episodes.empty:
     st.warning("No fall episodes found at these triggers over this lookback — loosen the "
-              "% triggers or extend the lookback.")
+              "% triggers, extend the lookback, or turn off the green-candle confirmation.")
     st.stop()
 
 st.success(f"Found **{len(episodes)}** fall episodes over **{len(daily)}** daily rows "

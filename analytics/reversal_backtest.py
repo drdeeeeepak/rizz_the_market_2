@@ -42,18 +42,26 @@ def _merge_flagged(flagged_idx: np.ndarray, merge_gap: int) -> list[tuple[int, i
 
 
 def find_fall_episodes_daily(daily: pd.DataFrame, fall_1d_pct: float = 1.0,
-                             fall_2d_pct: float = 1.5, merge_gap_days: int = 1) -> pd.DataFrame:
+                             fall_2d_pct: float = 1.5, merge_gap_days: int = 1,
+                             require_green_confirmation: bool = True) -> pd.DataFrame:
     """Flag every day whose fall crosses either threshold and merge nearby
     flagged days into episodes anchored on the lowest LOW in the run.
     fall_1d_pct is measured prior-close -> today's LOW (catches an intraday-
     only drop even on a day that closes flat/up); fall_2d_pct is close(t-2)
-    -> close(t)."""
+    -> close(t).
+
+    If require_green_confirmation, an episode only qualifies if the low day
+    ITSELF closes green (close > open — buyers already took it back that
+    same day) OR the very next trading day closes green (bought the low the
+    next morning) — i.e. some visible sign of buying at/right after the
+    low, not just a quiet low that could still give way. Episodes without
+    that confirmation are dropped."""
     d = _norm_ohlc(daily)
     n = len(d)
     if n < 5:
         return pd.DataFrame()
 
-    close, low = d["close"].to_numpy(), d["low"].to_numpy()
+    open_, close, low = d["open"].to_numpy(), d["close"].to_numpy(), d["low"].to_numpy()
     dates = d.index
 
     fall1 = np.full(n, np.nan)
@@ -73,8 +81,15 @@ def find_fall_episodes_daily(daily: pd.DataFrame, fall_1d_pct: float = 1.0,
         fall_low = float(low[low_idx])
         peak_ref = float(close[peak_idx])
         fall_pct = (peak_ref - fall_low) / peak_ref * 100 if peak_ref else np.nan
+
+        green_low_day = bool(close[low_idx] > open_[low_idx])
+        green_next_day = bool(low_idx + 1 < n and close[low_idx + 1] > open_[low_idx + 1])
+        if require_green_confirmation and not (green_low_day or green_next_day):
+            continue
+
         rows.append({"start_date": dates[s], "low_date": dates[low_idx], "low_idx": low_idx,
-                     "low": fall_low, "peak_ref": peak_ref, "fall_pct": round(fall_pct, 2)})
+                     "low": fall_low, "peak_ref": peak_ref, "fall_pct": round(fall_pct, 2),
+                     "green_low_day": green_low_day, "green_next_day": green_next_day})
     return pd.DataFrame(rows)
 
 
