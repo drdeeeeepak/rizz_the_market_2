@@ -55,6 +55,9 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "- **Fall-size scan (section 3)** is a different question: instead of varying the "
         "bounce, it varies the FALL SIZE itself and checks the low with NO bounce wait at all "
         "— 'how big a fall, on its own, needs to be before its low holds.'\n"
+        "- **Fall × bounce lookup (section 4)** combines both dimensions: for every fall size "
+        "in range, the smallest bounce that kept the low untouched — since the fall size is "
+        "given by the market and the bounce is the thing you actually wait for.\n"
         "- All of these are base-rate cutoffs from history, not guarantees — always keep your "
         "stop, and treat 0% observed touch-rate as 'not seen yet in this sample', not 'can't "
         "happen' (small samples can easily hide a rare tail event).\n"
@@ -178,7 +181,8 @@ fall_pcts = tuple(round(x, 2) for x in np.arange(_in["fall_lo"], _in["fall_hi"] 
 with st.spinner("Fetching daily history and scanning reversal thresholds…"):
     daily = _load_daily(_in["lookback"])
     if daily is None or daily.empty:
-        episodes, res, fall_scan = pd.DataFrame(), {"scan": pd.DataFrame(), "detail": pd.DataFrame()}, pd.DataFrame()
+        episodes, res, fall_scan, grid = pd.DataFrame(), {"scan": pd.DataFrame(), "detail": pd.DataFrame()}, \
+            pd.DataFrame(), pd.DataFrame()
     else:
         episodes = rb.find_fall_episodes_daily(daily, fall_1d_pct=_in["fall1"], fall_2d_pct=_in["fall2"],
                                                require_green_confirmation=_in["require_green"])
@@ -187,6 +191,9 @@ with st.spinner("Fetching daily history and scanning reversal thresholds…"):
             if not episodes.empty else {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
         fall_scan = rb.fall_size_safety_scan(daily, fall_pcts=fall_pcts, forward_horizons=_in["horizons"],
                                              require_green_confirmation=_in["require_green"])
+        grid = rb.fall_bounce_grid_scan(daily, fall_pcts=fall_pcts, bounce_pcts=thresholds,
+                                        forward_horizons=_in["horizons"],
+                                        require_green_confirmation=_in["require_green"])
 
 if daily is None or daily.empty:
     st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
@@ -231,7 +238,36 @@ else:
                            key="p24_dl_fallscan")
 
 st.divider()
-st.markdown("**4 · Full bounce-threshold scan (detail behind sections 1 & 2)**")
+st.markdown("**4 · Fall × bounce lookup — the minimum bounce needed, for the fall size you're "
+           "actually seeing**")
+st.caption("Sections 2 and 3 each hold one side fixed (a fixed fall for section 2, zero bounce "
+          "for section 3). This combines both: for EVERY fall size in your scan range, the "
+          "smallest bounce that kept the low untouched — a live lookup, not a single number. "
+          "Fall size isn't something you choose (the market gives it to you); the bounce you "
+          "wait for is. Pick today's fall size below, read off the bounce needed.")
+if grid.empty:
+    st.caption("No (fall%, bounce%) combination in range found any episodes — widen either range.")
+else:
+    lookup_h = st.selectbox("Horizon for this lookup (trading days)", _in["horizons"],
+                           index=len(_in["horizons"]) - 1, key="p24_lookup_h")
+    lookup = rb.min_bounce_by_fall_size(grid, horizon=lookup_h, max_touch_rate=_in["max_touch"], min_n=10)
+    if lookup.empty:
+        st.caption("Not enough episodes per fall-size bucket to build this table — widen the "
+                  "fall-size range or lower the min-sample bar.")
+    else:
+        _render(lookup, height=min(60 + 28 * len(lookup), 420))
+        st.caption("`min_bounce_pct` = NaN means no bounce in your scanned range kept that fall "
+                  "size's low untouched at this horizon with enough sample — widen the "
+                  "reversal-threshold scan range above.")
+    with st.expander("Full fall × bounce grid (every combination, every horizon)"):
+        _render(grid, height=360)
+        st.download_button("⬇ Download fall × bounce grid CSV",
+                           grid.to_csv(index=False).encode("utf-8"),
+                           file_name="fall_bounce_grid.csv", mime="text/csv",
+                           key="p24_dl_grid")
+
+st.divider()
+st.markdown("**5 · Full bounce-threshold scan (detail behind sections 1 & 2)**")
 st.caption("hit_rate_Xd = share of triggered episodes closing higher X days later · "
           "avg_fwd_ret_Xd = mean forward return · close_fail_rate_Xd = % where the CLOSE fell "
           "back below the anchor low within X days of the trigger · touch_low_rate_Xd = % "

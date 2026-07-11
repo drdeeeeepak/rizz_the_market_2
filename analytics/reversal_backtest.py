@@ -298,3 +298,65 @@ def pick_min_certain_fall(scan: pd.DataFrame, horizon: int, max_touch_rate: floa
     if ok.empty:
         return None
     return ok.sort_values("fall_pct").iloc[0].to_dict()
+
+
+def fall_bounce_grid_scan(daily: pd.DataFrame, fall_pcts=DEFAULT_THRESHOLDS,
+                          bounce_pcts=DEFAULT_THRESHOLDS, forward_horizons=(3, 5, 10),
+                          merge_gap_days: int = 1, require_green_confirmation: bool = False,
+                          max_track_days: int = 30) -> pd.DataFrame:
+    """The 2D combination of the two 1D scans above: every (fall_pct,
+    bounce_pct) pair in one table, instead of holding one dimension fixed.
+    For each fall_pct, finds episodes at that fall-size cutoff (2-day path
+    muted, same as fall_size_safety_scan), then reuses
+    reversal_threshold_scan_daily's bounce logic against bounce_pcts on
+    those episodes. This is what answers 'given a fall this big, how much
+    bounce do I actually need' rather than either dimension scanned alone
+    with the other one implicitly fixed."""
+    rows = []
+    for fp in fall_pcts:
+        fp = round(float(fp), 2)
+        episodes = find_fall_episodes_daily(daily, fall_1d_pct=fp, fall_2d_pct=1e9,
+                                            merge_gap_days=merge_gap_days,
+                                            require_green_confirmation=require_green_confirmation)
+        if episodes.empty:
+            continue
+        res = reversal_threshold_scan_daily(daily, episodes, thresholds=bounce_pcts,
+                                            forward_horizons=forward_horizons,
+                                            max_track_days=max_track_days)
+        scan = res["scan"]
+        if scan.empty:
+            continue
+        scan = scan.rename(columns={"threshold%": "bounce_pct", "n_triggered": "n_combo"})
+        scan.insert(0, "fall_pct", fp)
+        rows.append(scan)
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
+
+
+def min_bounce_by_fall_size(grid: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                            min_n: int = 10) -> pd.DataFrame:
+    """Collapses the 2D grid into one row per fall_pct: the SMALLEST
+    bounce_pct that keeps the touch-the-low-again rate at `horizon` days
+    at/below max_touch_rate, with at least min_n episodes behind that
+    combo — a live lookup table: 'the market just fell this much — how
+    much bounce do I need to wait for before it's safe.' A fall_pct row
+    where no bounce_pct clears the bar shows NaN in min_bounce_pct."""
+    if grid is None or grid.empty:
+        return pd.DataFrame()
+    col = f"touch_low_rate_{horizon}d%"
+    if col not in grid.columns:
+        return pd.DataFrame()
+    rows = []
+    for fp, sub in grid.groupby("fall_pct"):
+        ok = sub[(sub[col] <= max_touch_rate) & (sub["n_combo"] >= min_n)]
+        if ok.empty:
+            rows.append({"fall_pct": fp, "min_bounce_pct": np.nan, "n_combo": np.nan,
+                        f"touch_low_rate_{horizon}d%": np.nan, f"hit_rate_{horizon}d%": np.nan})
+            continue
+        best = ok.sort_values("bounce_pct").iloc[0]
+        rows.append({"fall_pct": fp, "min_bounce_pct": best["bounce_pct"],
+                    "n_combo": int(best["n_combo"]),
+                    f"touch_low_rate_{horizon}d%": best[col],
+                    f"hit_rate_{horizon}d%": best[f"hit_rate_{horizon}d%"]})
+    return pd.DataFrame(rows).sort_values("fall_pct").reset_index(drop=True)
