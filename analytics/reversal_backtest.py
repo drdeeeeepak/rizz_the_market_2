@@ -360,3 +360,311 @@ def min_bounce_by_fall_size(grid: pd.DataFrame, horizon: int, max_touch_rate: fl
                     f"touch_low_rate_{horizon}d%": best[col],
                     f"hit_rate_{horizon}d%": best[f"hit_rate_{horizon}d%"]})
     return pd.DataFrame(rows).sort_values("fall_pct").reset_index(drop=True)
+
+
+# ── mirror suite: RISE / HIGH — the call-seller side ────────────────────────
+# Same mechanics as the fall/low suite above, flipped: anchor on the HIGHEST
+# high instead of the lowest low, track a PULLBACK down instead of a bounce
+# up, and touch_high_rate (not touch_low_rate) is the bad outcome for a
+# SELLER (of calls, not puts). Expect this to behave very differently from
+# the fall side, not as a bug: uptrends persistently make new highs as
+# normal, healthy behavior, so don't expect touch_high_rate to flatten near
+# zero the way touch_low_rate did — the point of this suite is to measure
+# that curve honestly, not force a match to the put side.
+
+def find_rise_episodes_daily(daily: pd.DataFrame, rise_1d_pct: float = 0.5,
+                             rise_2d_pct: float = 0.75, merge_gap_days: int = 1,
+                             require_red_confirmation: bool = False) -> pd.DataFrame:
+    """Mirror of find_fall_episodes_daily: flags every day whose RISE
+    crosses either threshold and merges nearby flagged days into episodes
+    anchored on the HIGHEST high in the run. rise_1d_pct is measured
+    prior-close -> today's HIGH (catches an intraday-only spike even on a
+    day that closes lower); rise_2d_pct is close(t-2) -> close(t).
+
+    If require_red_confirmation, an episode only qualifies if the high day
+    ITSELF closes red (close < open) OR the very next trading day closes
+    red. Off by default — matches the simplified fall-side rule where the
+    pullback-threshold trigger itself is confirmation enough."""
+    d = _norm_ohlc(daily)
+    n = len(d)
+    if n < 5:
+        return pd.DataFrame()
+
+    open_, close, high = d["open"].to_numpy(), d["close"].to_numpy(), d["high"].to_numpy()
+    dates = d.index
+
+    rise1 = np.full(n, np.nan)
+    rise2 = np.full(n, np.nan)
+    rise1[1:] = (high[1:] - close[:-1]) / close[:-1] * 100
+    rise2[2:] = (close[2:] - close[:-2]) / close[:-2] * 100
+
+    is_rise = (np.nan_to_num(rise1) >= rise_1d_pct) | (np.nan_to_num(rise2) >= rise_2d_pct)
+    flagged = np.where(is_rise)[0]
+    if len(flagged) == 0:
+        return pd.DataFrame()
+
+    rows = []
+    for s, e in _merge_flagged(flagged, merge_gap_days):
+        trough_idx = max(s - 1, 0)
+        high_idx = s + int(np.argmax(high[s:e + 1]))
+        rise_high = float(high[high_idx])
+        trough_ref = float(close[trough_idx])
+        rise_pct = (rise_high - trough_ref) / trough_ref * 100 if trough_ref else np.nan
+
+        red_high_day = bool(close[high_idx] < open_[high_idx])
+        red_next_day = bool(high_idx + 1 < n and close[high_idx + 1] < open_[high_idx + 1])
+        if require_red_confirmation and not (red_high_day or red_next_day):
+            continue
+
+        rows.append({"start_date": dates[s], "high_date": dates[high_idx], "high_idx": high_idx,
+                     "high": rise_high, "trough_ref": trough_ref, "rise_pct": round(rise_pct, 2),
+                     "red_high_day": red_high_day, "red_next_day": red_next_day})
+    return pd.DataFrame(rows)
+
+
+def pullback_threshold_scan_daily(daily: pd.DataFrame, episodes: pd.DataFrame,
+                                  thresholds=DEFAULT_THRESHOLDS,
+                                  forward_horizons=(3, 5, 10),
+                                  max_track_days: int = 30) -> dict:
+    """Mirror of reversal_threshold_scan_daily: for each pullback
+    threshold, scores the forward outcome from the trigger day over every
+    horizon, with two different notions of "the high broke again":
+      - close_fail_{h}d : CLOSING price rose back above the anchor high
+                          within h days of the trigger.
+      - touch_high_{h}d : the day's HIGH (intraday) touched/exceeded the
+                          anchor high again within h days — the relevant
+                          one for a CALL seller.
+    hit_rate here means the forward return was NEGATIVE (price kept
+    falling after the pullback trigger) — the continuation-DOWN read that
+    matters for a call seller's conviction, the mirror of "closed higher"
+    on the put side."""
+    if episodes is None or episodes.empty:
+        return {"scan": pd.DataFrame(), "detail": pd.DataFrame()}
+
+    d = _norm_ohlc(daily)
+    close, low, high = d["close"].to_numpy(), d["low"].to_numpy(), d["high"].to_numpy()
+    dates = d.index
+    n = len(d)
+    thresholds = tuple(float(t) for t in thresholds)
+
+    detail_rows = []
+    for _, ep in episodes.iterrows():
+        anchor_idx = int(ep["high_idx"])
+        anchor_high = float(ep["high"])
+        triggered = {t: None for t in thresholds}
+        j = anchor_idx + 1
+        steps = 0
+        while j < n and steps < max_track_days:
+            if high[j] > anchor_high:
+                anchor_high = float(high[j])
+                anchor_idx = j
+            pullback_val = (anchor_high - low[j]) / anchor_high * 100
+            for t in thresholds:
+                if triggered[t] is None and pullback_val >= t:
+                    triggered[t] = j
+            j += 1
+            steps += 1
+
+        for t, trig_idx in triggered.items():
+            if trig_idx is None:
+                continue
+            trig_close = close[trig_idx]
+            row = {"episode_high_date": ep["high_date"], "threshold%": t,
+                  "trigger_date": dates[trig_idx], "trigger_close": round(float(trig_close), 2),
+                  "anchor_high_at_trigger": round(anchor_high, 2)}
+            for h in forward_horizons:
+                k = trig_idx + h
+                end_k = min(k, n - 1)
+                window_close = close[trig_idx + 1:end_k + 1]
+                window_high = high[trig_idx + 1:end_k + 1]
+                row[f"close_fail_{h}d"] = bool(len(window_close) and (window_close > anchor_high).any())
+                row[f"touch_high_{h}d"] = bool(len(window_high) and (window_high > anchor_high).any())
+                row[f"fwd_ret_{h}d%"] = round((close[k] - trig_close) / trig_close * 100, 2) \
+                    if k < n else np.nan
+            detail_rows.append(row)
+
+    detail = pd.DataFrame(detail_rows)
+    if detail.empty:
+        return {"scan": pd.DataFrame(), "detail": detail}
+
+    n_episodes = len(episodes)
+    scan_rows = []
+    for t in thresholds:
+        sub = detail[detail["threshold%"] == t]
+        if sub.empty:
+            continue
+        row = {"threshold%": t, "n_triggered": len(sub),
+              "pct_of_episodes_triggered%": round(len(sub) / n_episodes * 100, 1)}
+        for h in forward_horizons:
+            ret_col = f"fwd_ret_{h}d%"
+            valid = sub[ret_col].dropna()
+            row[f"hit_rate_{h}d%"] = round((valid < 0).mean() * 100, 1) if len(valid) else np.nan
+            row[f"avg_fwd_ret_{h}d%"] = round(valid.mean(), 2) if len(valid) else np.nan
+            row[f"close_fail_rate_{h}d%"] = round(sub[f"close_fail_{h}d"].mean() * 100, 1)
+            row[f"touch_high_rate_{h}d%"] = round(sub[f"touch_high_{h}d"].mean() * 100, 1)
+        scan_rows.append(row)
+    return {"scan": pd.DataFrame(scan_rows), "detail": detail}
+
+
+def pick_min_reliable_pullback(scan: pd.DataFrame, horizon: int, min_hit_rate: float = 60.0,
+                               min_n: int = 10) -> dict | None:
+    """Mirror of pick_min_reliable_threshold: smallest pullback% threshold
+    whose forward hit-rate (share that kept FALLING) at `horizon` trading
+    days clears min_hit_rate — the downside-continuation read a call
+    seller cares about."""
+    if scan is None or scan.empty:
+        return None
+    col = f"hit_rate_{horizon}d%"
+    if col not in scan.columns:
+        return None
+    ok = scan[(scan[col] >= min_hit_rate) & (scan["n_triggered"] >= min_n)]
+    if ok.empty:
+        return None
+    return ok.sort_values("threshold%").iloc[0].to_dict()
+
+
+def pick_min_safe_pullback(scan: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                          min_n: int = 10) -> dict | None:
+    """Mirror of pick_min_safe_threshold: smallest pullback% threshold
+    whose intraday touch-the-high-again rate at `horizon` trading days is
+    at/below max_touch_rate — 'minimum pullback after which a call strike
+    sitting above the high would have stayed safe for `horizon` days.'"""
+    if scan is None or scan.empty:
+        return None
+    col = f"touch_high_rate_{horizon}d%"
+    if col not in scan.columns:
+        return None
+    ok = scan[(scan[col] <= max_touch_rate) & (scan["n_triggered"] >= min_n)]
+    if ok.empty:
+        return None
+    return ok.sort_values("threshold%").iloc[0].to_dict()
+
+
+def rise_size_certainty_scan(daily: pd.DataFrame, rise_pcts=DEFAULT_THRESHOLDS,
+                             forward_horizons=(1, 2, 3, 5), merge_gap_days: int = 1,
+                             require_red_confirmation: bool = False) -> pd.DataFrame:
+    """Mirror of fall_size_safety_scan: varies the RISE size itself and
+    checks — with NO pullback wait at all, straight from the high day
+    forward — whether the high ever got touched (intraday) or closed
+    through again within each horizon. Answers: 'how big does a single-day
+    rise need to be before its own high reliably holds, before any
+    pullback even happens?'"""
+    rise_pcts = tuple(round(float(x), 2) for x in rise_pcts)
+    d = _norm_ohlc(daily)
+    close, high = d["close"].to_numpy(), d["high"].to_numpy()
+    n = len(d)
+
+    rows = []
+    for rp in rise_pcts:
+        episodes = find_rise_episodes_daily(daily, rise_1d_pct=rp, rise_2d_pct=1e9,
+                                            merge_gap_days=merge_gap_days,
+                                            require_red_confirmation=require_red_confirmation)
+        n_eps = len(episodes)
+        row = {"rise_pct": rp, "n_episodes": n_eps}
+        if n_eps == 0:
+            for h in forward_horizons:
+                row[f"hit_rate_{h}d%"] = np.nan
+                row[f"avg_fwd_ret_{h}d%"] = np.nan
+                row[f"close_fail_rate_{h}d%"] = np.nan
+                row[f"touch_high_rate_{h}d%"] = np.nan
+            rows.append(row)
+            continue
+
+        per_h = {h: {"touch": [], "close_fail": [], "ret": []} for h in forward_horizons}
+        for _, ep in episodes.iterrows():
+            high_idx = int(ep["high_idx"])
+            anchor_high = float(ep["high"])
+            base_close = close[high_idx]
+            for h in forward_horizons:
+                k = high_idx + h
+                end_k = min(k, n - 1)
+                window_high = high[high_idx + 1:end_k + 1]
+                window_close = close[high_idx + 1:end_k + 1]
+                per_h[h]["touch"].append(bool(len(window_high) and (window_high > anchor_high).any()))
+                per_h[h]["close_fail"].append(bool(len(window_close) and (window_close > anchor_high).any()))
+                if k < n:
+                    per_h[h]["ret"].append((close[k] - base_close) / base_close * 100)
+
+        for h in forward_horizons:
+            touches, closes_fail, rets = per_h[h]["touch"], per_h[h]["close_fail"], per_h[h]["ret"]
+            row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touches)) * 100, 1) if touches else np.nan
+            row[f"close_fail_rate_{h}d%"] = round(float(np.mean(closes_fail)) * 100, 1) if closes_fail else np.nan
+            if rets:
+                rets_arr = np.array(rets)
+                row[f"hit_rate_{h}d%"] = round(float((rets_arr < 0).mean()) * 100, 1)
+                row[f"avg_fwd_ret_{h}d%"] = round(float(rets_arr.mean()), 2)
+            else:
+                row[f"hit_rate_{h}d%"] = np.nan
+                row[f"avg_fwd_ret_{h}d%"] = np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def pick_min_certain_rise(scan: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                         min_n: int = 10) -> dict | None:
+    """Mirror of pick_min_certain_fall for the upside."""
+    if scan is None or scan.empty:
+        return None
+    col = f"touch_high_rate_{horizon}d%"
+    if col not in scan.columns:
+        return None
+    ok = scan[(scan[col] <= max_touch_rate) & (scan["n_episodes"] >= min_n)]
+    if ok.empty:
+        return None
+    return ok.sort_values("rise_pct").iloc[0].to_dict()
+
+
+def rise_pullback_grid_scan(daily: pd.DataFrame, rise_pcts=DEFAULT_THRESHOLDS,
+                            pullback_pcts=DEFAULT_THRESHOLDS, forward_horizons=(3, 5, 10),
+                            merge_gap_days: int = 1, require_red_confirmation: bool = False,
+                            max_track_days: int = 30) -> pd.DataFrame:
+    """Mirror of fall_bounce_grid_scan: every (rise_pct, pullback_pct) pair
+    in one table — 'given a rise this big, how much pullback do I actually
+    need to see before a call strike above the high is safe.'"""
+    rows = []
+    for rp in rise_pcts:
+        rp = round(float(rp), 2)
+        episodes = find_rise_episodes_daily(daily, rise_1d_pct=rp, rise_2d_pct=1e9,
+                                            merge_gap_days=merge_gap_days,
+                                            require_red_confirmation=require_red_confirmation)
+        if episodes.empty:
+            continue
+        res = pullback_threshold_scan_daily(daily, episodes, thresholds=pullback_pcts,
+                                            forward_horizons=forward_horizons,
+                                            max_track_days=max_track_days)
+        scan = res["scan"]
+        if scan.empty:
+            continue
+        scan = scan.rename(columns={"threshold%": "pullback_pct", "n_triggered": "n_combo"})
+        scan.insert(0, "rise_pct", rp)
+        rows.append(scan)
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
+
+
+def min_pullback_by_rise_size(grid: pd.DataFrame, horizon: int, max_touch_rate: float = 0.0,
+                              min_n: int = 10) -> pd.DataFrame:
+    """Mirror of min_bounce_by_fall_size: one row per rise_pct, the
+    smallest pullback_pct that keeps touch_high_rate at `horizon` days
+    at/below max_touch_rate — 'the market just rallied this much — how
+    much pullback do I need to see before a call strike above the high is
+    safe.'"""
+    if grid is None or grid.empty:
+        return pd.DataFrame()
+    col = f"touch_high_rate_{horizon}d%"
+    if col not in grid.columns:
+        return pd.DataFrame()
+    rows = []
+    for rp, sub in grid.groupby("rise_pct"):
+        ok = sub[(sub[col] <= max_touch_rate) & (sub["n_combo"] >= min_n)]
+        if ok.empty:
+            rows.append({"rise_pct": rp, "min_pullback_pct": np.nan, "n_combo": np.nan,
+                        f"touch_high_rate_{horizon}d%": np.nan, f"hit_rate_{horizon}d%": np.nan})
+            continue
+        best = ok.sort_values("pullback_pct").iloc[0]
+        rows.append({"rise_pct": rp, "min_pullback_pct": best["pullback_pct"],
+                    "n_combo": int(best["n_combo"]),
+                    f"touch_high_rate_{horizon}d%": best[col],
+                    f"hit_rate_{horizon}d%": best[f"hit_rate_{horizon}d%"]})
+    return pd.DataFrame(rows).sort_values("rise_pct").reset_index(drop=True)
