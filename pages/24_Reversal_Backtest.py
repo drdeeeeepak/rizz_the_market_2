@@ -12,6 +12,8 @@
 #     make new highs as normal behavior — so don't expect this to flatten
 #     to 0% the way the Fall side does. It measures the actual curve.
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -27,6 +29,13 @@ except Exception:
 
 st.set_page_config(page_title="P24 · Market Reversal Backtest", layout="wide")
 st.title("Page 24 — Market Reversal Backtest")
+
+with st.expander("📜 Final Rule Book — put & call selling (read this first)"):
+    _rulebook_path = Path(__file__).resolve().parent.parent / "docs" / "PAGE_24_RULE_BOOK.md"
+    try:
+        st.markdown(_rulebook_path.read_text())
+    except Exception:
+        st.caption("Rule book file not found — see docs/PAGE_24_RULE_BOOK.md in the repo.")
 
 mode = st.radio("Mode", ["Fall — put-seller safety", "Rise — call-seller safety"], horizontal=True,
                 key="p24_mode")
