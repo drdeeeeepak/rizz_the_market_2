@@ -48,14 +48,24 @@ here, and I'll interpret it.
    - **Section 2** — the composite (agreement-gated combination of all 5).
      Compare its UP/DOWN gap to the best single indicator in section 1 — if
      it's not wider, combining lenses isn't earning its complexity.
+   - **Section 2b** — early half vs late half, out-of-sample check. The same
+     cycles from section 2, split chronologically in two and scored
+     independently (full history still feeds every indicator's warmup —
+     only the evaluation rows split). **This is the one that actually
+     answers "is this a real edge or one lucky stretch."** If
+     call_breach%/put_breach% point the same direction in BOTH halves,
+     that's genuine support. If they disagree, the whole-window number in
+     section 2 was probably one regime talking, not a repeatable pattern.
    - **Section 3** — the lot-scheme scorecard: `static_2CE_1PE` (today's
-     live default) vs `static_1_1` (symmetric baseline) vs `dynamic_flip`
-     (the flip rule under test). Lower `expected_breached_lots_per_cycle` /
-     `breach_rate_per_lot%` = fewer expected leg-breaches for the same
-     premium-collecting effort.
-6. **Export.** Use the download buttons under sections 1 and 3 (per-indicator
-   CSV, composite bucket CSV, lot scorecard CSV) — or just copy/paste the
-   on-screen tables, or a screenshot.
+     live default), `static_1_1` (symmetric baseline), `dynamic_flip` (the
+     rule as originally hypothesized — flip toward the trend), and
+     `flip_calibrated` (flip AGAINST the trend on a confirmed DOWN read,
+     calibrated to what the first real run actually showed). Lower
+     `expected_breached_lots_per_cycle` / `breach_rate_per_lot%` = fewer
+     expected leg-breaches for the same premium-collecting effort.
+6. **Export.** Use the download buttons under sections 1, 2b, and 3
+   (per-indicator CSV, early/late split CSV, lot scorecard CSV) — or just
+   copy/paste the on-screen tables, or a screenshot.
 
 ## Bringing it back to me
 

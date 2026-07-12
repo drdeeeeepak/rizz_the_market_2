@@ -192,6 +192,45 @@ if result["composite_breach"].empty:
 else:
     _frozen(result["composite_breach"], height=160)
 
+st.markdown("**2b · Early half vs late half — does the same asymmetry hold in BOTH?**")
+st.caption("The table above is ONE average over the whole lookback — it can't tell you whether an "
+           "asymmetry is a genuine, repeatable edge or just one dominant stretch (e.g. one sharp "
+           "correction-and-bounce) skewing the whole-period number. This splits the SAME cycles "
+           "chronologically into an early half and a late half and scores each independently — full "
+           "daily/1H history still feeds every indicator's warmup, only the evaluation rows are split. "
+           "If call_breach%/put_breach% point the SAME direction in both halves, that's real "
+           "out-of-sample support. If they disagree or flip, treat the full-window number as noise "
+           "from one regime, not a rule.")
+
+_split = result.get("composite_split", {})
+if not _split:
+    st.warning("Not enough cycles to split — try a longer daily lookback.")
+else:
+    _cols = st.columns(len(_split))
+    for _col, (_label, _seg) in zip(_cols, _split.items()):
+        with _col:
+            st.markdown(f"*{_label.replace('_', ' ').title()}* ({_seg['span']}, n={_seg['n']})")
+            if _seg["table"].empty:
+                st.caption("No cycles in any bucket at this threshold.")
+            else:
+                _frozen(_seg["table"], height=140)
+            with st.expander("Lot scorecard, this half only"):
+                _frozen(_seg["scorecard"], height=140)
+
+    _split_parts = []
+    for _label, _seg in _split.items():
+        if _seg["table"].empty:
+            continue
+        _part = _seg["table"].reset_index()
+        _part.insert(0, "half", _label)
+        _part.insert(1, "span", _seg["span"])
+        _split_parts.append(_part)
+    if _split_parts:
+        _split_csv = pd.concat(_split_parts, ignore_index=True)
+        st.download_button("⬇ Download early/late split CSV",
+                           _split_csv.to_csv(index=False).encode(),
+                           "p26_composite_split.csv", key="p26_dl_split")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 3 · Lot-scheme scorecard
 # ══════════════════════════════════════════════════════════════════════════════

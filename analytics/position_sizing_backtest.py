@@ -137,6 +137,17 @@ def breach_by_bucket(daily: pd.DataFrame, bucket: pd.Series, horizon: int = 5,
     IS the anchor. Set False only for a larger-sample sanity check that is
     no longer cadence-realistic (every day gets scored as if it were an
     anchor, which it isn't)."""
+    df = _joined_bucket_outcomes(daily, bucket, horizon, call_pct, put_pct, tuesdays_only)
+    return _table_from_joined(df, horizon)
+
+
+def _joined_bucket_outcomes(daily: pd.DataFrame, bucket: pd.Series, horizon: int,
+                             call_pct: float, put_pct: float,
+                             tuesdays_only: bool) -> pd.DataFrame:
+    """Shared prep step for breach_by_bucket and split_validation: forward
+    outcomes joined to the bucket label, filtered to valid rows (and to
+    Tuesdays if requested), sorted chronologically. Kept separate so a
+    chronological SPLIT can be taken after this step without re-deriving it."""
     outc = bt.forward_outcomes(daily, horizons=(horizon,), call_pct=call_pct, put_pct=put_pct)
     outc.index = _norm_idx(outc.index)
     b = bucket.reindex(outc.index)
@@ -149,7 +160,12 @@ def breach_by_bucket(daily: pd.DataFrame, bucket: pd.Series, horizon: int = 5,
     df = outc.copy()
     df["bucket"] = b
     df = df[df[f"ret{horizon}"].notna() & df["bucket"].notna()]
+    return df.sort_index()
 
+
+def _table_from_joined(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """Group a _joined_bucket_outcomes() frame into the UP/NEUTRAL/DOWN
+    breach-rate table breach_by_bucket returns."""
     rows = []
     for name, g in df.groupby("bucket"):
         rows.append({
@@ -163,6 +179,45 @@ def breach_by_bucket(daily: pd.DataFrame, bucket: pd.Series, horizon: int = 5,
         columns=["n", "call_breach%", "put_breach%", f"avg_ret{horizon}"])
     order = [x for x in ("UP", "NEUTRAL", "DOWN") if x in out.index]
     return out.reindex(order)
+
+
+def split_validation(daily: pd.DataFrame, bucket: pd.Series, horizon: int = 5,
+                     call_pct: float = 3.0, put_pct: float = 3.5,
+                     tuesdays_only: bool = True, n_splits: int = 2) -> dict:
+    """Chronological out-of-sample check: split the SAME cycles
+    breach_by_bucket would score into n_splits equal-count, TIME-ORDERED
+    segments (default: first half / second half) and score each
+    independently. Answers the question a single full-history run can't:
+    does an asymmetry found over the whole window hold up in BOTH an early
+    and a late slice, or does it only exist because one stretch (e.g. one
+    sharp correction-and-bounce) dominates the average?
+
+    The full daily/1H history still goes into BUILDING the signal (adapter
+    warmup — EMA/RSI/ATR — is unaffected); only the evaluation rows get
+    split, so this is not the same as re-running with a shorter lookback.
+
+    Returns {segment_label: {"table": breach_df, "scorecard": lot_scheme_df,
+    "span": "dd-Mon-YYYY -> dd-Mon-YYYY", "n": int}}."""
+    df = _joined_bucket_outcomes(daily, bucket, horizon, call_pct, put_pct, tuesdays_only)
+    if df.empty:
+        return {}
+
+    seg_size = len(df) // n_splits
+    labels = ["first_half", "second_half"] if n_splits == 2 else [f"segment_{i+1}" for i in range(n_splits)]
+    out = {}
+    for i, label in enumerate(labels):
+        start = i * seg_size
+        end = (i + 1) * seg_size if i < n_splits - 1 else len(df)
+        seg = df.iloc[start:end]
+        table = _table_from_joined(seg, horizon)
+        out[label] = {
+            "table": table,
+            "scorecard": lot_scheme_scorecard(table),
+            "span": (f"{seg.index.min():%d-%b-%Y} -> {seg.index.max():%d-%b-%Y}"
+                     if not seg.empty else "-"),
+            "n": int(len(seg)),
+        }
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -266,6 +321,12 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
                                         call_pct=call_pct, put_pct=put_pct,
                                         tuesdays_only=tuesdays_only)
     scorecard = lot_scheme_scorecard(composite_table)
+    # Out-of-sample check: does the composite's UP/DOWN breach-rate asymmetry
+    # hold up in BOTH an early and a late slice of the same history, or only
+    # in the full-window average? See split_validation's docstring.
+    composite_split = split_validation(daily, composite_bucket, horizon=horizon,
+                                        call_pct=call_pct, put_pct=put_pct,
+                                        tuesdays_only=tuesdays_only)
 
     return {
         "frame": frame,
@@ -274,6 +335,7 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
         "composite_bucket": composite_bucket,
         "composite_breach": composite_table,
         "lot_scorecard": scorecard,
+        "composite_split": composite_split,
         "params": {
             "horizon": horizon, "call_pct": call_pct, "put_pct": put_pct,
             "up_thresh": up_thresh, "min_agree": min_agree,
