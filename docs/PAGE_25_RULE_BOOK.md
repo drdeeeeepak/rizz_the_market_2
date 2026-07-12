@@ -7,8 +7,8 @@ which answers a different question — is a FRESH short safe to place right now.
 This page assumes the reference position: **CALL sold ~3% above Tuesday anchor,
 PUT sold ~3.5% below**, squared off within 5 trading days (biweekly hold).
 
-## Status: profit leg confirmed across multiple independent re-runs; loss-leg
-side still needs a dedicated re-run
+## Status: both legs confirmed — profit leg across multiple independent
+re-runs, loss leg via the dedicated defense-optimizer backtest
 
 ## How these numbers were produced (reproduce it yourself)
 
@@ -26,6 +26,11 @@ PUT=3.5%, varying only the X%/Y% grid range + step:
 Note: the Y-range slider originally couldn't land on exactly 0.75% (old
 bounds/step made 0.75 unreachable) — fixed in the same session so this grid
 could actually be run.
+
+**LOSS LEG section** comes from Page 25 → section 8 "Loss-leg defense
+optimizer", CALL=3.0% / PUT=3.5%, X range 0.25–4.0 step 0.25, Z range
+0.25–3.0 step 0.25 (deliberately wider than the profit-leg grid, to find
+where the 100%-survival frontier actually breaks down).
 
 ## PROFIT LEG — when to roll it in, and by how much
 
@@ -101,30 +106,54 @@ biweekly window).
 
 ## LOSS LEG — when to roll/shift it out
 
-**Tool built, results not yet run.** Page 22's original "Roll threshold" scan
-found loss_thr=4.0% best, but that number is invalid for this purpose: it sits
-at the edge of the scanned range (unverified true optimum) AND it exceeds the
-actual 3%/3.5% strike distances — a trigger that can only fire *after* the
-strike distance in the reference position is already breached.
+Derived from Page 25 section 8 (Loss-leg defense optimizer — the mirror of
+section 7, shifting the THREATENED leg outward instead of the safe leg
+inward), using the real 3%/3.5% strike distances, X range 0.25–4.0%, Z range
+0.25–3.0% (`loss_leg_near.csv` = near/weekly window, `loss_leg_far.csv` =
+biweekly window).
 
-**New: Page 25 → section 8, "Loss-leg defense optimizer."** Mirror image of
-the profit-leg roll-rule optimizer (section 7) — instead of shifting the SAFE
-leg inward for more premium, it shifts the THREATENED leg OUTWARD to defend it
-before an actual breach, and never touches the safe leg. Same X (drift
-trigger) / Z (shift-out size) grid-search shape, same near/far cycle windows,
-same survival-rate scoring — so its output (`loss_leg_near.csv` /
-`loss_leg_far.csv`) sits directly next to the profit-leg table above for
-comparison. One real difference: among survival ties, **fewer average shifts
-is preferred** here (not more) — each shift on this side means you already
-moved against the price once, unlike the profit leg where more rolls only ever
-capture more premium.
+1. **There is a genuine zero-breach frontier, not just a plateau.** Below the
+   real strike distance, survival hits a literal **100%** (0 breaches in
+   ~193–194 historical cycles) for a wide range of (X, Z) pairs, as long as Z
+   scales up with X:
 
-**To run it and get the real numbers:** Page 25 → section 8, set CALL=3.0% /
-PUT=3.5% (your real strikes), pick an X-range and Z-range (start with the same
-0.25–2.5% both axes used for the profit-leg full-grid test above), click Run,
-then bring the two CSVs back for the actual loss-side trigger/shift-size
-recommendation — this section of the rule book gets filled in once that's
-done.
+   | X% (trigger) | Min Z for 100% survival (both windows) | avg_shifts near / far |
+   |---|---|---|
+   | 0.25 | 0.25 | 7.21 / 11.72 |
+   | 0.5 | 0.5 | 3.28 / 5.46 |
+   | **0.75** | **0.75** | **1.90 / 3.33** |
+   | 1.0 | 0.75 | 1.30 / 2.37 |
+   | 1.25 | 1.0 | 0.91 / 1.73 |
+   | 1.5 | 1.25 | 0.69 / 1.32 |
+   | 1.75 | 1.5 | 0.50 / 1.05 |
+   | 2.0 | 1.5 | 0.40 / 0.82 |
+   | 2.25 | 2.0 | 0.29 / 0.66 |
+   | 2.5 | 2.25 | 0.21 / 0.55 |
+   | 2.75 | 2.5 | 0.18 / 0.48 |
+
+   Mechanism: as long as each shift (Z) moves the strike out faster than the
+   trigger requires (X), the strike's distance from anchor grows faster than
+   price can catch it, so it's never caught in this history.
+   `breach_on_untouched_leg%` is 0.0% throughout this range too — no whipsaw
+   risk from defending one side and getting hit on the other.
+2. **Hard boundary: this breaks down at X ≥ 3.0%** (the real CALL distance).
+   Survival caps out at 77–90% no matter how big Z gets, and
+   `breach_on_untouched_leg%` starts appearing (up to ~22%) — a trigger this
+   close to or past the real strike leaves no room to react before the strike
+   is already threatened. **Never set X near or above the nearer strike's
+   distance.**
+3. **Recommended pairing: X = 0.75%, Z = 0.75%** — same trigger as the
+   profit leg (section 7's item 4), one rule to remember for both legs. Gives
+   100%/100% survival on both windows, ~1.9 shifts near-expiry per cycle.
+4. **Fewer-shifts alternative: X = 1.5%, Z = 1.25%** — still 100%/100%
+   survival, under 1 shift per cycle on average (0.69 near / 1.32 far) — for
+   less rolling noise at the cost of reacting later.
+5. **Caveats:** still no real premium/IV data — each shift's actual ₹ cost
+   (a worse credit locked in) isn't priced here, only survival. And 100% here
+   is *in-sample*: zero breaches observed in ~193 historical cycles is strong
+   evidence, not a mathematical guarantee against a single future move bigger
+   than anything in this window (genuine tail/gap risk). Keep this as a
+   base-rate defense rule, not a substitute for a hard stop.
 
 ## Position-management cross-reference
 
