@@ -142,13 +142,30 @@ biweekly window).
    close to or past the real strike leaves no room to react before the strike
    is already threatened. **Never set X near or above the nearer strike's
    distance.**
-3. **Recommended pairing: X = 0.75%, Z = 0.75%** — same trigger as the
-   profit leg (section 7's item 4), one rule to remember for both legs. Gives
-   100%/100% survival on both windows, ~1.9 shifts near-expiry per cycle.
-4. **Fewer-shifts alternative: X = 1.5%, Z = 1.25%** — still 100%/100%
-   survival, under 1 shift per cycle on average (0.69 near / 1.32 far) — for
-   less rolling noise at the cost of reacting later.
-5. **Caveats:** still no real premium/IV data — each shift's actual ₹ cost
+3. **Recommended: X = 2.75%, Z = 2.5% — the latest safe trigger, not the
+   earliest.** Unlike the profit leg (where earlier/more frequent is better),
+   defending the loss leg means REALIZING a loss each time it fires — so the
+   objective here is the opposite: the largest X that still holds 100%
+   survival, so the rule fires as rarely as possible (avg_shifts 0.18 near /
+   0.48 far — most cycles need no action at all, and the rare one that does
+   needs it only once, not a repeated ratchet).
+4. **Why not push all the way to X = 3.0%** (even rarer-firing, 0.12/0.38
+   shifts, still 100% in this backtest): that's exactly the real strike
+   distance — zero buffer. The simulation fires the defensive shift on the
+   same close that crosses the threshold, i.e. it assumes instant execution
+   at that price. In practice you can only act the next session, and at
+   X=3.0% there's no room left to absorb a gap or slippage between that close
+   and your actual roll order. X=2.75% keeps a 0.25% cushion below the real
+   strike for exactly that reason. (X≥3.25% is where this visibly breaks —
+   survival caps at 77–90% regardless of Z — so 2.75% is the practical
+   ceiling, not 3.0%.)
+5. **If you ever want a single shared rule for both legs instead** (matching
+   the profit leg's own trigger so there's only one number to remember): X =
+   0.75%, Z = 0.75% also gives 100%/100% survival, but fires far more often
+   (~1.9 shifts near-expiry per cycle) — the tradeoff explicitly rejected by
+   the "book loss as rarely as possible" goal above. Listed here only as the
+   alternative if that goal ever changes.
+6. **Caveats:** still no real premium/IV data — each shift's actual ₹ cost
    (a worse credit locked in) isn't priced here, only survival. And 100% here
    is *in-sample*: zero breaches observed in ~193 historical cycles is strong
    evidence, not a mathematical guarantee against a single future move bigger
