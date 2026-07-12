@@ -1,13 +1,14 @@
 # pages/22_Backtest_Optimizer.py
-# Premium-seller optimizer, three modes:
+# Premium-seller optimizer, two modes:
 #   • Positional (daily) — condor management + "how close can I sell" (index, ~2y).
 #   • Intraday timing    — one-sided selling entry/side/exit (futures, real volume, ~months).
-#   • Roll threshold      — which profit/loss % trigger to roll at (anchor management).
+#
+# Roll-management backtests (Roll threshold, roll-rule optimizer, strike-shift
+# ladders, anchor-drift scans) live on page 25 now — moved there to keep this
+# page's run-time down and give roll-management its own dedicated page.
 #
 # You just: log in (Home → Kite) so the token is fresh, then click "Run backtest".
 
-import numpy as np
-import pandas as pd
 import streamlit as st
 
 import importlib
@@ -34,9 +35,8 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "- **Intraday timing:** session engine over ~months of **futures** intraday (**real volume** → "
         "CVD works). Measures the forward move over the next **N candles** → directional edge (which "
         "side to sell) and how fast it decays (exit).\n"
-        "- **Roll threshold:** replays the live anchor/roll rules (`data/rolled_positions.py`) over "
-        "every historical weekly cycle at candidate profit/loss triggers → which trigger keeps a "
-        "cycle one-sided most often vs. whipsawing both legs or letting a loss reset through.\n"
+        "- **Roll/position-management backtests** (Roll threshold, roll-rule optimizer, strike-shift "
+        "ladders, anchor-drift scans) moved to **page 25**.\n"
         "- These are **base-rate cutoffs to stack the odds**, not guarantees. Always keep your stop.")
 
 
@@ -76,8 +76,7 @@ def _render_cuts(cuts, order):
 
 
 mode = st.radio("Mode", ["Positional (daily) — condor / sell-closer",
-                         "Intraday timing (one-sided entry / exit)",
-                         "Roll threshold — when to roll"], horizontal=True)
+                         "Intraday timing (one-sided entry / exit)"], horizontal=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODE 1 — Positional (daily)
@@ -203,67 +202,3 @@ elif mode.startswith("Intraday"):
         st.download_button("Download CSV", _m.to_csv().encode("utf-8"),
                            file_name="conviction_intraday.csv", mime="text/csv")
         st.dataframe(_m.tail(30), use_container_width=True)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MODE 3 — Roll threshold: when to roll (anchor management)
-# ══════════════════════════════════════════════════════════════════════════════
-else:
-    st.caption("Replays the live anchor/roll logic (`data/rolled_positions.py`) over every historical "
-               "Tue→Tue cycle at candidate profit/loss triggers, and scores each: which trigger keeps "
-               "a cycle **one-sided** (only the threatened leg gets re-sold, the other stays put) most "
-               "often, vs. triggers that **whipsaw both legs** in the same cycle or let a **hard loss** "
-               "reset through. Today's live triggers are **1.8% profit / 2.5% loss**.")
-
-    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.2, 0.8])
-    with c1:
-        lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p22_roll_lb")
-    with c2:
-        pt_lo, pt_hi = st.slider("Profit-trigger scan range (%)", 0.5, 4.0, (1.0, 3.0), 0.25)
-    with c3:
-        lt_lo, lt_hi = st.slider("Loss-trigger scan range (%)", 1.5, 5.0, (2.0, 4.0), 0.25)
-    with c4:
-        step = st.select_slider("Scan step (%)", options=[0.1, 0.25, 0.5], value=0.25)
-
-    if st.button("▶ Run roll-threshold scan", type="primary"):
-        st.session_state.p22_roll_ran = True
-        st.session_state.p22_roll_inputs = dict(lookback=lookback, pt_lo=pt_lo, pt_hi=pt_hi,
-                                                 lt_lo=lt_lo, lt_hi=lt_hi, step=step)
-
-    if not st.session_state.get("p22_roll_ran"):
-        st.info("Pick scan ranges and click Run. Pulls ~2y of daily candles and replays the roll "
-                "logic for every profit/loss trigger combo in the grid (~few seconds).")
-        st.stop()
-
-    _in = st.session_state.p22_roll_inputs
-    lookback = _in["lookback"]
-    profit_thrs = tuple(round(x, 2) for x in np.arange(_in["pt_lo"], _in["pt_hi"] + 1e-9, _in["step"]))
-    loss_thrs = tuple(round(x, 2) for x in np.arange(_in["lt_lo"], _in["lt_hi"] + 1e-9, _in["step"]))
-
-    with st.spinner("Fetching daily history and scanning roll triggers…"):
-        d = _load_daily(lookback)
-        scan = bt.roll_threshold_scan(d, profit_thrs=profit_thrs, loss_thrs=loss_thrs) \
-            if d is not None and not d.empty else pd.DataFrame()
-
-    if scan.empty:
-        st.error("Could not load daily Nifty history, or no valid (profit_thr, loss_thr) combos "
-                 "(loss_thr must be > profit_thr). Log in via Home → Kite, then retry.")
-        st.stop()
-
-    best = bt.best_roll_threshold(scan)
-    st.success(f"Scanned **{len(scan)}** trigger combos over **{best['n_cycles']}** historical "
-              f"weekly cycles.")
-    st.subheader("Recommended trigger")
-    st.markdown(f"**Roll profit at ±{best['profit_thr']}%** / **roll loss at ±{best['loss_thr']}%** "
-               f"from anchor — left the opposite leg untouched in **{best['clean_pct']}%** of cycles, "
-               f"with a hard-loss reset in only **{best['loss_pct']}%** (score {best['score']}).")
-    st.caption("`clean_pct` = only the threatened leg was re-sold, the other side undisturbed all "
-              "cycle. `loss_pct` = a hard adverse breach forced both legs to reset. `score` = "
-              "clean_pct − 2×loss_pct (a loss reset is weighted worse than a clean one-sided roll).")
-
-    st.divider()
-    st.subheader("Full scan — every (profit_thr, loss_thr) combo tried")
-    st.dataframe(scan, use_container_width=True, hide_index=True)
-
-    with st.expander("⬇ Download the full scan"):
-        st.download_button("Download CSV", scan.to_csv(index=False).encode("utf-8"),
-                           file_name="roll_threshold_scan.csv", mime="text/csv")

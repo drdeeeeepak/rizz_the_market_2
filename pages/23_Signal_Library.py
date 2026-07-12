@@ -3,9 +3,12 @@
 # over every adapter in analytics/signal_adapters.py and ranks them: which page's
 # signal actually carries a forward edge on Nifty, and which don't.
 #
+# Roll/position-management backtests (anchor close-distribution, strike-shift
+# ladders, anchor-drift scans, roll-rule optimizer) moved to page 25 — kept this
+# page's run-time down.
+#
 # You just: log in (Home → Kite) so the token is fresh, then click "Run Signal Library".
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -56,6 +59,8 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "a COUSIN of the live Conviction table's Brd% (% above session VWAP, intraday) — it "
         "tests whether breadth adds edge at the daily/weekly horizon, not a re-test of that "
         "exact column. Uses today's Nifty-50 membership applied historically (survivorship).\n"
+        "- **Roll/position-management backtests** (anchor close-distribution, strike-shift "
+        "ladders, anchor-drift scans, roll-rule optimizer) moved to **page 25**.\n"
         "- These are **base-rate edges to decide what to build on**, not guarantees.")
 
 
@@ -85,8 +90,7 @@ def _frozen(df: pd.DataFrame, height=360, reset=True):
     st.markdown(uict.candle_table_frozen_html(d, height=height), unsafe_allow_html=True)
 
 
-def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_rule=None,
-                        anchor_drift=None, anchor_drift_opt=None) -> str:
+def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None) -> str:
     """Bundle every table this page can produce into ONE text/csv file, each
     block prefixed with a '## N. TITLE' header — a single thing to hand back
     for review instead of juggling one download per section."""
@@ -134,34 +138,6 @@ def _build_combined_csv(ranked, results, rf, dow_scan, real_bundle=None, roll_ru
             parts.append(f"## 6b. REAL-VOLUME + BREADTH-ON — CUTOFF: {col}\n"
                          + cdf.reset_index().to_csv())
 
-    if anchor_drift is not None and not anchor_drift.empty:
-        parts.append("## 7. ANCHOR-DRIFT CONTINUATION-VS-REVERSION SCAN\n"
-                     + anchor_drift.to_csv(index=False))
-
-    if anchor_drift_opt is not None:
-        for key, label in (("1_week", "1-WEEK"), ("2_week", "2-WEEK (BIWEEKLY)")):
-            bundle = anchor_drift_opt.get(key) or {}
-            scan_df = bundle.get("scan")
-            if scan_df is None or scan_df.empty:
-                continue
-            parts.append(f"## 7b. ANCHOR-DRIFT OPTIMUM THRESHOLD SCAN — {label}\n"
-                         + scan_df.to_csv(index=False))
-            best = bundle.get("best")
-            if best:
-                parts.append(f"## 7c. ANCHOR-DRIFT OPTIMUM THRESHOLD — BEST ({label})\n"
-                             + pd.DataFrame([best]).to_csv(index=False))
-
-    if roll_rule is not None:
-        if not roll_rule["near"].empty:
-            parts.append("## 8. ROLL-RULE SCAN — NEAR EXPIRY GRID\n"
-                         + roll_rule["near"].to_csv(index=False))
-        if not roll_rule["far"].empty:
-            parts.append("## 8b. ROLL-RULE SCAN — BIWEEKLY (NEXT EXPIRY) GRID\n"
-                         + roll_rule["far"].to_csv(index=False))
-        best = pd.DataFrame([roll_rule["best_near"], roll_rule["best_far"]],
-                            index=["best_near", "best_far"])
-        parts.append("## 8c. ROLL-RULE SCAN — BEST (X%, Y%)\n" + best.to_csv())
-
     return "\n\n".join(parts)
 
 
@@ -181,183 +157,6 @@ h1_days = st.slider("1H lookback for Dow Theory / EMA Slope Phases (trading days
 
 all_labels = list(sa.ADAPTERS.keys())
 selected = st.multiselect("Signals to run", all_labels, default=all_labels)
-
-# ── Standalone: anchor close-distribution scan ──────────────────────────────
-# Deliberately placed BEFORE the "Run Signal Library" gate below (and given
-# its OWN session_state flag) so this can run on its own — it only needs
-# daily Nifty candles, not the 1H data / futures data / adapter suite the
-# full leaderboard run below pulls in.
-st.divider()
-st.subheader("Anchor close-distribution — % of weeks/biweeks closing in each 0.5% band")
-st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
-          "candles. For every Tuesday-anchored cycle, buckets the FINAL close-to-close drift "
-          "from anchor (next Tuesday for 1-week, the Tuesday after that for 2-week/biweekly) "
-          "into fixed 0.5% bands, split by direction (up-close vs down-close), with anything "
-          "beyond 5% grouped into one '5%+' catch-all. pct_of_all_cycles% is out of ALL cycles "
-          "for that window — the up-row and down-row percentages sum to 100% together. This is "
-          "the direct histogram behind picking a strike distance.")
-
-if st.button("▶ Run anchor close-distribution scan"):
-    with st.spinner("Fetching daily history…"):
-        st.session_state.p23_dist_result = sl.anchor_close_distribution_scan(_load_daily(lookback))
-
-if "p23_dist_result" in st.session_state:
-    dist = st.session_state.p23_dist_result
-    dc1, dc2 = st.columns(2)
-    for _key, _label, _col in (("1_week", "1-week (Tuesday → next Tuesday)", dc1),
-                               ("2_week", "2-week / biweekly (Tuesday → Tuesday after next)", dc2)):
-        ddf = dist[_key]
-        with _col:
-            st.markdown(f"**{_label}**")
-            if ddf.empty:
-                st.caption("Not enough Tuesday-anchored cycles in this history.")
-            else:
-                _frozen(ddf, height=min(60 + 24 * len(ddf), 460), reset=False)
-                st.download_button(f"⬇ Download {_label} distribution CSV",
-                                   ddf.to_csv(index=False).encode("utf-8"),
-                                   file_name=f"anchor_close_distribution_{_key}.csv",
-                                   mime="text/csv", key=f"dl_dist_{_key}")
-
-# ── Standalone: strike-shift ladder backtest ────────────────────────────────
-# Also placed BEFORE the main gate, own session_state flag, only needs daily.
-st.divider()
-st.subheader("Strike-shift ladder backtest — fixed asymmetric roll schedule")
-st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
-          "candles. Your rule: keep CALL/PUT at their starting OTM %; whichever leg sits on "
-          "the OPPOSITE side of the move is the 'safe' leg, and it shifts INWARD by a FIXED "
-          "Nifty-point amount (absolute, not a % of anchor — so it lands on real strike "
-          "spacing regardless of index level) each time |drift| from anchor reaches the next "
-          "trigger — CALL shifts down on a fall, PUT shifts up on a rise. Each direction's "
-          "ladder is independent (a reversal doesn't reset it), and once all steps are used "
-          "the leg stays put for the rest of the cycle. Runs against BOTH the near (this "
-          "Tuesday) and biweekly (next Tuesday) windows, each alongside a no-shift baseline "
-          "on the identical cycles for direct comparison.")
-
-lc1, lc2 = st.columns(2)
-with lc1:
-    ladder_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="ladder_call_pct")
-with lc2:
-    ladder_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="ladder_put_pct")
-lc3, lc4 = st.columns(2)
-with lc3:
-    ladder_triggers_str = st.text_input("Triggers — cumulative |drift| % from anchor (comma-separated)",
-                                        "1.0,2.0,2.5", key="ladder_triggers")
-with lc4:
-    ladder_shift_pts_str = st.text_input("Shifts — FIXED Nifty points the safe leg moves at each trigger",
-                                         "50,50,200", key="ladder_shift_pts")
-try:
-    ladder_triggers = tuple(float(x.strip()) for x in ladder_triggers_str.split(","))
-    ladder_shift_pts = tuple(float(x.strip()) for x in ladder_shift_pts_str.split(","))
-    ladder_valid = len(ladder_triggers) == len(ladder_shift_pts)
-except ValueError:
-    ladder_triggers, ladder_shift_pts, ladder_valid = (), (), False
-if not ladder_valid:
-    st.caption("Triggers and shift points must both parse and have the same number of steps — "
-              "using default 1.0,2.0,2.5 / 50,50,200.")
-    ladder_triggers, ladder_shift_pts = sl.LADDER_TRIGGERS_DEFAULT, sl.LADDER_SHIFT_PTS_DEFAULT
-
-if st.button("▶ Run strike-shift ladder backtest"):
-    with st.spinner("Fetching daily history and simulating every cycle…"):
-        st.session_state.p23_ladder_result = sl.strike_shift_ladder_scan(
-            _load_daily(lookback), call_pct=float(ladder_call_pct), put_pct=float(ladder_put_pct),
-            triggers=ladder_triggers, shift_pts=ladder_shift_pts)
-
-if "p23_ladder_result" in st.session_state:
-    lr = st.session_state.p23_ladder_result
-    st.success(f"Simulated **{lr['n_cycles']}** weekly cycles · CALL {lr['call_pct']}% / "
-              f"PUT {lr['put_pct']}% · triggers {lr['triggers']} · shift_pts {lr['shift_pts']}")
-
-    ld1, ld2 = st.columns(2)
-    _ladder_keys = ("n", "survival_rate%", "baseline_survival_rate%", "avg_steps_used",
-                   "breach_on_shifted_leg%", "breach_on_original_leg%")
-    for _key, _label, _col in (("near", "Near expiry (this week)", ld1),
-                               ("far", "Biweekly (through next expiry)", ld2)):
-        bundle = lr[_key]
-        with _col:
-            st.markdown(f"**{_label}**")
-            st.json({k: bundle["agg"][k] for k in _ladder_keys})
-
-    st.markdown("**Per-cycle detail — near expiry**")
-    if lr["near"]["detail"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(lr["near"]["detail"], height=min(60 + 28 * len(lr["near"]["detail"]), 460), reset=False)
-        st.download_button("⬇ Download near-expiry detail CSV",
-                           lr["near"]["detail"].to_csv(index=False).encode("utf-8"),
-                           file_name="strike_shift_ladder_near.csv", mime="text/csv", key="dl_ladder_near")
-
-    st.markdown("**Per-cycle detail — biweekly**")
-    if lr["far"]["detail"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(lr["far"]["detail"], height=min(60 + 28 * len(lr["far"]["detail"]), 460), reset=False)
-        st.download_button("⬇ Download biweekly detail CSV",
-                           lr["far"]["detail"].to_csv(index=False).encode("utf-8"),
-                           file_name="strike_shift_ladder_far.csv", mime="text/csv", key="dl_ladder_far")
-
-# ── Standalone: strike-shift ladder v2 — 4th escalation on actual breach ────
-st.divider()
-st.subheader("Strike-shift ladder — 4th (final) adjustment on actual breach")
-st.caption("Standalone — doesn't need the full Signal Library run below, only Nifty daily "
-          "candles. Adds ONE more escalation on top of the 3-step drift ladder above: if the "
-          "ORIGINAL sold strike (CALL 3% / PUT 3.5%) is actually breached on an EOD close, the "
-          "OTHER (still-safe/profit) leg shifts one more FIXED 300 points, then the run keeps "
-          "going to check whether that leg is ALSO breached before cycle-end (a 'double "
-          "breach'). survival_rate% here means the same as above (any breach at all) and can't "
-          "change from this step — it only fires AFTER the first breach. What it DOES answer: "
-          "among cycles that breach, does the extra 300-pt shift make a second, opposite-side "
-          "breach MORE or LESS likely, vs. the identical price path with no 4th shift at all.")
-
-vc1, vc2 = st.columns(2)
-with vc1:
-    v2_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="v2_call_pct")
-with vc2:
-    v2_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="v2_put_pct")
-v2_breach_shift_pts = st.number_input("Extra points the profit leg shifts once the sold strike breaches",
-                                      50.0, 1000.0, 300.0, 25.0, key="v2_breach_shift_pts")
-
-if st.button("▶ Run 4th-adjustment (breach-triggered) backtest"):
-    with st.spinner("Fetching daily history and simulating every cycle…"):
-        st.session_state.p23_ladder_v2_result = sl.strike_shift_ladder_v2_scan(
-            _load_daily(lookback), call_pct=float(v2_call_pct), put_pct=float(v2_put_pct),
-            triggers=ladder_triggers, shift_pts=ladder_shift_pts,
-            breach_shift_pts=float(v2_breach_shift_pts))
-
-if "p23_ladder_v2_result" in st.session_state:
-    v2r = st.session_state.p23_ladder_v2_result
-    st.success(f"Simulated **{v2r['n_cycles']}** weekly cycles · CALL {v2r['call_pct']}% / "
-              f"PUT {v2r['put_pct']}% · triggers {v2r['triggers']} · shift_pts {v2r['shift_pts']} · "
-              f"breach shift {v2r['breach_shift_pts']}pts")
-
-    v2d1, v2d2 = st.columns(2)
-    _v2_keys = ("n", "survival_rate%", "n_breached", "double_breach_rate%",
-               "double_breach_rate_without_step4%", "avg_steps_used")
-    for _key, _label, _col in (("near", "Near expiry (this week)", v2d1),
-                               ("far", "Biweekly (through next expiry)", v2d2)):
-        bundle = v2r[_key]
-        with _col:
-            st.markdown(f"**{_label}**")
-            st.json({k: bundle["agg"][k] for k in _v2_keys})
-
-    st.markdown("**Per-cycle detail — near expiry**")
-    if v2r["near"]["detail"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(v2r["near"]["detail"], height=min(60 + 28 * len(v2r["near"]["detail"]), 460), reset=False)
-        st.download_button("⬇ Download near-expiry detail CSV",
-                           v2r["near"]["detail"].to_csv(index=False).encode("utf-8"),
-                           file_name="strike_shift_ladder_v2_near.csv", mime="text/csv",
-                           key="dl_ladder_v2_near")
-
-    st.markdown("**Per-cycle detail — biweekly**")
-    if v2r["far"]["detail"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(v2r["far"]["detail"], height=min(60 + 28 * len(v2r["far"]["detail"]), 460), reset=False)
-        st.download_button("⬇ Download biweekly detail CSV",
-                           v2r["far"]["detail"].to_csv(index=False).encode("utf-8"),
-                           file_name="strike_shift_ladder_v2_far.csv", mime="text/csv",
-                           key="dl_ladder_v2_far")
 
 # Gate on a session_state flag rather than the button's own return value: st.button()
 # is only True on the ONE rerun triggered by that exact click — clicking ANY other
@@ -538,150 +337,14 @@ else:
     st.download_button("⬇ Download Dow retrace scan CSV", dow_scan.to_csv(index=False).encode("utf-8"),
                        file_name="dow_retrace_bucket_scan.csv", mime="text/csv")
 
-# ── 6. Anchor-drift — does Nifty mean-revert or continue? ───────────────────
+# ── 6. Download everything as one CSV ───────────────────────────────────────
 st.divider()
-st.subheader("6 · Anchor-drift — does Nifty mean-revert or continue?")
-st.caption("Buckets every day inside a weekly cycle by its CURRENT |drift| from the Tuesday "
-          "anchor, then checks where price ends up by THAT SAME cycle's close (next Tuesday): "
-          "did drift extend further the same way (**continuation**) or shrink/flip back toward "
-          "anchor (**mean-reversion**)? Tests claims like 'reverts below 2%, continues above 2%' "
-          "against real numbers instead of a hunch. avg_extension_pts > 0 → continuation on "
-          "average in that bucket; < 0 → reversion.")
-drift_bins_str = st.text_input("Drift bucket edges (%, comma-separated)", "0,1,2,3,5,100",
-                               key="drift_bins")
-try:
-    drift_bins = tuple(float(x.strip()) for x in drift_bins_str.split(","))
-except ValueError:
-    drift_bins = (0, 1, 2, 3, 5, 100)
-    st.caption("Couldn't parse bucket edges — using default 0,1,2,3,5,100.")
-
-adr = sl.anchor_drift_reversion_scan(daily, drift_bins=drift_bins)
-if adr.empty:
-    st.caption("Not enough Tuesday-anchored cycles in this history.")
-else:
-    _frozen(adr, height=min(60 + 30 * len(adr), 360), reset=False)
-    st.download_button("⬇ Download anchor-drift scan CSV", adr.to_csv(index=False).encode("utf-8"),
-                       file_name="anchor_drift_reversion_scan.csv", mime="text/csv")
-
-# ── 6b. Anchor-drift — optimum threshold (best breakpoint) ─────────────────
-st.divider()
-st.subheader("6b · Anchor-drift — optimum threshold (best breakpoint)")
-st.caption("Instead of fixed buckets, scans every candidate drift% threshold X and scores the "
-          "'reverts below X% / continues above X%' rule of thumb directly: "
-          "**reversion_rate_below%** = among days already under X% drift, how often price gave "
-          "ground back by that cycle's close; **continuation_rate_above%** = among days at/over "
-          "X%, how often it kept extending; **accuracy%** is the n-weighted blend of the two — "
-          "the single X% with the highest accuracy% is the cleanest breakpoint this history "
-          "supports. Run for BOTH the 1-week cycle (Tuesday → next Tuesday) and the 2-week/"
-          "biweekly cycle (Tuesday → the Tuesday after next), since positions are held both.")
-
-opt = sl.anchor_drift_optimum_threshold_scan(daily)
-
-oc1, oc2 = st.columns(2)
-for _key, _label, _col in (("1_week", "Best — 1-week", oc1),
-                           ("2_week", "Best — 2-week (biweekly)", oc2)):
-    bundle = opt[_key]
-    with _col:
-        st.markdown(f"**{_label}**")
-        if bundle["best"] is None:
-            st.caption("Not enough Tuesday-anchored cycles / observations per side in this history.")
-        else:
-            st.json({k: bundle["best"][k] for k in
-                    ("threshold%", "n_below", "reversion_rate_below%",
-                     "n_above", "continuation_rate_above%", "accuracy%")})
-
-for _key, _label in (("1_week", "1-week"), ("2_week", "2-week / biweekly")):
-    scan_df = opt[_key]["scan"]
-    if scan_df.empty:
-        continue
-    st.markdown(f"**Full threshold scan — {_label}**")
-    _frozen(scan_df, height=min(60 + 24 * len(scan_df), 420), reset=False)
-    st.download_button(f"⬇ Download {_label} threshold scan CSV",
-                       scan_df.to_csv(index=False).encode("utf-8"),
-                       file_name=f"anchor_drift_optimum_threshold_{_key}.csv", mime="text/csv",
-                       key=f"dl_opt_{_key}")
-
-# ── 7. Roll-rule optimizer ───────────────────────────────────────────────────
-st.divider()
-st.subheader("7 · Roll-rule optimizer — find the best X%/Y% roll rule")
-st.caption("Your rule: sell CALL/PUT at a fixed % from the Tuesday anchor. Every time drift from "
-          "anchor reaches a NEW multiple of X%, roll the OTHER (now-safer) leg inward by Y% of "
-          "its OWN current strike — repeatable, as many times as drift keeps extending. Checks "
-          "whether that rolled leg avoids a CLOSE-based breach (not intraday wicks) through both "
-          "the near (this Tuesday) and biweekly (next Tuesday too, since positions run two "
-          "cycles) expiry windows.")
-st.caption("No real option premium/IV data in a spot-only backtest — 'best' is picked by "
-          "survival rate; avg_rolls is a rough stand-in for 'more premium captured', not a real "
-          "number. breach_on_rolled_leg% / breach_on_original_leg% split WHY a cycle failed: the "
-          "rule itself getting caught by a reversal, vs. the untouched original leg finally "
-          "giving way (a risk this rule was never trying to solve).")
-
-rc1, rc2 = st.columns(2)
-with rc1:
-    roll_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="roll_call_pct")
-with rc2:
-    roll_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="roll_put_pct")
-rc3, rc4 = st.columns(2)
-with rc3:
-    x_range = st.slider("X% grid range (drift trigger)", 0.25, 4.0, (0.5, 2.5), 0.25, key="roll_x_range")
-    x_step = st.select_slider("X% step", options=[0.25, 0.5, 1.0], value=0.5, key="roll_x_step")
-with rc4:
-    y_range = st.slider("Y% grid range (roll-in size)", 0.1, 3.0, (0.25, 1.5), 0.15, key="roll_y_range")
-    y_step = st.select_slider("Y% step", options=[0.1, 0.25, 0.5], value=0.25, key="roll_y_step")
-
-x_grid = tuple(np.round(np.arange(x_range[0], x_range[1] + 1e-9, x_step), 3))
-y_grid = tuple(np.round(np.arange(y_range[0], y_range[1] + 1e-9, y_step), 3))
-st.caption(f"Grid: X ∈ {list(x_grid)} · Y ∈ {list(y_grid)} → {len(x_grid) * len(y_grid)} combinations "
-          f"× {len(daily)} daily rows.")
-
-if st.button("▶ Run roll-rule scan"):
-    with st.spinner(f"Simulating {len(x_grid) * len(y_grid)} (X, Y) combinations across every weekly cycle…"):
-        rr = sl.roll_rule_scan(daily, x_grid=x_grid, y_grid=y_grid,
-                               call_pct=float(roll_call_pct), put_pct=float(roll_put_pct))
-    st.session_state.p23_roll_rule = rr
-
-if "p23_roll_rule" in st.session_state:
-    rr = st.session_state.p23_roll_rule
-    st.success(f"Simulated **{rr['n_cycles']}** weekly cycles · CALL {rr['call_pct']}% / "
-              f"PUT {rr['put_pct']}% from anchor")
-
-    _rr_keys = ("x%", "y%", "n", "survival_rate%", "avg_rolls",
-               "breach_on_rolled_leg%", "breach_on_original_leg%")
-    cA, cB = st.columns(2)
-    with cA:
-        st.markdown("**Best — near expiry (this week)**")
-        if rr["best_near"]:
-            st.json({k: rr["best_near"][k] for k in _rr_keys})
-    with cB:
-        st.markdown("**Best — biweekly (through next expiry too)**")
-        if rr["best_far"]:
-            st.json({k: rr["best_far"][k] for k in _rr_keys})
-
-    st.markdown("**Full grid — near expiry**")
-    if rr["near"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(rr["near"], height=min(60 + 28 * len(rr["near"]), 460), reset=False)
-        st.download_button("⬇ Download near-expiry grid CSV", rr["near"].to_csv(index=False).encode("utf-8"),
-                           file_name="roll_rule_near.csv", mime="text/csv", key="dl_roll_near")
-
-    st.markdown("**Full grid — biweekly (through next expiry)**")
-    if rr["far"].empty:
-        st.caption("Not enough Tuesday-anchored cycles in this history.")
-    else:
-        _frozen(rr["far"], height=min(60 + 28 * len(rr["far"]), 460), reset=False)
-        st.download_button("⬇ Download biweekly grid CSV", rr["far"].to_csv(index=False).encode("utf-8"),
-                           file_name="roll_rule_far.csv", mime="text/csv", key="dl_roll_far")
-
-# ── 8. Download everything as one CSV ───────────────────────────────────────
-st.divider()
-st.subheader("8 · Download everything as one CSV")
+st.subheader("6 · Download everything as one CSV")
 st.caption("Bundles every table above — leaderboard, all signals' daily values + forward "
-          "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, the "
-          "anchor-drift scan and its optimum-threshold scan, and the real-volume rerun / "
-          "roll-rule scan if you ran them — into ONE file with '## N. TITLE' section headers. "
-          "Easiest single thing to hand back for review.")
-combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"),
-                               st.session_state.get("p23_roll_rule"), adr, opt)
+          "outcomes, all bucket scans, the RSI walk-forward, the Dow retrace scan, and the "
+          "real-volume rerun if you ran it — into ONE file with '## N. TITLE' section headers. "
+          "Easiest single thing to hand back for review. (Roll/anchor-drift backtests moved "
+          "to page 25 and have their own combined download there.)")
+combined = _build_combined_csv(ranked, results, rf, dow_scan, st.session_state.get("p23_real_result"))
 st.download_button("⬇ Download everything (combined CSV)", combined.encode("utf-8"),
                    file_name="signal_library_full_export.csv", mime="text/csv", type="primary")
