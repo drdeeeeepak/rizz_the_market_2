@@ -407,7 +407,7 @@ with rrc3:
     x_range = st.slider("X% grid range (drift trigger)", 0.25, 4.0, (0.5, 2.5), 0.25, key="p25_roll_x_range")
     x_step = st.select_slider("X% step", options=[0.25, 0.5, 1.0], value=0.5, key="p25_roll_x_step")
 with rrc4:
-    y_range = st.slider("Y% grid range (roll-in size)", 0.1, 3.0, (0.25, 1.5), 0.15, key="p25_roll_y_range")
+    y_range = st.slider("Y% grid range (roll-in size)", 0.25, 3.0, (0.25, 1.5), 0.25, key="p25_roll_y_range")
     y_step = st.select_slider("Y% step", options=[0.1, 0.25, 0.5], value=0.25, key="p25_roll_y_step")
 
 x_grid = tuple(np.round(np.arange(x_range[0], x_range[1] + 1e-9, x_step), 3))
