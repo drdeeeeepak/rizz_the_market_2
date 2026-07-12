@@ -171,7 +171,7 @@ if is_fall:
     with c1:
         lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24_lb")
     with c2:
-        fall1 = st.number_input("Fall trigger — 1 day (%, uses that day's low)", 0.1, 5.0, 0.1, 0.05,
+        fall1 = st.number_input("Fall trigger — 1 day (%, uses that day's low)", 0.0, 5.0, 0.1, 0.05,
                                 key="p24_fall1")
     with c3:
         fall2 = st.number_input("Fall trigger — 2 days (%, close to close)", 0.3, 8.0, 0.75, 0.1,
@@ -206,7 +206,7 @@ if is_fall:
                "required at all.")
     fc1, fc2 = st.columns(2)
     with fc1:
-        fall_lo, fall_hi = st.slider("Fall-size scan range (%)", 0.1, 6.0, (0.25, 3.0), 0.05,
+        fall_lo, fall_hi = st.slider("Fall-size scan range (%)", 0.0, 6.0, (0.25, 3.0), 0.05,
                                      key="p24_fall_range")
     with fc2:
         fall_step = st.select_slider("Fall-size scan step (%)", options=[0.1, 0.25, 0.5], value=0.25,
@@ -351,7 +351,7 @@ else:
     with c1:
         lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24r_lb")
     with c2:
-        rise1 = st.number_input("Rise trigger — 1 day (%, uses that day's high)", 0.1, 5.0, 0.1, 0.05,
+        rise1 = st.number_input("Rise trigger — 1 day (%, uses that day's high)", 0.0, 5.0, 0.1, 0.05,
                                 key="p24r_rise1")
     with c3:
         rise2 = st.number_input("Rise trigger — 2 days (%, close to close)", 0.3, 8.0, 0.75, 0.1,
@@ -386,7 +386,7 @@ else:
                "wait required at all. This is where the shakeout asymmetry shows up most clearly.")
     fc1, fc2 = st.columns(2)
     with fc1:
-        rise_lo, rise_hi = st.slider("Rise-size scan range (%)", 0.1, 6.0, (0.25, 3.0), 0.05,
+        rise_lo, rise_hi = st.slider("Rise-size scan range (%)", 0.0, 6.0, (0.25, 3.0), 0.05,
                                      key="p24r_rise_range")
     with fc2:
         rise_step = st.select_slider("Rise-size scan step (%)", options=[0.1, 0.25, 0.5], value=0.25,
