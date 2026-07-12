@@ -15,9 +15,13 @@ the data says it costs nothing in safety, only a slightly worse entry price.
 
 ## PUT SELLING — after a FALL
 
-1. **Fall trigger:** prior close → today's LOW drops ≥ **0.5%** (catches an
+1. **Fall trigger:** prior close → today's LOW drops ≥ **0.1%** (catches an
    intraday-only dip), OR close two days ago → today's close drops ≥ **0.75%**.
-   Below ~0.5% you're mostly flagging normal daily noise, not a real fall.
+   0.1% is not "no trigger" — it's the smallest value actually tested, and
+   checked directly against episode-merging: at 0.1% it produced FEWER distinct
+   episodes than at 0.5% (63 vs. 93 in the same dataset), because closely-spaced
+   small dips merge into one longer episode rather than firing separately. It
+   does not turn into a daily/trivial signal.
 2. **Confirmation:** an EOD close that bounces **≥0.1–0.25%** off the low. No
    green-candle filter needed — the bounce itself is confirmation enough.
 3. **Deciding metric: `touch_low_rate`**, not `hit_rate`. A put seller doesn't need
@@ -36,8 +40,10 @@ the data says it costs nothing in safety, only a slightly worse entry price.
 
 ## CALL SELLING — after a RISE (mirror of the above, with one real asymmetry)
 
-1. **Rise trigger:** prior close → today's HIGH climbs ≥ **0.5%**, OR close two
-   days ago → today's close climbs ≥ **0.75%**. Same practical floor as puts.
+1. **Rise trigger:** prior close → today's HIGH climbs ≥ **0.1%**, OR close two
+   days ago → today's close climbs ≥ **0.75%**. Same reasoning as the fall side —
+   0.1% is the smallest value tested, and episode-merging keeps it from firing on
+   ordinary daily noise.
 2. **Confirmation is MANDATORY, not optional:** never sell a call with zero
    pullback. Acting immediately after a rise, with no pullback wait, showed a
    **70–80% touch-rate** — this is the real shakeout asymmetry (uptrends

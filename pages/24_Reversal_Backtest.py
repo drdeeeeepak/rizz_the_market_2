@@ -2,7 +2,7 @@
 # Standalone — kept separate from pages 22/23 with its own run button.
 #
 # Two modes (radio button, mirrors page 22's style):
-#   Fall — put-seller safety: after a FALL (>=0.5% in a day, using that
+#   Fall — put-seller safety: after a FALL (>=0.1% in a day, using that
 #     day's LOW so a purely intraday dip vs. yesterday's close still
 #     counts, OR >=0.75% over two closes), how big does the bounce off the
 #     low need to be before Nifty reliably keeps going up — vs. rolling
@@ -42,11 +42,11 @@ mode = st.radio("Mode", ["Fall — put-seller safety", "Rise — call-seller saf
 is_fall = mode.startswith("Fall")
 
 if is_fall:
-    st.caption("After a fall of >=0.5% in a day (even intraday, vs. yesterday's close) or "
+    st.caption("After a fall of >=0.1% in a day (even intraday, vs. yesterday's close) or "
                ">=0.75% over two closes, what's the smallest bounce off the low that reliably "
                "means Nifty keeps going up, rather than rolling over into a fresh lower low?")
 else:
-    st.caption("After a rise of >=0.5% in a day (even intraday, vs. yesterday's close) or "
+    st.caption("After a rise of >=0.1% in a day (even intraday, vs. yesterday's close) or "
                ">=0.75% over two closes, how much of a pullback off the high actually means "
                "anything for a call seller — mirrors the fall/put analysis, flipped.")
 
@@ -171,7 +171,7 @@ if is_fall:
     with c1:
         lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24_lb")
     with c2:
-        fall1 = st.number_input("Fall trigger — 1 day (%, uses that day's low)", 0.3, 5.0, 0.5, 0.1,
+        fall1 = st.number_input("Fall trigger — 1 day (%, uses that day's low)", 0.1, 5.0, 0.1, 0.05,
                                 key="p24_fall1")
     with c3:
         fall2 = st.number_input("Fall trigger — 2 days (%, close to close)", 0.3, 8.0, 0.75, 0.1,
@@ -351,7 +351,7 @@ else:
     with c1:
         lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24r_lb")
     with c2:
-        rise1 = st.number_input("Rise trigger — 1 day (%, uses that day's high)", 0.3, 5.0, 0.5, 0.1,
+        rise1 = st.number_input("Rise trigger — 1 day (%, uses that day's high)", 0.1, 5.0, 0.1, 0.05,
                                 key="p24r_rise1")
     with c3:
         rise2 = st.number_input("Rise trigger — 2 days (%, close to close)", 0.3, 8.0, 0.75, 0.1,
