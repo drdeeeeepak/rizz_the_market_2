@@ -7,7 +7,25 @@ which answers a different question — is a FRESH short safe to place right now.
 This page assumes the reference position: **CALL sold ~3% above Tuesday anchor,
 PUT sold ~3.5% below**, squared off within 5 trading days (biweekly hold).
 
-## Status: partially confirmed — loss-leg side still needs a dedicated re-run
+## Status: profit leg confirmed across multiple independent re-runs; loss-leg
+side still needs a dedicated re-run
+
+## How these numbers were produced (reproduce it yourself)
+
+All of it comes from Page 25 → section 7 "Roll-rule optimizer", CALL=3.0% /
+PUT=3.5%, varying only the X%/Y% grid range + step:
+
+- Items 1–4 (original recommendation): X range 0.5–2.5 step 0.5, Y range
+  0.25–1.5 step 0.5.
+- Item 6 (best-Y-per-X grid): X range 0.25–2.5 step 0.25, Y range 0.25–2.5
+  step 0.25 (25 X-values × 9 Y-values — needed the Y-range slider fix below).
+- Item 7 (X=Y diagonal): same full grid as item 6 — just read the diagonal
+  rows where X% equals Y%.
+- Item 8 (≥80% floor): same full grid as item 6, filtered to survival_rate% ≥ 80.
+
+Note: the Y-range slider originally couldn't land on exactly 0.75% (old
+bounds/step made 0.75 unreachable) — fixed in the same session so this grid
+could actually be run.
 
 ## PROFIT LEG — when to roll it in, and by how much
 
@@ -44,6 +62,42 @@ biweekly window).
    using a parametric premium model (e.g. Black-Scholes + historical VIX as an
    IV proxy) was considered and explicitly declined — decision was to keep this
    survival-only for now.
+6. **Best Y for each X, full grid (0.25%–2.5% both axes)** — confirms item 2
+   above on a wider re-run and shows where Y stops mattering for safety:
+
+   | X% | Best survival (near/far) | Widest Y still tied at best (near) | Widest Y still tied at best (far) |
+   |---|---|---|---|
+   | 0.25 | 83.0% / 58.6% | 0.25 (unique max) | 0.25 (unique max) |
+   | 0.5 | 86.0% / 67.7% | 0.25 (unique max) | 0.25 (unique max) |
+   | 0.75 | 89.0% / 69.7% | 0.25 (unique max) | 0.25 (unique max) |
+   | 1.0 | 89.0% / 69.7% | 0.5 | 0.25 (unique max) |
+   | 1.25 | 89.0% / 69.7% | 0.5 | 0.5 |
+   | 1.5 | 89.0% / 69.7% | 0.5 | 0.75 |
+   | **1.75** | **89.0% / 70.7%** | **2.0** | **1.0** |
+   | 2.0 | 89.0% / 70.7% | 2.0 | 1.0 |
+   | 2.25 | 89.0% / 70.7% | 2.0 | 1.0 |
+   | 2.5 | 89.0% / 70.7% | 2.0 | 2.25 (all Y tied) |
+
+   Below X≈1.0%, best Y is always the smallest tested (0.25%) — any bigger
+   shift measurably costs survival. Past X≈1.75%, Y stops mattering for safety
+   (breach-on-rolled-leg is already 0%) — go as large as the "widest Y" column
+   for more premium per roll at no safety cost.
+7. **X = Y (trigger and shift-in size equal) is never the better shape.**
+   Tested directly across 0.25%–2.5%: survival only catches up to the X=0.75%/
+   Y=0.25% recommendation once stretched all the way to X=Y=1.75% (89.0%/67.7%),
+   and even then doesn't beat it on the biweekly window (69.7% vs 67.7%) — while
+   reacting far later (avg_rolls 0.51 vs 1.95). Keep X and Y set independently;
+   don't scale them together.
+8. **"I can bear survival ≥80%, how early can I go?" — X=0.25% works, but ONLY
+   at Y=0.25%** (83.0% near-expiry). The very next Y step (0.5%) already falls
+   to 79.0%, under the line, and Y≥0.75% collapses fast (46.0%, then 32.0%).
+   Two costs to weigh before using this: **avg_rolls = 7.34** at X=0.25%/Y=0.25%
+   — roughly 7 rolls in a single 5-day cycle, real slippage/spread cost on each
+   one that this survival-only backtest doesn't price in — and the **biweekly
+   number for that same row is only 58.6%**, well under 80%, so this only holds
+   for a position squared off within the near/5-day cycle, not one left running
+   into a second week. X=0.75% gives the same ≥80% floor with far less rolling
+   noise — every Y from 0.25% to 1.75% stays at 80–89% near-expiry survival.
 
 ## LOSS LEG — when to roll/shift it out
 
