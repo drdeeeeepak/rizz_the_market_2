@@ -13,6 +13,17 @@ confirmed move already gives full safety, a bigger one adds nothing" — not "ex
 0.25% is special." If that feels too small to act on in practice, use 0.5–1% instead —
 the data says it costs nothing in safety, only a slightly worse entry price.
 
+**Update — the 0% boundary is now confirmed, not extrapolated.** The literal "no
+minimum move required at all" case (fall/rise trigger = 0.0%) was explicitly tested
+on both sides: once even a 0.1% confirmed bounce/pullback shows up, touch-rate is
+0.0% across the ENTIRE confirmation range (0.1–3%), on every horizon, on both the
+1D scan and the 2D grid, independently. This closes the one gap previously flagged
+as untested. The only edge-of-sample noise is in the ZERO-confirmation scans (no
+bounce/pullback at all) — the 0.0% row there reads anomalously low compared to the
+climbing trend just above it, on n=18–40, i.e. 0–1 actual events — a small-sample
+artifact at the boundary, not a new pattern, consistent with what showed up at every
+other edge in this series.
+
 ## PUT SELLING — after a FALL
 
 1. **Fall trigger:** prior close → today's LOW drops ≥ **0.1%** (catches an
