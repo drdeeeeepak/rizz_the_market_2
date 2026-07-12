@@ -402,6 +402,120 @@ def roll_rule_scan(daily: pd.DataFrame, x_grid=(0.5, 1.0, 1.5, 2.0, 2.5),
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Loss-leg defense optimizer — mirror image of roll_rule_scan above: instead of
+# shifting the SAFE leg inward for more premium, this shifts the THREATENED leg
+# OUTWARD (further from spot) to defend it before an actual breach. The safe
+# leg is never touched here.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _loss_leg_simulate(d: pd.DataFrame, anchor_ts, end_ts, x_pct: float, z_pct: float,
+                       call_pct: float, put_pct: float) -> dict:
+    """One weekly cycle, one (X, Z) pair. Starting CALL = anchor*(1+call_pct%),
+    PUT = anchor*(1-put_pct%). Each time drift from ANCHOR reaches a NEW
+    multiple of X% in one direction, the THREATENED leg on THAT side (not the
+    safe one) shifts OUTWARD by Z% of its OWN current strike — defending it
+    before an actual breach, at the cost of a smaller/negative credit on that
+    roll each time (not modeled here — no premium data, see roll_rule_scan's
+    same caveat). The opposite (safe) leg is never touched, so its distance
+    stays at the original call_pct/put_pct for the whole cycle.
+    Breach = a day's CLOSE (not intraday high/low) at or beyond a strike.
+    Walks day-by-day from the day after anchor_ts through end_ts (inclusive);
+    a single big gap can cross multiple X-thresholds in one day (handled by
+    the while loops, not just an if) — same mechanic as roll_rule_scan."""
+    anchor = float(d.loc[anchor_ts, "close"])
+    ce = anchor * (1 + call_pct / 100)
+    pe = anchor * (1 - put_pct / 100)
+    shift_up = shift_down = 0   # how many X-multiples already used, upside/downside
+    window = d[(d.index > anchor_ts) & (d.index <= end_ts)]
+    for ts, row in window.iterrows():
+        close = float(row["close"])
+        drift = (close - anchor) / anchor * 100
+        while drift >= (shift_up + 1) * x_pct:
+            ce *= (1 + z_pct / 100)   # CALL is threatened on an up-move — shift it further out
+            shift_up += 1
+        while drift <= -(shift_down + 1) * x_pct:
+            pe *= (1 - z_pct / 100)   # PUT is threatened on a down-move — shift it further out
+            shift_down += 1
+        if close >= ce:
+            return {"survived": False, "shifts": shift_up + shift_down,
+                    "breach_side": "call", "breach_was_shifted": shift_up > 0}
+        if close <= pe:
+            return {"survived": False, "shifts": shift_up + shift_down,
+                    "breach_side": "put", "breach_was_shifted": shift_down > 0}
+    return {"survived": True, "shifts": shift_up + shift_down,
+            "breach_side": None, "breach_was_shifted": None}
+
+
+def _loss_leg_aggregate(results: list) -> dict:
+    n = len(results)
+    if n == 0:
+        return {"n": 0, "survival_rate%": np.nan, "avg_shifts": np.nan,
+                "breach_on_shifted_leg%": np.nan, "breach_on_untouched_leg%": np.nan}
+    survived = sum(1 for r in results if r["survived"])
+    avg_shifts = float(np.mean([r["shifts"] for r in results]))
+    shifted_breach = sum(1 for r in results if not r["survived"] and r["breach_was_shifted"])
+    untouched_breach = sum(1 for r in results if not r["survived"] and r["breach_was_shifted"] is False)
+    return {
+        "n": n,
+        "survival_rate%": round(survived / n * 100, 1),
+        "avg_shifts": round(avg_shifts, 2),
+        "breach_on_shifted_leg%": round(shifted_breach / n * 100, 1),
+        "breach_on_untouched_leg%": round(untouched_breach / n * 100, 1),
+    }
+
+
+def loss_leg_scan(daily: pd.DataFrame, x_grid=(0.5, 1.0, 1.5, 2.0, 2.5),
+                  z_grid=(0.25, 0.5, 0.75, 1.0, 1.5), call_pct: float = 3.0,
+                  put_pct: float = 3.5) -> dict:
+    """Grid-search which (X% drift trigger, Z% shift-out size) best defends
+    the THREATENED leg by moving IT further from spot — the mirror image of
+    roll_rule_scan (which shifts the SAFE leg inward instead). Same near/far
+    cycle definition and same output shape (avg_rolls -> avg_shifts, breach
+    columns relabelled) so results sit directly next to the profit-leg table.
+
+    Each shift REALIZES some loss on the leg you're defending (you're moving
+    it further from spot after price has already moved toward it) — the
+    opposite incentive from the profit-leg rule, where more rolls only ever
+    capture MORE premium. So among survival ties, FEWER average shifts is
+    preferred here, not more (see `_best` below)."""
+    d = _norm_daily(daily)
+    tuesdays = sorted(d.index[d.index.weekday == 1])
+    cycles = []
+    for i in range(len(tuesdays) - 1):
+        anchor_ts = tuesdays[i]
+        near_end = tuesdays[i + 1]
+        far_end = tuesdays[i + 2] if i + 2 < len(tuesdays) else None
+        cycles.append((anchor_ts, near_end, far_end))
+
+    rows_near, rows_far = [], []
+    for x in x_grid:
+        for z in z_grid:
+            near_res, far_res = [], []
+            for anchor_ts, near_end, far_end in cycles:
+                near_res.append(_loss_leg_simulate(d, anchor_ts, near_end, x, z, call_pct, put_pct))
+                if far_end is not None:
+                    far_res.append(_loss_leg_simulate(d, anchor_ts, far_end, x, z, call_pct, put_pct))
+            rows_near.append({"x%": x, "z%": z, **_loss_leg_aggregate(near_res)})
+            if far_res:
+                rows_far.append({"x%": x, "z%": z, **_loss_leg_aggregate(far_res)})
+
+    near_df = pd.DataFrame(rows_near)
+    far_df = pd.DataFrame(rows_far)
+
+    def _best(tbl: pd.DataFrame):
+        if tbl.empty:
+            return None
+        # Highest survival rate first; among ties, FEWER shifts = less loss
+        # realized defending the leg along the way (opposite tiebreak from
+        # roll_rule_scan, where more rolls is preferred).
+        t = tbl.sort_values(["survival_rate%", "avg_shifts"], ascending=[False, True])
+        return t.iloc[0].to_dict()
+
+    return {"near": near_df, "far": far_df, "best_near": _best(near_df), "best_far": _best(far_df),
+            "call_pct": call_pct, "put_pct": put_pct, "n_cycles": len(cycles)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Anchor-drift continuation vs. mean-reversion — "does Nifty revert below X%
 # drift and continue above it?"
 # ══════════════════════════════════════════════════════════════════════════════

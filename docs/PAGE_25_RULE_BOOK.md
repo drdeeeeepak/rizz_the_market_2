@@ -101,15 +101,30 @@ biweekly window).
 
 ## LOSS LEG — when to roll/shift it out
 
-**Not yet finalized.** Page 22's original "Roll threshold" scan (section 1 on
-this page) found loss_thr=4.0% best, but that number is invalid for this
-purpose: it sits at the edge of the scanned range (unverified true optimum) AND
-it exceeds the actual 3%/3.5% strike distances — a trigger that can only fire
-*after* the strike distance in the reference position is already breached.
+**Tool built, results not yet run.** Page 22's original "Roll threshold" scan
+found loss_thr=4.0% best, but that number is invalid for this purpose: it sits
+at the edge of the scanned range (unverified true optimum) AND it exceeds the
+actual 3%/3.5% strike distances — a trigger that can only fire *after* the
+strike distance in the reference position is already breached.
 
-**Needed:** re-run section 1 (Roll threshold) or, better, extend the roll-rule
-optimizer (section 7) with a defend/loss-side mode, scanning loss-trigger %
-capped BELOW 3% (the nearer strike), not above it.
+**New: Page 25 → section 8, "Loss-leg defense optimizer."** Mirror image of
+the profit-leg roll-rule optimizer (section 7) — instead of shifting the SAFE
+leg inward for more premium, it shifts the THREATENED leg OUTWARD to defend it
+before an actual breach, and never touches the safe leg. Same X (drift
+trigger) / Z (shift-out size) grid-search shape, same near/far cycle windows,
+same survival-rate scoring — so its output (`loss_leg_near.csv` /
+`loss_leg_far.csv`) sits directly next to the profit-leg table above for
+comparison. One real difference: among survival ties, **fewer average shifts
+is preferred** here (not more) — each shift on this side means you already
+moved against the price once, unlike the profit leg where more rolls only ever
+capture more premium.
+
+**To run it and get the real numbers:** Page 25 → section 8, set CALL=3.0% /
+PUT=3.5% (your real strikes), pick an X-range and Z-range (start with the same
+0.25–2.5% both axes used for the profit-leg full-grid test above), click Run,
+then bring the two CSVs back for the actual loss-side trigger/shift-size
+recommendation — this section of the rule book gets filled in once that's
+done.
 
 ## Position-management cross-reference
 
@@ -124,3 +139,5 @@ capped BELOW 3% (the nearer strike), not above it.
 - **Sections 5–6 (Strike-shift ladders)** — a fixed-schedule alternative to the
   optimizer in section 7 (points-based steps instead of a repeatable %-based
   rule) — useful if you'd rather use a fixed plan than a repeatable trigger.
+- **Section 8 (Loss-leg defense optimizer)** — the loss-side counterpart to
+  section 7, covered above.

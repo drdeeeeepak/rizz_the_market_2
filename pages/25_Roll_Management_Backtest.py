@@ -46,10 +46,13 @@ with st.expander("⚠️ What this is (and its limits) — read once"):
         "tools, and the ones that answer strike-breach questions directly.\n"
         "- **Anchor-drift scans** (sections 3, 4) test whether price mean-reverts or continues "
         "past a given drift%, the empirical basis for picking a trigger in the first place.\n"
+        "- **Loss-leg defense optimizer** (section 8) is the mirror of the roll-rule optimizer — "
+        "it shifts the THREATENED leg outward to defend it, instead of shifting the safe leg "
+        "inward for more premium.\n"
         "- No historical option premium/IV data exists anywhere in this app (Kite only gives a "
         "LIVE chain snapshot, not historical option prices) — every table here is scored on "
-        "**survival** (did the strike hold), never P&L. `avg_rolls` is the closest proxy for "
-        "premium captured, not a real number.\n"
+        "**survival** (did the strike hold), never P&L. `avg_rolls`/`avg_shifts` is the closest "
+        "proxy for premium captured or loss realized, not a real number.\n"
         "- These are base-rate cutoffs to stack the odds, not guarantees. Keep your existing "
         "stop/roll discipline regardless.")
 
@@ -454,10 +457,90 @@ if "p25_roll_rule" in st.session_state:
                            file_name="roll_rule_far.csv", mime="text/csv", key="p25_dl_roll_far")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 8 · Download everything as one CSV
+# 8 · Loss-leg defense optimizer — mirror of section 7
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
-st.subheader("8 · Download everything as one CSV")
+st.subheader("8 · Loss-leg defense optimizer — find the best X%/Z% defense rule")
+st.caption("Mirror image of section 7: instead of shifting the SAFE leg inward for more premium, "
+          "this shifts the THREATENED leg OUTWARD (further from spot) to defend it BEFORE an "
+          "actual breach — capturing some of the adverse move rather than eating a full breach. "
+          "The safe leg is never touched here. Every time drift from anchor reaches a NEW "
+          "multiple of X% AGAINST you, the threatened leg moves out by Z% of its OWN current "
+          "strike — repeatable, as many times as drift keeps extending against you.")
+st.caption("Same caveat as section 7 — no real option premium/IV data in a spot-only backtest, "
+          "so this can't tell you how much loss each defensive shift actually locks in, only "
+          "whether the DEFENDED strike survives to expiry. Unlike section 7, more shifts here is "
+          "NOT better even among survival ties — each shift means the threatened leg already "
+          "moved against you once, so 'best' picks the FEWEST average shifts among equal-survival "
+          "rows. breach_on_shifted_leg% = the leg you were actively defending still gave way; "
+          "breach_on_untouched_leg% = the OTHER, never-touched leg broke instead (a sharp reversal "
+          "after you'd already defended the first side — a risk this rule doesn't address).")
+
+llc1, llc2 = st.columns(2)
+with llc1:
+    ll_call_pct = st.number_input("Sold CALL % from anchor", 1.0, 8.0, 3.0, 0.25, key="p25_ll_call_pct")
+with llc2:
+    ll_put_pct = st.number_input("Sold PUT % from anchor", 1.0, 8.0, 3.5, 0.25, key="p25_ll_put_pct")
+llc3, llc4 = st.columns(2)
+with llc3:
+    ll_x_range = st.slider("X% grid range (drift trigger, adverse)", 0.25, 4.0, (0.5, 2.5), 0.25,
+                           key="p25_ll_x_range")
+    ll_x_step = st.select_slider("X% step", options=[0.25, 0.5, 1.0], value=0.5, key="p25_ll_x_step")
+with llc4:
+    ll_z_range = st.slider("Z% grid range (shift-out size)", 0.25, 3.0, (0.25, 1.5), 0.25,
+                           key="p25_ll_z_range")
+    ll_z_step = st.select_slider("Z% step", options=[0.1, 0.25, 0.5], value=0.25, key="p25_ll_z_step")
+
+ll_x_grid = tuple(np.round(np.arange(ll_x_range[0], ll_x_range[1] + 1e-9, ll_x_step), 3))
+ll_z_grid = tuple(np.round(np.arange(ll_z_range[0], ll_z_range[1] + 1e-9, ll_z_step), 3))
+st.caption(f"Grid: X ∈ {list(ll_x_grid)} · Z ∈ {list(ll_z_grid)} → "
+          f"{len(ll_x_grid) * len(ll_z_grid)} combinations.")
+
+if st.button("▶ Run loss-leg defense scan", key="p25_ll_run"):
+    with st.spinner(f"Simulating {len(ll_x_grid) * len(ll_z_grid)} (X, Z) combinations "
+                    f"across every weekly cycle…"):
+        llr = sl.loss_leg_scan(_load_daily(lookback), x_grid=ll_x_grid, z_grid=ll_z_grid,
+                               call_pct=float(ll_call_pct), put_pct=float(ll_put_pct))
+    st.session_state.p25_loss_leg = llr
+
+if "p25_loss_leg" in st.session_state:
+    llr = st.session_state.p25_loss_leg
+    st.success(f"Simulated **{llr['n_cycles']}** weekly cycles · CALL {llr['call_pct']}% / "
+              f"PUT {llr['put_pct']}% from anchor")
+
+    _ll_keys = ("x%", "z%", "n", "survival_rate%", "avg_shifts",
+               "breach_on_shifted_leg%", "breach_on_untouched_leg%")
+    llA, llB = st.columns(2)
+    with llA:
+        st.markdown("**Best — near expiry (this week)**")
+        if llr["best_near"]:
+            st.json({k: llr["best_near"][k] for k in _ll_keys})
+    with llB:
+        st.markdown("**Best — biweekly (through next expiry too)**")
+        if llr["best_far"]:
+            st.json({k: llr["best_far"][k] for k in _ll_keys})
+
+    st.markdown("**Full grid — near expiry**")
+    if llr["near"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(llr["near"], height=min(60 + 28 * len(llr["near"]), 460), reset=False)
+        st.download_button("⬇ Download near-expiry grid CSV", llr["near"].to_csv(index=False).encode("utf-8"),
+                           file_name="loss_leg_near.csv", mime="text/csv", key="p25_dl_ll_near")
+
+    st.markdown("**Full grid — biweekly (through next expiry)**")
+    if llr["far"].empty:
+        st.caption("Not enough Tuesday-anchored cycles in this history.")
+    else:
+        _frozen(llr["far"], height=min(60 + 28 * len(llr["far"]), 460), reset=False)
+        st.download_button("⬇ Download biweekly grid CSV", llr["far"].to_csv(index=False).encode("utf-8"),
+                           file_name="loss_leg_far.csv", mime="text/csv", key="p25_dl_ll_far")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9 · Download everything as one CSV
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("9 · Download everything as one CSV")
 st.caption("Bundles every table above that you've run — into ONE file with '## N. TITLE' section "
           "headers. Easiest single thing to hand back for review.")
 
@@ -488,6 +571,12 @@ def _build_combined_csv() -> str:
             parts.append("## ROLL-RULE SCAN — NEAR EXPIRY GRID\n" + rr["near"].to_csv(index=False))
         if not rr["far"].empty:
             parts.append("## ROLL-RULE SCAN — BIWEEKLY GRID\n" + rr["far"].to_csv(index=False))
+    llr = st.session_state.get("p25_loss_leg")
+    if llr is not None:
+        if not llr["near"].empty:
+            parts.append("## LOSS-LEG DEFENSE SCAN — NEAR EXPIRY GRID\n" + llr["near"].to_csv(index=False))
+        if not llr["far"].empty:
+            parts.append("## LOSS-LEG DEFENSE SCAN — BIWEEKLY GRID\n" + llr["far"].to_csv(index=False))
     return "\n\n".join(parts) if parts else "No sections run yet."
 
 
