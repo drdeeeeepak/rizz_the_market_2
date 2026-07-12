@@ -158,6 +158,10 @@ else:
             st.caption("No cycles in any bucket at this threshold.")
         else:
             _frozen(table, height=140)
+            sc = result["per_signal_scorecard"].get(name)
+            if sc is not None and not sc.empty:
+                with st.expander(f"Lot scorecard scored off {name} alone"):
+                    _frozen(sc, height=140)
 
     _per_signal_parts = []
     for name, table in result["per_signal_breach"].items():

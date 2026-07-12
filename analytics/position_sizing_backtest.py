@@ -169,14 +169,31 @@ def breach_by_bucket(daily: pd.DataFrame, bucket: pd.Series, horizon: int = 5,
 # Lot-scheme scorecard
 # ══════════════════════════════════════════════════════════════════════════════
 
-# (lots_CE, lots_PE) per bucket. "dynamic_flip" is the rule under test: flip
-# to PE-heavy only on a CONFIRMED uptrend, CE-heavy only on a confirmed
-# downtrend, and fall back to today's live default (2 CE : 1 PE) whenever the
-# signal doesn't clear the bar — never flips on a bare/unconfirmed reading.
+# (lots_CE, lots_PE) per bucket. "dynamic_flip" is the rule as ORIGINALLY
+# hypothesized: flip to PE-heavy on a confirmed uptrend, CE-heavy on a
+# confirmed downtrend (the naive "downtrend threatens the put" assumption),
+# falling back to today's live default (2 CE : 1 PE) whenever the signal
+# doesn't clear the bar. Kept in the registry even after it back-tested
+# WORSE than the static default (first real run, n=194: 0.201 expected
+# breached lots vs 0.186 static, see docs/PAGE_26_RULE_BOOK.md) — it's the
+# reference point "flip_calibrated" is measured against, not a live
+# recommendation.
+#
+# "flip_calibrated" is the DATA-DRIVEN correction: same first run showed the
+# DOWN bucket's call-breach% running 3x its put-breach% (18.8% vs 6.2%) with
+# a strongly POSITIVE average forward return — i.e. the composite's DOWN
+# reading precedes a bounce that tests the CALL side, not a continuation
+# that tests the put. So DOWN flips to PE-heavy here too, instead of CE-heavy.
+# UP stays at the static default (2:1) because the same run showed literally
+# zero separation there (5.7% call breach == 5.7% put breach) — no evidence
+# to flip anything on a confirmed uptrend read. Both DOWN's n=16 and UP's
+# lack-of-signal are single-run results and need a second, longer-lookback
+# confirmation before this is anything more than a hypothesis to re-test.
 LOT_SCHEMES = {
-    "static_2CE_1PE": {"UP": (2, 1), "NEUTRAL": (2, 1), "DOWN": (2, 1)},
-    "static_1_1":     {"UP": (1, 1), "NEUTRAL": (1, 1), "DOWN": (1, 1)},
-    "dynamic_flip":   {"UP": (1, 2), "NEUTRAL": (2, 1), "DOWN": (3, 1)},
+    "static_2CE_1PE":  {"UP": (2, 1), "NEUTRAL": (2, 1), "DOWN": (2, 1)},
+    "static_1_1":      {"UP": (1, 1), "NEUTRAL": (1, 1), "DOWN": (1, 1)},
+    "dynamic_flip":    {"UP": (1, 2), "NEUTRAL": (2, 1), "DOWN": (3, 1)},
+    "flip_calibrated": {"UP": (2, 1), "NEUTRAL": (2, 1), "DOWN": (1, 2)},
 }
 
 
@@ -230,13 +247,19 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
     frame = build_composite_signal(daily, df_1h, adapters)
 
     per_signal = {}
+    per_signal_scorecard = {}
     for name in adapters:
         if name not in frame.columns or frame[name].dropna().empty:
             continue
         b = classify_single(frame[name])
-        per_signal[name] = breach_by_bucket(daily, b, horizon=horizon,
-                                            call_pct=call_pct, put_pct=put_pct,
-                                            tuesdays_only=tuesdays_only)
+        table = breach_by_bucket(daily, b, horizon=horizon,
+                                 call_pct=call_pct, put_pct=put_pct,
+                                 tuesdays_only=tuesdays_only)
+        per_signal[name] = table
+        # Same 3-scheme scorecard, scored off THIS indicator's own buckets
+        # alone — lets each lens be judged on whether ITS OWN UP/DOWN read
+        # is worth sizing off, before deciding the composite is needed.
+        per_signal_scorecard[name] = lot_scheme_scorecard(table)
 
     composite_bucket = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree)
     composite_table = breach_by_bucket(daily, composite_bucket, horizon=horizon,
@@ -247,6 +270,7 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
     return {
         "frame": frame,
         "per_signal_breach": per_signal,
+        "per_signal_scorecard": per_signal_scorecard,
         "composite_bucket": composite_bucket,
         "composite_breach": composite_table,
         "lot_scorecard": scorecard,
