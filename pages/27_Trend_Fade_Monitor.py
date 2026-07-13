@@ -175,16 +175,15 @@ else:
                "bullish, deep green); white/pale means close to neutral.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 15-day hourly chart
+# 10-day hourly chart
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
-st.subheader("15-day hourly chart")
-st.caption("Real hourly price candles with each trading day shaded by that day's reading — "
-           "**red = confirmed downtrend day (the validated 2-puts setup)**, green = confirmed "
-           "uptrend day (no proven sizing edge — shown for reference only), no shading = no "
-           "clear read that day.")
+st.subheader("10-day hourly chart")
+st.caption("Real hourly price candles. **Shaded background = confirmed downtrend day — the "
+           "validated 2-puts setup.** No shading = no action (either uptrend or no clear read; "
+           "neither changes your default sizing).")
 
-CHART_DAYS = 15
+CHART_DAYS = 10
 if h1 is not None and not h1.empty:
     h1c = h1.copy()
     h1c.index = pd.to_datetime(h1c.index)
@@ -202,18 +201,21 @@ if h1 is not None and not h1.empty:
         name="Nifty", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
         showlegend=False))
 
-    _shade = {"UP": "rgba(22,163,74,0.14)", "DOWN": "rgba(220,38,38,0.14)"}
+    # Only the actionable (DOWN) day gets shaded, in green — UP/NEUTRAL are left blank on
+    # purpose, since neither of those calls for any change to your default sizing.
     for day in chart_days:
-        colour = _shade.get(bucket_series.get(day, "NEUTRAL"))
-        if colour:
-            fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1), fillcolor=colour, line_width=0)
+        if bucket_series.get(day, "NEUTRAL") == "DOWN":
+            fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1),
+                          fillcolor="rgba(22,163,74,0.16)", line_width=0)
 
     # dragmode="pan": one-finger/mouse drag PANS the chart body itself; two-finger pinch
     # zooms BOTH axes at once (this is Plotly's native pinch behavior on a cartesian plot
     # once scrollZoom is on — no rangeslider or off-chart control needed for it). No
     # rangeslider here on purpose: it would be a SECOND, separate zoom control below the
     # chart, which is the opposite of what was asked for.
-    fig.update_layout(height=500, xaxis_rangeslider_visible=False, plot_bgcolor="white",
+    # height kept short relative to typical mobile width — a tall fixed height against a
+    # narrow phone screen was exaggerating how "stretched" each candle looked vertically.
+    fig.update_layout(height=340, xaxis_rangeslider_visible=False, plot_bgcolor="white",
                       margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty",
                       dragmode="pan")
     fig.update_yaxes(fixedrange=False)   # dragging ON the Y-axis itself zooms just that axis
