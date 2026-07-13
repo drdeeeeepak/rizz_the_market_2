@@ -208,20 +208,21 @@ if h1 is not None and not h1.empty:
         if colour:
             fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1), fillcolor=colour, line_width=0)
 
-    # dragmode="pan": one-finger/mouse drag PANS (like a charting app); zoom happens via
-    # pinch, mouse wheel (scrollZoom below), the axis-drag trick, or the toolbar buttons —
-    # this combo is what actually needs stating explicitly, Plotly's defaults leave drag as
-    # box-zoom instead, which fights with pinch-zoom on touch.
-    fig.update_layout(height=500, xaxis_rangeslider_visible=True, plot_bgcolor="white",
+    # dragmode="pan": one-finger/mouse drag PANS the chart body itself; two-finger pinch
+    # zooms BOTH axes at once (this is Plotly's native pinch behavior on a cartesian plot
+    # once scrollZoom is on — no rangeslider or off-chart control needed for it). No
+    # rangeslider here on purpose: it would be a SECOND, separate zoom control below the
+    # chart, which is the opposite of what was asked for.
+    fig.update_layout(height=500, xaxis_rangeslider_visible=False, plot_bgcolor="white",
                       margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty",
                       dragmode="pan")
-    fig.update_yaxes(fixedrange=False)   # explicit: dragging the Y-axis itself zooms just that axis
-    fig.update_xaxes(fixedrange=False)
+    fig.update_yaxes(fixedrange=False)   # dragging ON the Y-axis itself zooms just that axis
+    fig.update_xaxes(fixedrange=False)   # dragging ON the X-axis itself zooms just that axis
     st.plotly_chart(fig, use_container_width=True,
                     config={"scrollZoom": True, "displayModeBar": True,
                            "modeBarButtonsToAdd": ["zoomIn2d", "zoomOut2d", "autoScale2d"]})
-    st.caption("Pinch or scroll to zoom, drag to pan, drag directly on an axis to stretch/shrink "
-               "just that axis, double-tap/double-click to reset. The mini strip below the chart "
-               "is a range slider — drag its edges to zoom the whole chart to a date range.")
+    st.caption("On the chart itself: pinch with two fingers (or scroll) to zoom both axes "
+               "together, one-finger/mouse drag to pan, drag directly on the Y-axis numbers or "
+               "X-axis dates to stretch just that one axis, double-tap/double-click to reset.")
 else:
     st.info("Not enough hourly data to draw the chart.")
