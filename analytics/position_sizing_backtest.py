@@ -40,6 +40,27 @@ DEFAULT_ADAPTERS = {
 }
 _NEEDS_1H = {"dow_theory"}
 
+# Shown for CONTEXT only — deliberately NOT part of DEFAULT_ADAPTERS, so it
+# never influences the composite/bucket that drives the "sell 2 puts" call.
+# Pages 24 and 25's rules don't fit here at all: they answer different
+# questions in a different shape (page 24 = "is a FRESH short safe right
+# now," a one-off entry check; page 25 = roll/drift thresholds on an
+# EXISTING position) — neither produces the one-value-per-day directional
+# reading this module's SIGNAL CONTRACT needs, so there's nothing to plug
+# in. Page 26 IS this module — it's the backtest that validated the DOWN
+# rule above, not a separate signal to add on top of it.
+# Bollinger IS directly compatible — analytics/signal_adapters.py already
+# has it in this exact daily-directional shape, and adapt_bollinger_pctb is
+# ALREADY built mean-reversion (fade) framed, a natural fit for this app's
+# whole "fade a confirmed trend" thesis. It just hasn't been through
+# split_validation (see Page 26) yet, so it stays a reference-only reading
+# here until it has — adding it straight to DEFAULT_ADAPTERS would silently
+# invalidate the two-halves confirmation that's the only reason the DOWN
+# rule is trusted at all.
+REFERENCE_ADAPTERS = {
+    "bollinger_fade": sa.adapt_bollinger_pctb,
+}
+
 
 def _norm_idx(idx) -> pd.DatetimeIndex:
     idx = pd.to_datetime(idx)
@@ -376,15 +397,41 @@ def grade_ripeness(bucket: str, agree_count: int) -> str:
 
 
 def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0.4,
-                   min_agree: int = 3, adapters: dict = None) -> dict:
+                   min_agree: int = 3, adapters: dict = None,
+                   reference_adapters: dict = None) -> dict:
     """TODAY's reading only — the live counterpart to run_position_sizing_backtest's
     historical scoring. Same build_composite_signal() used everywhere else in
     this module, just reading the LAST row instead of scoring history. Returns
-    {} if there's no usable data (e.g. daily/1H both empty)."""
+    {} if there's no usable data (e.g. daily/1H both empty).
+
+    reference_adapters (default REFERENCE_ADAPTERS) are computed and returned
+    under "reference" for display only — they never touch composite/
+    agree_count/bucket, so an unvalidated addition can't quietly change what
+    the "sell 2 puts" call means."""
     adapters = adapters or DEFAULT_ADAPTERS
     frame = build_composite_signal(daily, df_1h, adapters)
     if frame.empty:
         return {}
+
+    reference_adapters = REFERENCE_ADAPTERS if reference_adapters is None else reference_adapters
+    reference = {}
+    for name, fn in reference_adapters.items():
+        try:
+            ref_series = fn(daily)
+        except Exception:
+            ref_series = pd.Series(dtype=float)
+        if ref_series is None or ref_series.empty:
+            reference[name] = {"value": None, "bucket": "NO DATA"}
+            continue
+        ref_series = ref_series.copy()
+        ref_series.index = _norm_idx(ref_series.index)
+        val = ref_series.iloc[-1] if len(ref_series) else None
+        if val is None or pd.isna(val):
+            reference[name] = {"value": None, "bucket": "NO DATA"}
+        else:
+            val = float(val)
+            b = "UP" if val >= 0.3 else "DOWN" if val <= -0.3 else "NEUTRAL"
+            reference[name] = {"value": round(val, 1), "bucket": b}
 
     last = frame.iloc[-1]
     as_of = frame.index[-1]
@@ -425,6 +472,7 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
         "suggested_lots_ce": lots_ce,
         "suggested_lots_pe": lots_pe,
         "frame": frame,
+        "reference": reference,
     }
 
 

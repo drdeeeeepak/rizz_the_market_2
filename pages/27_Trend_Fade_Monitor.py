@@ -22,7 +22,11 @@ except Exception:
 st.set_page_config(page_title="P27 · Trend Fade Monitor", layout="wide")
 st.title("Page 27 — Trend Fade Monitor")
 st.caption("Live reading of 5 trend signals, one by one and combined, for today — "
-           "plus the last 3 days of hourly price for context.")
+           "plus recent hourly price for context.")
+
+st.success("🟢 **GREEN shading = confirmed DOWNTREND day = sell 2 PUTS : 1 CALL.** "
+          "That's the only colour that means anything on this page — no shading, "
+          "no change to your normal sizing.")
 
 with st.expander("What this page is telling you", expanded=True):
     st.markdown(
@@ -114,16 +118,37 @@ st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
 st.caption("Strength runs roughly -1 (strongly bearish) to +1 (strongly bullish) for that signal "
            "alone. The headline above is these 5 combined, not a simple vote.")
 
+if snap.get("reference"):
+    st.markdown("**Extra signal, for reference only — not part of the rule above**")
+    ref_rows = []
+    for name, info in snap["reference"].items():
+        ref_rows.append({
+            "signal": name.replace("_", " ").title(),
+            "says": _label.get(info["bucket"], info["bucket"]),
+            "strength (-1 to +1)": info["value"] if info["value"] is not None else "—",
+        })
+    st.dataframe(pd.DataFrame(ref_rows), hide_index=True, use_container_width=True,
+                column_config={"strength (-1 to +1)": st.column_config.NumberColumn(format="%.1f")})
+    st.caption("Bollinger %B, read as mean-reversion (fade) — already built that way elsewhere in "
+               "this app, and a natural fit for the same \"fade a confirmed trend\" idea this page "
+               "is built on. It hasn't been through the same two-halves check as the 5 signals "
+               "above yet, so it does NOT affect the sell-2-puts call — it's shown so you can see "
+               "it, not so you act on it. Ask to have it properly backtested (page 26) before "
+               "trusting it the way the DOWN rule above is trusted.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Last 3 days, hourly
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("Last 10 days, hour by hour")
 st.caption("Day's reading and agreement come right after price — green means that day's reading "
-           "is DOWN, the validated \"sell 2 puts\" setup. Everything else is plain, no colour. "
-           "The signals only update once a day (at market close), so every hour within the same "
-           "day repeats that day's numbers — this is here to see recent price moves alongside "
-           "what the signals were saying that day, not to imply they change hour to hour.")
+           "is DOWN, the validated \"sell 2 puts\" setup. Everything else is plain, no colour.")
+st.caption("Why every hour in a day shows the same number: none of these 5 signals look at the "
+           "market during the day. Each one only checks ONCE — after trading ends at 3:30pm — and "
+           "makes its call using that day's final closing price. So the reading for, say, Tuesday "
+           "9:15am and Tuesday 2:15pm is identical, because both are showing \"what Tuesday's "
+           "close said,\" and neither hour has a closing price of its own yet. The number will "
+           "only change once the NEXT day closes.")
 
 hist = ps.hourly_history_table(h1, snap["frame"], days=10)
 
