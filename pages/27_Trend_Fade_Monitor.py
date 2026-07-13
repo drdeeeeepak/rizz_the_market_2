@@ -101,6 +101,45 @@ if snap["bucket"] != "DOWN":
                "downtrend day.")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Live intraday check — genuinely updates every hour, unlike the reading above
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("Live intraday check")
+st.caption("The reading above only refreshes at market close. THIS updates every hour, straight "
+           "off today's still-forming price — it's page 24's own validated fall/bounce and "
+           "rise/pullback rule (see docs/PAGE_24_RULE_BOOK.md), answering a different question: "
+           "**has today already shown a confirmed move worth trusting for a FRESH short right "
+           "now** — not which leg to size heavier for the cycle.")
+
+intraday = ps.intraday_reversal_snapshot(daily, h1 if h1 is not None else pd.DataFrame())
+
+if not intraday:
+    st.info("Not enough of today's candles yet to compute this.")
+else:
+    ic1, ic2, ic3, ic4 = st.columns(4)
+    ic1.metric("Prior close", f"{intraday['prior_close']:,.1f}")
+    ic2.metric("Today's high so far", f"{intraday['today_high']:,.1f}")
+    ic3.metric("Today's low so far", f"{intraday['today_low']:,.1f}")
+    ic4.metric("Now", f"{intraday['current']:,.1f}")
+
+    put_s, call_s = intraday["put_side"], intraday["call_side"]
+
+    def _status_line(side_label, s, trigger_label, confirm_label):
+        if s["confirmed"]:
+            return f"🟢 **{side_label}: CONFIRMED** — {trigger_label} {s.get('rise_pct', s.get('fall_pct')):.2f}%, {confirm_label} {s.get('pullback_pct', s.get('bounce_pct')):.2f}%. Page 24's rule says this has historically stayed untouched ~97-100% of the time out to 5 days."
+        if s["triggered"]:
+            return f"🟡 **{side_label}: triggered, not yet confirmed** — {trigger_label} {s.get('rise_pct', s.get('fall_pct')):.2f}%, waiting for the {confirm_label} to clear 0.25%."
+        return f"⚪ **{side_label}: no trigger yet today.**"
+
+    st.markdown(_status_line("PUT side (fall + bounce)", put_s, "fall", "bounce"))
+    st.markdown(_status_line("CALL side (rise + pullback)", call_s, "rise", "pullback"))
+    st.caption("This is an ENTRY-safety check for a strike placed beyond today's high/low — it "
+               "does not by itself change the CALL:PUT lot ratio above. A CONFIRMED call-side "
+               "reading, for instance, means a call sold above today's high looks safe by page "
+               "24's own numbers — it does not mean \"go 2 calls,\" which page 26 found isn't "
+               "backed by the data (see the callout at the top of this page).")
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Per-indicator breakdown
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
@@ -159,12 +198,39 @@ else:
                     if c not in ("time", "close", "chg pts", "day's reading", "agreement")]
     hist = hist[["time", "close", "chg pts", "day's reading", "agreement"] + _signal_cols]
 
+    def _colour_signal(val):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return "color:#94a3b8;"
+        if pd.isna(v) or v == 0:
+            return "color:#94a3b8;"
+        f = min(1.0, abs(v))  # 0..1 strength
+        r, g, b = (22, 163, 74) if v > 0 else (220, 38, 38)
+        rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+        txt = "#ffffff" if f > 0.55 else "#0f172a"
+        return f"background-color:rgb({rr},{gg},{bb}); color:{txt}; font-weight:600;"
+
+    def _colour_chg(val):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return ""
+        if v > 0:
+            return "color:#16a34a;"
+        if v < 0:
+            return "color:#dc2626;"
+        return "color:#64748b;"
+
     def _colour_reading(val):
         if val == "DOWN":
             return "background-color:#16a34a; color:#ffffff; font-weight:600;"
         return ""
 
-    styled = hist.style.map(_colour_reading, subset=["day's reading"])
+    styled = (hist.style
+              .map(_colour_signal, subset=_signal_cols)
+              .map(_colour_chg, subset=["chg pts"])
+              .map(_colour_reading, subset=["day's reading"]))
     _num_cols = ["close", "chg pts"] + _signal_cols
     st.dataframe(styled, hide_index=True, use_container_width=True, height=420,
                 column_config={c: st.column_config.NumberColumn(format="%.1f") for c in _num_cols})
