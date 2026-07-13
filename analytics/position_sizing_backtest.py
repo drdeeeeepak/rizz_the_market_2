@@ -424,4 +424,54 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
         "grade": grade_ripeness(bucket, agree),
         "suggested_lots_ce": lots_ce,
         "suggested_lots_pe": lots_pe,
+        "frame": frame,
     }
+
+
+def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float = 0.4,
+                          min_agree: int = 3, days: int = 3) -> pd.DataFrame:
+    """Last `days` TRADING days of hourly candles, newest first, each hour
+    tagged with that CALENDAR day's composite reading (day_reading /
+    agreement). The composite is a once-per-day (EOD) read, not an intraday
+    one, so every hour inside the same trading day carries the SAME reading
+    — this table exists to show recent price action next to what the signal
+    said on each of those days, not to imply the signal itself updates
+    hourly. Uses classify_composite (the SAME function live_snapshot's
+    bucket and every backtest bucket table already use) so this column
+    always matches the rest of the app."""
+    if h1 is None or h1.empty or frame.empty:
+        return pd.DataFrame()
+
+    d = h1.copy()
+    d.index = pd.to_datetime(d.index)
+    d = d.sort_index()
+    all_days = sorted(set(d.index.normalize()))
+    if not all_days:
+        return pd.DataFrame()
+    keep = set(all_days[-days:])
+    d = d[d.index.normalize().isin(keep)]
+    if d.empty:
+        return pd.DataFrame()
+
+    bucket_series = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree)
+
+    rows = []
+    prev_close = None
+    for ts, row in d.iterrows():
+        close = float(row["close"])
+        chg = round(close - prev_close, 1) if prev_close is not None else 0.0
+        prev_close = close
+        day = ts.normalize()
+        reading = bucket_series.get(day, "—")
+        ac = frame.loc[day, "agree_count"] if day in frame.index else None
+        ns = frame.loc[day, "n_signals"] if day in frame.index else None
+        agreement = f"{int(ac)}/{int(ns)}" if pd.notna(ac) and pd.notna(ns) else "—"
+        rows.append({
+            "time": ts.strftime("%d-%b %H:%M"),
+            "close": round(close, 1),
+            "chg pts": chg,
+            "day's reading": reading,
+            "agreement": agreement,
+        })
+    out = pd.DataFrame(rows)
+    return out.iloc[::-1].reset_index(drop=True)
