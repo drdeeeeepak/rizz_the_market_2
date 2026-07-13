@@ -612,6 +612,75 @@ def adapt_oi_buildup(fut_daily: pd.DataFrame) -> pd.Series:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Page 24's fall/bounce + rise/pullback reversal — EOD-only, one signal per day
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Same numbers as docs/PAGE_24_RULE_BOOK.md and the FALL_TRIGGER_PCT/etc.
+# constants in analytics/position_sizing_backtest.py (kept duplicated here,
+# not imported, to avoid a circular import — position_sizing_backtest.py
+# already imports FROM this module). If page 24's rule book numbers ever
+# change, update both places.
+_P24_FALL_TRIGGER_PCT = 0.1
+_P24_RISE_TRIGGER_PCT = 0.1
+_P24_BOUNCE_CONFIRM_PCT = 0.25
+_P24_PULLBACK_CONFIRM_PCT = 0.25
+
+
+def adapt_page24_reversal(daily: pd.DataFrame) -> pd.Series:
+    """EOD-only translation of page 24's validated fall/bounce (PUT side) and
+    rise/pullback (CALL side) rule into ONE per-day directional score, using
+    each day's OWN close as the confirmation point (the live intraday version
+    in position_sizing_backtest.intraday_reversal_snapshot uses today's
+    still-forming high/low instead — this is its once-per-day, backtestable
+    twin).
+
+    IMPORTANT — this is a DIFFERENT claim than page 24 validated, not a
+    re-statement of it: page 24 checked "does this day's own low/high get
+    RE-TOUCHED in 3-5 days" (strike-placement safety). This checks something
+    new — "does a confirmed reversal day predict which side (CALL/PUT) gets
+    tested MORE over the coming week," the composite's own question. That is
+    UNVALIDATED until it clears Page 26's split_validation, same bar
+    bollinger_fade cleared before promotion — see REFERENCE_ADAPTERS in
+    analytics/position_sizing_backtest.py.
+
+    Sign convention matches the composite: a confirmed FALL+BOUNCE (price
+    already reversing UP off a low — the same "shakeout, then a bounce that
+    tests the call side" shape as this composite's own validated DOWN
+    reading) scores NEGATIVE. A confirmed RISE+PULLBACK (reversing DOWN off
+    a high) scores POSITIVE, matching the composite's UP convention. Both
+    firing the same day (rare — a same-day double reversal) or neither
+    firing scores 0 (no opinion)."""
+    d = _to_dt_index(daily)
+    if d.empty:
+        return pd.Series(dtype=float, name="page24_reversal")
+    close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+
+    fall_pct = np.full(n, np.nan)
+    bounce_pct = np.full(n, np.nan)
+    rise_pct = np.full(n, np.nan)
+    pullback_pct = np.full(n, np.nan)
+    fall_pct[1:] = (close[:-1] - low[1:]) / close[:-1] * 100
+    bounce_pct[1:] = np.where(low[1:] > 0, (close[1:] - low[1:]) / low[1:] * 100, np.nan)
+    rise_pct[1:] = (high[1:] - close[:-1]) / close[:-1] * 100
+    pullback_pct[1:] = np.where(high[1:] > 0, (high[1:] - close[1:]) / high[1:] * 100, np.nan)
+
+    fall_confirmed = (np.nan_to_num(fall_pct) >= _P24_FALL_TRIGGER_PCT) & \
+                     (np.nan_to_num(bounce_pct) >= _P24_BOUNCE_CONFIRM_PCT)
+    rise_confirmed = (np.nan_to_num(rise_pct) >= _P24_RISE_TRIGGER_PCT) & \
+                     (np.nan_to_num(pullback_pct) >= _P24_PULLBACK_CONFIRM_PCT)
+    both = fall_confirmed & rise_confirmed   # same-day double reversal — ambiguous, treat as no opinion
+
+    sig = np.zeros(n)
+    sig[fall_confirmed & ~both] = -1.0
+    sig[rise_confirmed & ~both] = 1.0
+
+    out = pd.Series(sig, index=d.index, name="page24_reversal")
+    out.index = out.index.normalize()
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Registry — for pages/23_Signal_Library.py to iterate generically
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -632,4 +701,5 @@ ADAPTERS = {
     "RSI Exhaustion Fade":   {"fn": adapt_rsi_exhaustion_fade, "needs": ("daily",),   "cadence": "daily+weekly combined"},
     "EMA Slope Phases":      {"fn": adapt_ema_slope_phases,  "needs": ("h1",),        "cadence": "1H, daily read"},
     "Futures OI Buildup":    {"fn": adapt_oi_buildup,        "needs": ("fut_daily",), "cadence": "daily (needs OI history)"},
+    "Page 24 Reversal":      {"fn": adapt_page24_reversal,   "needs": ("daily",),     "cadence": "daily, EOD-only twin of the live intraday check"},
 }

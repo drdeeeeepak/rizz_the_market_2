@@ -65,11 +65,18 @@ DEFAULT_ADAPTERS = {
 }
 _NEEDS_1H = {"dow_theory"}
 
-# Kept as an empty registry (not removed) — the reusable pattern for testing
-# a FUTURE candidate signal through Page 26's per-signal split_validation
-# before deciding whether to promote it into DEFAULT_ADAPTERS, exactly how
-# bollinger_fade itself was validated before landing above.
-REFERENCE_ADAPTERS = {}
+# page24_reversal is a NEW candidate, not yet validated for THIS composite's
+# question. Page 24 validated a DIFFERENT claim (does this day's own low/high
+# get re-touched in 3-5 days — strike-placement safety); this composite asks
+# whether a confirmed reversal day predicts which side (CALL/PUT) gets
+# tested MORE over the coming week. adapt_page24_reversal's own sign
+# convention already matches this composite's (no flip needed, unlike
+# bollinger_fade) — see its docstring in analytics/signal_adapters.py. Stays
+# here, reference-only, until Page 26's split_validation confirms the same
+# call/put breach asymmetry direction in both history halves.
+REFERENCE_ADAPTERS = {
+    "page24_reversal": sa.adapt_page24_reversal,
+}
 
 
 def _norm_idx(idx) -> pd.DatetimeIndex:

@@ -139,6 +139,7 @@ with st.spinner("Building composite signal and scoring buckets…"):
         daily, h1 if h1 is not None else pd.DataFrame(),
         horizon=_in["horizon"], call_pct=_in["call_pct"], put_pct=_in["put_pct"],
         up_thresh=_in["up_thresh"], min_agree=_in["min_agree"], tuesdays_only=_in["tuesdays_only"],
+        reference_adapters=ps.REFERENCE_ADAPTERS,
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
