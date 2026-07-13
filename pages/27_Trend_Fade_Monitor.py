@@ -195,17 +195,37 @@ if h1 is not None and not h1.empty:
 
     bucket_series = ps.classify_composite(snap["frame"])
 
+    # Position candles by ROW INDEX, not real time. A real-time x-axis leaves a visible
+    # blank gap for every night, weekend, and holiday (Kite simply has no data for those
+    # hours, but Plotly still reserves the space for them on a true time axis). Spacing by
+    # index instead makes every candle sit flush against the next, regardless of how many
+    # non-trading days fall in the window — no gap list to maintain, holidays included.
+    x_pos = list(range(len(h1c)))
+    labels = [ts.strftime("%d-%b %H:%M") for ts in h1c.index]
+    days_arr = h1c.index.normalize()
+
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
-        x=h1c.index, open=h1c["open"], high=h1c["high"], low=h1c["low"], close=h1c["close"],
+        x=x_pos, open=h1c["open"], high=h1c["high"], low=h1c["low"], close=h1c["close"],
         name="Nifty", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
-        showlegend=False))
+        showlegend=False, text=labels, hoverinfo="text+y"))
+
+    # One tick per day, positioned at that day's first candle; also tracks each day's
+    # first/last row index so the DOWN-day shading below can cover the right span.
+    tick_pos, tick_text, day_bounds = [], [], {}
+    for i, day in enumerate(days_arr):
+        if day not in day_bounds:
+            day_bounds[day] = [i, i]
+            tick_pos.append(i)
+            tick_text.append(day.strftime("%d-%b"))
+        else:
+            day_bounds[day][1] = i
 
     # Only the actionable (DOWN) day gets shaded, in green — UP/NEUTRAL are left blank on
     # purpose, since neither of those calls for any change to your default sizing.
-    for day in chart_days:
+    for day, (first_i, last_i) in day_bounds.items():
         if bucket_series.get(day, "NEUTRAL") == "DOWN":
-            fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1),
+            fig.add_vrect(x0=first_i - 0.5, x1=last_i + 0.5,
                           fillcolor="rgba(22,163,74,0.16)", line_width=0)
 
     # dragmode="pan": one-finger/mouse drag PANS the chart body itself; two-finger pinch
@@ -218,8 +238,8 @@ if h1 is not None and not h1.empty:
     fig.update_layout(height=340, xaxis_rangeslider_visible=False, plot_bgcolor="white",
                       margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty",
                       dragmode="pan")
+    fig.update_xaxes(tickvals=tick_pos, ticktext=tick_text, fixedrange=False)
     fig.update_yaxes(fixedrange=False)   # dragging ON the Y-axis itself zooms just that axis
-    fig.update_xaxes(fixedrange=False)   # dragging ON the X-axis itself zooms just that axis
     st.plotly_chart(fig, use_container_width=True,
                     config={"scrollZoom": True, "displayModeBar": True,
                            "modeBarButtonsToAdd": ["zoomIn2d", "zoomOut2d", "autoScale2d"]})
