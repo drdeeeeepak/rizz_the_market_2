@@ -117,21 +117,55 @@ st.caption("Strength runs roughly -1 (strongly bearish) to +1 (strongly bullish)
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("Last 3 days, hour by hour")
-st.caption("The signal only updates once a day (at market close), so every hour within the same "
-           "day shows that day's reading — this is here to see recent price moves alongside what "
-           "the signal was saying that day, not to imply it changes hour to hour.")
+st.caption("Each of the 5 signals' own number for that day, plus the combined reading — colour "
+           "shows bullish (green) vs bearish (red), darker = stronger. The signals only update "
+           "once a day (at market close), so every hour within the same day repeats that day's "
+           "numbers — this is here to see recent price moves alongside what the signals were "
+           "saying that day, not to imply they change hour to hour.")
 
 hist = ps.hourly_history_table(h1, snap["frame"], days=3)
 
 if hist.empty:
     st.info("Not enough hourly data to show recent history.")
 else:
+    _non_signal_cols = {"time", "close", "chg pts", "day's reading", "agreement"}
+    _signal_cols = [c for c in hist.columns if c not in _non_signal_cols]
+
+    def _colour_signal(val):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return "color:#94a3b8;"
+        if pd.isna(v) or v == 0:
+            return "color:#94a3b8;"
+        f = min(1.0, abs(v))  # 0..1 strength
+        r, g, b = (22, 163, 74) if v > 0 else (220, 38, 38)
+        rr, gg, bb = (int(255 + (c - 255) * f) for c in (r, g, b))
+        txt = "#ffffff" if f > 0.55 else "#0f172a"
+        return f"background-color:rgb({rr},{gg},{bb}); color:{txt}; font-weight:600;"
+
     def _colour_reading(val):
         if val == "UP":
-            return "color:#16a34a; font-weight:600;"
+            return "background-color:#16a34a; color:#ffffff; font-weight:600;"
         if val == "DOWN":
-            return "color:#dc2626; font-weight:600;"
+            return "background-color:#dc2626; color:#ffffff; font-weight:600;"
         return "color:#64748b;"
 
-    styled = hist.style.map(_colour_reading, subset=["day's reading"])
+    def _colour_chg(val):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return ""
+        if v > 0:
+            return "color:#16a34a;"
+        if v < 0:
+            return "color:#dc2626;"
+        return "color:#64748b;"
+
+    styled = (hist.style
+              .map(_colour_signal, subset=_signal_cols)
+              .map(_colour_reading, subset=["day's reading"])
+              .map(_colour_chg, subset=["chg pts"]))
     st.dataframe(styled, hide_index=True, use_container_width=True, height=420)
+    st.caption("Signal columns range roughly -1 (strongly bearish, deep red) to +1 (strongly "
+               "bullish, deep green); white/pale means close to neutral.")

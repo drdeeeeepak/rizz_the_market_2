@@ -429,16 +429,18 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
 
 
 def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float = 0.4,
-                          min_agree: int = 3, days: int = 3) -> pd.DataFrame:
+                          min_agree: int = 3, days: int = 3,
+                          adapters: dict = None) -> pd.DataFrame:
     """Last `days` TRADING days of hourly candles, newest first, each hour
-    tagged with that CALENDAR day's composite reading (day_reading /
-    agreement). The composite is a once-per-day (EOD) read, not an intraday
-    one, so every hour inside the same trading day carries the SAME reading
-    — this table exists to show recent price action next to what the signal
-    said on each of those days, not to imply the signal itself updates
-    hourly. Uses classify_composite (the SAME function live_snapshot's
-    bucket and every backtest bucket table already use) so this column
-    always matches the rest of the app."""
+    tagged with that CALENDAR day's reading — both the 5 individual
+    indicator VALUES and the combined day's reading / agreement count. The
+    signals are a once-per-day (EOD) read, not an intraday one, so every
+    hour inside the same trading day carries the SAME values — this table
+    exists to show recent price action next to what each signal said on
+    that day, not to imply any of them update hourly. Uses
+    classify_composite (the SAME function live_snapshot's bucket and every
+    backtest bucket table already use) so the reading column always matches
+    the rest of the app."""
     if h1 is None or h1.empty or frame.empty:
         return pd.DataFrame()
 
@@ -453,6 +455,8 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
     if d.empty:
         return pd.DataFrame()
 
+    adapters = adapters or DEFAULT_ADAPTERS
+    indicator_names = [n for n in adapters if n in frame.columns]
     bucket_series = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree)
 
     rows = []
@@ -462,16 +466,18 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
         chg = round(close - prev_close, 1) if prev_close is not None else 0.0
         prev_close = close
         day = ts.normalize()
+
+        row_dict = {"time": ts.strftime("%d-%b %H:%M"), "close": round(close, 1), "chg pts": chg}
+        for name in indicator_names:
+            v = frame.loc[day, name] if day in frame.index else None
+            row_dict[name.replace("_", " ")] = round(float(v), 2) if pd.notna(v) else None
+
         reading = bucket_series.get(day, "—")
         ac = frame.loc[day, "agree_count"] if day in frame.index else None
         ns = frame.loc[day, "n_signals"] if day in frame.index else None
-        agreement = f"{int(ac)}/{int(ns)}" if pd.notna(ac) and pd.notna(ns) else "—"
-        rows.append({
-            "time": ts.strftime("%d-%b %H:%M"),
-            "close": round(close, 1),
-            "chg pts": chg,
-            "day's reading": reading,
-            "agreement": agreement,
-        })
+        row_dict["day's reading"] = reading
+        row_dict["agreement"] = f"{int(ac)}/{int(ns)}" if pd.notna(ac) and pd.notna(ns) else "—"
+        rows.append(row_dict)
+
     out = pd.DataFrame(rows)
     return out.iloc[::-1].reset_index(drop=True)
