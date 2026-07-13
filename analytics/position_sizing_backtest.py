@@ -73,6 +73,22 @@ def _norm_idx(idx) -> pd.DatetimeIndex:
 # Composite signal
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fetch_adapter_series(name: str, fn, daily: pd.DataFrame, df_1h: pd.DataFrame) -> pd.Series:
+    """Shared per-adapter fetch+normalize step — used by build_composite_signal
+    for its composite-forming adapters, and separately by
+    run_position_sizing_backtest for REFERENCE_ADAPTERS (which must be scored
+    individually WITHOUT ever touching the composite mean/agreement)."""
+    try:
+        raw = fn(df_1h) if name in _NEEDS_1H else fn(daily)
+    except Exception:
+        raw = pd.Series(dtype=float)
+    if raw is not None and len(raw):
+        raw = raw.copy()
+        raw.index = _norm_idx(raw.index)
+        raw = raw[~raw.index.duplicated(keep="last")]
+    return raw
+
+
 def build_composite_signal(daily: pd.DataFrame, df_1h: pd.DataFrame,
                             adapters: dict = None) -> pd.DataFrame:
     """One row per trading day: every adapter's raw reading, a composite
@@ -81,17 +97,7 @@ def build_composite_signal(daily: pd.DataFrame, df_1h: pd.DataFrame,
     composite). Missing adapters (e.g. no 1H data) just shrink n_signals —
     they never force a NEUTRAL read on their own."""
     adapters = adapters or DEFAULT_ADAPTERS
-    cols = {}
-    for name, fn in adapters.items():
-        try:
-            raw = fn(df_1h) if name in _NEEDS_1H else fn(daily)
-        except Exception:
-            raw = pd.Series(dtype=float)
-        if raw is not None and len(raw):
-            raw = raw.copy()
-            raw.index = _norm_idx(raw.index)
-            raw = raw[~raw.index.duplicated(keep="last")]
-        cols[name] = raw
+    cols = {name: _fetch_adapter_series(name, fn, daily, df_1h) for name, fn in adapters.items()}
 
     frame = pd.DataFrame(cols)
     if frame.empty:
@@ -314,17 +320,35 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
                                   horizon: int = 5, call_pct: float = 3.0,
                                   put_pct: float = 3.5, up_thresh: float = 0.4,
                                   min_agree: int = 3, tuesdays_only: bool = True,
-                                  adapters: dict = None) -> dict:
+                                  adapters: dict = None, reference_adapters: dict = None) -> dict:
     """Single entry point a page (or a standalone script) can call: builds
     the composite, scores every individual adapter AND the composite through
     breach_by_bucket, and scores the lot schemes off the composite bucket
-    table. Returns everything a rule-book writeup needs in one dict."""
+    table. Returns everything a rule-book writeup needs in one dict.
+
+    Every individual adapter also gets its OWN split_validation (not just the
+    composite) — this is the exact bar REFERENCE_ADAPTERS entries (e.g.
+    bollinger_fade) need to clear before being promoted into DEFAULT_ADAPTERS:
+    same UP/DOWN breach-rate asymmetry direction in both the early and late
+    half, not just a whole-window average.
+
+    `reference_adapters` (e.g. pass REFERENCE_ADAPTERS) are scored per-signal
+    the SAME way — breach table, lot scorecard, split_validation — but are
+    NEVER passed into build_composite_signal, so they cannot influence the
+    composite mean/agreement or the "sell 2 puts" call. This is what lets you
+    test a candidate signal here without silently changing what page 27 shows
+    live."""
     adapters = adapters or DEFAULT_ADAPTERS
+    reference_adapters = reference_adapters or {}
     frame = build_composite_signal(daily, df_1h, adapters)
+    for name, fn in reference_adapters.items():
+        if name not in frame.columns:
+            frame[name] = _fetch_adapter_series(name, fn, daily, df_1h)
 
     per_signal = {}
     per_signal_scorecard = {}
-    for name in adapters:
+    per_signal_split = {}
+    for name in list(adapters.keys()) + [n for n in reference_adapters if n not in adapters]:
         if name not in frame.columns or frame[name].dropna().empty:
             continue
         b = classify_single(frame[name])
@@ -336,6 +360,12 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
         # alone — lets each lens be judged on whether ITS OWN UP/DOWN read
         # is worth sizing off, before deciding the composite is needed.
         per_signal_scorecard[name] = lot_scheme_scorecard(table)
+        # Same early/late chronological check the composite gets below,
+        # scored off THIS indicator alone — the missing piece for any
+        # REFERENCE_ADAPTERS entry to graduate to DEFAULT_ADAPTERS.
+        per_signal_split[name] = split_validation(daily, b, horizon=horizon,
+                                                  call_pct=call_pct, put_pct=put_pct,
+                                                  tuesdays_only=tuesdays_only)
 
     composite_bucket = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree)
     composite_table = breach_by_bucket(daily, composite_bucket, horizon=horizon,
@@ -353,6 +383,7 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
         "frame": frame,
         "per_signal_breach": per_signal,
         "per_signal_scorecard": per_signal_scorecard,
+        "per_signal_split": per_signal_split,
         "composite_bucket": composite_bucket,
         "composite_breach": composite_table,
         "lot_scorecard": scorecard,

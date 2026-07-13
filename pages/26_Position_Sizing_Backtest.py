@@ -107,11 +107,21 @@ with c6:
 with c7:
     tuesdays_only = st.checkbox("Tuesdays only (anchor days)", value=True, key="p26_tue_only")
 
+include_bollinger = st.checkbox(
+    "Also test Bollinger %B Fade (reference-only — not in the composite yet)",
+    value=False, key="p26_include_bollinger",
+    help="Adds ps.REFERENCE_ADAPTERS['bollinger_fade'] to this run's per-indicator scoring, "
+         "including its own early/late split-validation (section 1b below). It does NOT join "
+         "the composite in section 2 — that only happens if you promote it to DEFAULT_ADAPTERS "
+         "in analytics/position_sizing_backtest.py once it clears the same bar the composite's "
+         "DOWN rule cleared: same breach-rate asymmetry direction in both halves.")
+
 if st.button("▶ Run position-sizing backtest", type="primary", key="p26_run"):
     st.session_state.p26_ran = True
     st.session_state.p26_inputs = dict(
         lookback=lookback, h1_days=h1_days, call_pct=call_pct, put_pct=put_pct,
         horizon=horizon, up_thresh=up_thresh, min_agree=min_agree, tuesdays_only=tuesdays_only,
+        include_bollinger=include_bollinger,
     )
 
 if not st.session_state.get("p26_ran"):
@@ -136,6 +146,7 @@ with st.spinner("Building composite signal and scoring buckets…"):
         daily, h1 if h1 is not None else pd.DataFrame(),
         horizon=_in["horizon"], call_pct=_in["call_pct"], put_pct=_in["put_pct"],
         up_thresh=_in["up_thresh"], min_agree=_in["min_agree"], tuesdays_only=_in["tuesdays_only"],
+        reference_adapters=ps.REFERENCE_ADAPTERS if _in.get("include_bollinger") else None,
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -175,6 +186,52 @@ else:
         st.download_button("⬇ Download all per-indicator tables CSV",
                            _per_signal_csv.to_csv(index=False).encode(),
                            "p26_per_indicator_breach.csv", key="p26_dl_per_signal")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1b · Per-indicator early/late split — the promotion bar for a reference adapter
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("1b · Per-indicator early half vs late half")
+st.caption("Same out-of-sample check section 2b gives the COMPOSITE, but scored off EACH "
+          "indicator alone. This is the exact bar a reference-only adapter (e.g. Bollinger %B "
+          "Fade, toggle above) needs to clear before it's safe to promote from "
+          "`REFERENCE_ADAPTERS` to `DEFAULT_ADAPTERS` in analytics/position_sizing_backtest.py: "
+          "the SAME call_breach%/put_breach% asymmetry direction in both the early and late half, "
+          "not just a whole-window average that could be one dominant stretch. If it flips or "
+          "disagrees between halves, it isn't confirmed yet — leave it as reference-only.")
+
+_psplit = result.get("per_signal_split", {})
+if not _psplit:
+    st.warning("No per-indicator split data — check daily/1H history loaded above.")
+else:
+    for name, split in _psplit.items():
+        if not split:
+            continue
+        st.markdown(f"**{name}**")
+        _cols = st.columns(len(split))
+        for _col, (_label, _seg) in zip(_cols, split.items()):
+            with _col:
+                st.markdown(f"*{_label.replace('_', ' ').title()}* ({_seg['span']}, n={_seg['n']})")
+                if _seg["table"].empty:
+                    st.caption("No cycles in any bucket at this threshold.")
+                else:
+                    _frozen(_seg["table"], height=140)
+
+    _split_parts = []
+    for name, split in _psplit.items():
+        for _label, _seg in split.items():
+            if _seg["table"].empty:
+                continue
+            _part = _seg["table"].reset_index()
+            _part.insert(0, "indicator", name)
+            _part.insert(1, "half", _label)
+            _part.insert(2, "span", _seg["span"])
+            _split_parts.append(_part)
+    if _split_parts:
+        _psplit_csv = pd.concat(_split_parts, ignore_index=True)
+        st.download_button("⬇ Download all per-indicator split tables CSV",
+                           _psplit_csv.to_csv(index=False).encode(),
+                           "p26_per_indicator_split.csv", key="p26_dl_per_signal_split")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2 · Composite signal — does combining lenses sharpen the gap?
