@@ -83,6 +83,28 @@ def get_nifty_spot() -> float:
 
 
 @st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_nifty_day_ohlc() -> tuple:
+    """Returns (day_high, day_low) for Nifty spot from Kite's intraday OHLC quote.
+    Both 0.0 on failure."""
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        quote = kite.quote([f"NSE:{NIFTY_INDEX_TOKEN}"])
+        for key in [str(NIFTY_INDEX_TOKEN), f"NSE:{NIFTY_INDEX_TOKEN}"]:
+            if key in quote:
+                ohlc = quote[key].get("ohlc") or {}
+                return float(ohlc.get("high", 0) or 0), float(ohlc.get("low", 0) or 0)
+        quote2 = kite.quote(["NSE:NIFTY 50"])
+        for key in ["NSE:NIFTY 50", "NIFTY 50"]:
+            if key in quote2:
+                ohlc = quote2[key].get("ohlc") or {}
+                return float(ohlc.get("high", 0) or 0), float(ohlc.get("low", 0) or 0)
+        return 0.0, 0.0
+    except Exception as e:
+        log.error("Day OHLC fetch failed: %s", e); return 0.0, 0.0
+
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
 def get_nifty_daily_live(days: int = 400) -> pd.DataFrame:
     """Same as get_nifty_daily but with short TTL for live RSI during market hours."""
     from data.kite_client import get_kite, get_kite_action

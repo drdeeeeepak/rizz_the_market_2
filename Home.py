@@ -44,6 +44,7 @@ from data.live_fetcher import (
     get_india_vix, get_vix_history, get_dual_expiry_chains,
     get_near_far_expiries, get_nifty_1h_phase,
     get_nifty_15m, get_nifty_30m, get_nifty_5m,
+    get_nifty_day_ohlc,
 )
 from analytics.compute_signals import compute_all_signals, load_saved_signals, save_signals
 import ui.components as ui
@@ -144,15 +145,34 @@ near_dte = chains.get("near_dte", 0)
 far_dte  = chains.get("far_dte",  7)
 atr14    = sig.get("atr14", 200)
 
-cols = st.columns(8)
+try:
+    day_high, day_low = get_nifty_day_ohlc()
+except Exception:
+    day_high, day_low = 0.0, 0.0
+
+cols = st.columns(10)
 with cols[0]: ui.metric_card("NIFTY SPOT", f"{spot:,.0f}", color="blue")
-with cols[1]: ui.metric_card("INDIA VIX",  f"{vix_live:.1f}", color="red" if vix_live>20 else "amber" if vix_live>16 else "green")
-with cols[2]: ui.metric_card("ATR14",      f"{atr14:.0f} pts")
-with cols[3]: ui.metric_card("NEAR DTE",   f"{near_dte}d", sub=str(near_exp), color="red" if near_dte<=2 else "default")
-with cols[4]: ui.metric_card("FAR DTE",    f"{far_dte}d",  sub=str(far_exp),  color="green")
-with cols[5]: ui.metric_card("NET SKEW",   f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0)>0 else "amber")
-with cols[6]: ui.metric_card("REGIME",     sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
-with cols[7]: ui.metric_card("SIZE MULT",  f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0)>=1.0 else "red")
+with cols[1]:
+    if day_low > 0 and spot > 0:
+        _from_low_pts = spot - day_low
+        _from_low_pct = _from_low_pts / day_low * 100
+        ui.metric_card("FROM DAY LOW", f"+{_from_low_pts:,.0f} pts", sub=f"+{_from_low_pct:.2f}% · low {day_low:,.0f}", color="green")
+    else:
+        ui.metric_card("FROM DAY LOW", "—")
+with cols[2]:
+    if day_high > 0 and spot > 0:
+        _from_high_pts = day_high - spot
+        _from_high_pct = _from_high_pts / day_high * 100
+        ui.metric_card("FROM DAY HIGH", f"-{_from_high_pts:,.0f} pts", sub=f"-{_from_high_pct:.2f}% · high {day_high:,.0f}", color="red")
+    else:
+        ui.metric_card("FROM DAY HIGH", "—")
+with cols[3]: ui.metric_card("INDIA VIX",  f"{vix_live:.1f}", color="red" if vix_live>20 else "amber" if vix_live>16 else "green")
+with cols[4]: ui.metric_card("ATR14",      f"{atr14:.0f} pts")
+with cols[5]: ui.metric_card("NEAR DTE",   f"{near_dte}d", sub=str(near_exp), color="red" if near_dte<=2 else "default")
+with cols[6]: ui.metric_card("FAR DTE",    f"{far_dte}d",  sub=str(far_exp),  color="green")
+with cols[7]: ui.metric_card("NET SKEW",   f"{sig.get('net_skew',0):+.0f}", sub="CE-PE safety", color="green" if sig.get("net_skew",0)>0 else "amber")
+with cols[8]: ui.metric_card("REGIME",     sig.get("cr_regime", sig.get("p2_regime","—")), sub="EMA cluster")
+with cols[9]: ui.metric_card("SIZE MULT",  f"{sig.get('size_multiplier',1.0):.0%}", sub="VIX-based", color="green" if sig.get("size_multiplier",1.0)>=1.0 else "red")
 
 st.divider()
 
