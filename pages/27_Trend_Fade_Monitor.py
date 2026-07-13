@@ -108,7 +108,8 @@ for name, info in snap["per_indicator"].items():
         "says": _label.get(info["bucket"], info["bucket"]),
         "strength (-1 to +1)": info["value"] if info["value"] is not None else "—",
     })
-st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
+            column_config={"strength (-1 to +1)": st.column_config.NumberColumn(format="%.1f")})
 st.caption("Strength runs roughly -1 (strongly bearish) to +1 (strongly bullish) for that signal "
            "alone. The headline above is these 5 combined, not a simple vote.")
 
@@ -166,6 +167,8 @@ else:
               .map(_colour_signal, subset=_signal_cols)
               .map(_colour_reading, subset=["day's reading"])
               .map(_colour_chg, subset=["chg pts"]))
-    st.dataframe(styled, hide_index=True, use_container_width=True, height=420)
+    _num_cols = ["close", "chg pts"] + _signal_cols
+    st.dataframe(styled, hide_index=True, use_container_width=True, height=420,
+                column_config={c: st.column_config.NumberColumn(format="%.1f") for c in _num_cols})
     st.caption("Signal columns range roughly -1 (strongly bearish, deep red) to +1 (strongly "
                "bullish, deep green); white/pale means close to neutral.")
