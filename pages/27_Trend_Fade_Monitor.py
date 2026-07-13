@@ -208,8 +208,20 @@ if h1 is not None and not h1.empty:
         if colour:
             fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1), fillcolor=colour, line_width=0)
 
-    fig.update_layout(height=500, xaxis_rangeslider_visible=False, plot_bgcolor="white",
-                      margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty")
-    st.plotly_chart(fig, use_container_width=True)
+    # dragmode="pan": one-finger/mouse drag PANS (like a charting app); zoom happens via
+    # pinch, mouse wheel (scrollZoom below), the axis-drag trick, or the toolbar buttons —
+    # this combo is what actually needs stating explicitly, Plotly's defaults leave drag as
+    # box-zoom instead, which fights with pinch-zoom on touch.
+    fig.update_layout(height=500, xaxis_rangeslider_visible=True, plot_bgcolor="white",
+                      margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty",
+                      dragmode="pan")
+    fig.update_yaxes(fixedrange=False)   # explicit: dragging the Y-axis itself zooms just that axis
+    fig.update_xaxes(fixedrange=False)
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"scrollZoom": True, "displayModeBar": True,
+                           "modeBarButtonsToAdd": ["zoomIn2d", "zoomOut2d", "autoScale2d"]})
+    st.caption("Pinch or scroll to zoom, drag to pan, drag directly on an axis to stretch/shrink "
+               "just that axis, double-tap/double-click to reset. The mini strip below the chart "
+               "is a range slider — drag its edges to zoom the whole chart to a date range.")
 else:
     st.info("Not enough hourly data to draw the chart.")
