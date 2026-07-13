@@ -397,7 +397,7 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
             continue
         val = float(val)
         b = "UP" if val >= 0.3 else "DOWN" if val <= -0.3 else "NEUTRAL"
-        per_indicator[name] = {"value": round(val, 2), "bucket": b}
+        per_indicator[name] = {"value": round(val, 1), "bucket": b}
 
     composite_val = float(last["composite"]) if pd.notna(last["composite"]) else 0.0
     agree = int(last["agree_count"]) if pd.notna(last["agree_count"]) else 0
@@ -475,7 +475,7 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
         row_dict = {"time": ts.strftime("%d-%b %H:%M"), "close": round(close, 1), "chg pts": chg}
         for name in indicator_names:
             v = frame.loc[day, name] if day in frame.index else None
-            row_dict[name.replace("_", " ")] = round(float(v), 2) if pd.notna(v) else None
+            row_dict[name.replace("_", " ")] = round(float(v), 1) if pd.notna(v) else None
 
         reading = bucket_series.get(day, "—")
         ac = frame.loc[day, "agree_count"] if day in frame.index else None
