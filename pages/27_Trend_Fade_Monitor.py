@@ -21,32 +21,32 @@ except Exception:
 
 st.set_page_config(page_title="P27 · Trend Fade Monitor", layout="wide")
 st.title("Page 27 — Trend Fade Monitor")
-st.caption("Live reading of 5 trend signals, one by one and combined, for today — "
+st.caption("Live reading of 6 trend signals, one by one and combined, for today — "
            "plus recent hourly price for context.")
 
-st.success("🟢 **GREEN shading = a sell-2-PUTS : 1-CALL day.** Fires on EITHER of two independently "
-          "confirmed triggers: a confirmed DOWNTREND from the 5-signal composite, OR Bollinger %B "
-          "fade's own validated (oversold) reading. That's the only colour that means anything on "
-          "this page — no shading, no change to your normal sizing.")
+st.success("🟢 **GREEN shading = confirmed DOWNTREND day = sell 2 PUTS : 1 CALL.** "
+          "That's the only colour that means anything on this page — no shading, "
+          "no change to your normal sizing.")
 
 with st.expander("What this page is telling you", expanded=True):
     st.markdown(
-        "- **5 signals watch the market from different angles** (swing structure, moving-average "
-        "trend, support/resistance count, RSI momentum, SuperTrend). Each one says UP, DOWN, or "
-        "no clear read.\n"
+        "- **6 signals watch the market from different angles** (swing structure, moving-average "
+        "trend, support/resistance count, RSI momentum, SuperTrend, Bollinger %B fade). Each one "
+        "says UP, DOWN, or no clear read.\n"
         "- **The \"combined\" reading only fires when several of them agree.** One signal alone "
         "saying UP or DOWN isn't enough — it needs backup from the others.\n"
-        "- **A confirmed DOWN reading from the 5-signal composite has been shown to matter.** When "
-        "we tested it on real history, a confirmed downtrend reading was reliably followed by the "
-        "CALL side getting tested more than the put side — checked twice, on two separate stretches "
-        "of time, same result both times. So on a confirmed DOWN day, it can make sense to sell "
-        "more puts than calls.\n"
-        "- **A confirmed UP reading from the composite is NOT proven yet** — it looked promising in "
-        "one test but not in the other, so treat it as informational only, not something to act on.\n"
-        "- **Bollinger %B fade adds a SECOND, independent trigger for the same action** (sell more "
-        "puts) — but only its oversold reading, which Page 26's early/late split-check confirmed "
-        "the same way (call side tested more, both halves). Its overbought reading stayed noise-"
-        "level in the first half of history and is never used, no matter how strong it looks live.\n"
+        "- **Only a confirmed DOWN reading has been shown to actually matter.** When we tested "
+        "it on real history, a confirmed downtrend reading was reliably followed by the CALL side "
+        "getting tested more than the put side — checked twice, on two separate stretches of time, "
+        "same result both times. So on a confirmed DOWN day, it can make sense to sell more puts "
+        "than calls.\n"
+        "- **A confirmed UP reading is NOT proven yet** — it looked promising in one test but not "
+        "in the other, so treat it as informational only, not something to act on.\n"
+        "- **Bollinger %B fade joined this composite** after its OWN early/late split-check on "
+        "page 26 confirmed it: its oversold reading showed the same call-tested-more asymmetry, "
+        "in both history halves. It's sign-flipped internally so that confirmed reading lines up "
+        "with this composite's DOWN convention — see `_bollinger_fade_composite_adapter` in "
+        "`analytics/position_sizing_backtest.py`.\n"
         "- **This page never shows profit or loss.** There's no price-history data for options in "
         "this app, only whether a strike got touched — so everything here is about which side is "
         "more likely to get tested, not how much money it made or lost.")
@@ -101,16 +101,9 @@ sc1.metric("Suggested CALL lots today", snap["suggested_lots_ce"])
 sc2.metric("Suggested PUT lots today", snap["suggested_lots_pe"])
 sc3.metric("Your usual default", "2 CALL : 1 PUT")
 
-if not snap["sell_more_puts"]:
+if snap["bucket"] != "DOWN":
     st.caption("Suggestion matches your usual default — this only changes on a confirmed "
-               "downtrend day (composite) or a confirmed Bollinger fade oversold reading.")
-else:
-    _reasons = []
-    if snap["bucket"] == "DOWN":
-        _reasons.append("5-signal composite reads a confirmed downtrend")
-    if snap["bollinger_confirmed"]:
-        _reasons.append("Bollinger %B fade's validated (oversold) reading is firing")
-    st.caption(f"Sizing changed because: {'; '.join(_reasons)}.")
+               "downtrend day.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Live intraday check — genuinely updates every hour, unlike the reading above
@@ -167,51 +160,33 @@ for name, info in snap["per_indicator"].items():
 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
             column_config={"strength (-1 to +1)": st.column_config.NumberColumn(format="%.1f")})
 st.caption("Strength runs roughly -1 (strongly bearish) to +1 (strongly bullish) for that signal "
-           "alone. The headline above is these 5 combined, not a simple vote.")
-
-if snap.get("reference"):
-    st.markdown("**Bollinger %B fade — only its validated (oversold) reading affects sizing above**")
-    ref_rows = []
-    for name, info in snap["reference"].items():
-        ref_rows.append({
-            "signal": name.replace("_", " ").title(),
-            "says": _label.get(info["bucket"], info["bucket"]),
-            "strength (-1 to +1)": info["value"] if info["value"] is not None else "—",
-        })
-    st.dataframe(pd.DataFrame(ref_rows), hide_index=True, use_container_width=True,
-                column_config={"strength (-1 to +1)": st.column_config.NumberColumn(format="%.1f")})
-    st.caption("Read as mean-reversion (fade) — already built that way elsewhere in this app. Page "
-               "26's early/late split-check confirmed the OVERSOLD reading (shown as 'Uptrend' "
-               "above, since it's coded as a positive/bullish score) the same way the composite's "
-               "DOWN rule is confirmed: call side tested more, in BOTH history halves. That reading "
-               "now ALSO triggers the sell-2-puts call above, independently of the composite. The "
-               "OVERBOUGHT reading ('Downtrend' above) stayed noise-level in the first half of "
-               "history and is never consulted, no matter how it reads today.")
+           "alone. Bollinger %B fade's row is sign-flipped so its confirmed (oversold) reading "
+           "shows as 'Downtrend' here, matching the direction the composite actually validated — "
+           "see the page-level note above. The headline above is these 6 combined, not a simple "
+           "vote.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Last 3 days, hourly
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("Last 10 days, hour by hour")
-st.caption("Day's reading and agreement come right after price. The 'sell 2P:1C' column is the "
-           "SAME combined call as the headline above (composite DOWN OR Bollinger fade confirmed) "
-           "— green means YES on that column, the validated sell-more-puts setup. Everything else "
-           "is plain, no colour.")
-st.caption("Why every hour in a day shows the same number: none of these 5 signals look at the "
+st.caption("Day's reading and agreement come right after price — green means that day's reading "
+           "is DOWN, the validated \"sell 2 puts\" setup. Everything else is plain, no colour.")
+st.caption("Why every hour in a day shows the same number: none of these 6 signals look at the "
            "market during the day. Each one only checks ONCE — after trading ends at 3:30pm — and "
            "makes its call using that day's final closing price. So the reading for, say, Tuesday "
            "9:15am and Tuesday 2:15pm is identical, because both are showing \"what Tuesday's "
            "close said,\" and neither hour has a closing price of its own yet. The number will "
            "only change once the NEXT day closes.")
 
-hist = ps.hourly_history_table(h1, snap["frame"], days=10, daily=daily)
+hist = ps.hourly_history_table(h1, snap["frame"], days=10)
 
 if hist.empty:
     st.info("Not enough hourly data to show recent history.")
 else:
-    _fixed_cols = ["time", "close", "chg pts", "day's reading", "agreement", "sell 2P:1C"]
-    _signal_cols = [c for c in hist.columns if c not in _fixed_cols]
-    hist = hist[[c for c in _fixed_cols if c in hist.columns] + _signal_cols]
+    _signal_cols = [c for c in hist.columns
+                    if c not in ("time", "close", "chg pts", "day's reading", "agreement")]
+    hist = hist[["time", "close", "chg pts", "day's reading", "agreement"] + _signal_cols]
 
     def _colour_signal(val):
         try:
@@ -242,17 +217,10 @@ else:
             return "background-color:#16a34a; color:#ffffff; font-weight:600;"
         return ""
 
-    def _colour_sell_puts(val):
-        if val == "YES":
-            return "background-color:#16a34a; color:#ffffff; font-weight:600;"
-        return ""
-
     styled = (hist.style
               .map(_colour_signal, subset=_signal_cols)
               .map(_colour_chg, subset=["chg pts"])
               .map(_colour_reading, subset=["day's reading"]))
-    if "sell 2P:1C" in hist.columns:
-        styled = styled.map(_colour_sell_puts, subset=["sell 2P:1C"])
     _num_cols = ["close", "chg pts"] + _signal_cols
     st.dataframe(styled, hide_index=True, use_container_width=True, height=420,
                 column_config={c: st.column_config.NumberColumn(format="%.1f") for c in _num_cols})
@@ -262,9 +230,9 @@ else:
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("10-day hourly chart")
-st.caption("Real hourly price candles. **Shaded background = a sell-2-puts day** — composite "
-           "DOWN or Bollinger fade confirmed, same combined call as the headline above. No "
-           "shading = no action, default sizing.")
+st.caption("Real hourly price candles. **Shaded background = confirmed downtrend day — the "
+           "validated 2-puts setup.** No shading = no action (either uptrend or no clear read; "
+           "neither changes your default sizing).")
 
 CHART_DAYS = 10
 if h1 is not None and not h1.empty:
@@ -277,7 +245,6 @@ if h1 is not None and not h1.empty:
     h1c = h1c[h1c.index.normalize().isin(set(chart_days))]
 
     bucket_series = ps.classify_composite(snap["frame"])
-    bfade_series = ps.bollinger_fade_confirmed_series(daily)
 
     # Position candles by ROW INDEX, not real time. A real-time x-axis leaves a visible
     # blank gap for every night, weekend, and holiday (Kite simply has no data for those

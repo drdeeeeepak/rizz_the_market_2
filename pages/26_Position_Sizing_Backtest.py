@@ -44,12 +44,15 @@ with st.expander("⚠️ What this is (and its limits) — read once", expanded=
         "- **Tuesdays-only** by default: the sizing decision is made ONCE per cycle, at Tuesday "
         "EOD anchor (`data/rolled_positions.py: set_expiry_anchor`) — every other day would score "
         "a hypothetical cycle that was never actually entered.\n"
-        "- **Composite signal** = mean of 5 existing adapters (Dow Theory structure, EMA Ribbon "
-        "regime, EMA Moat Balance, RSI weekly/daily alignment, daily SuperTrend), reusing the "
-        "SAME pure engine functions `analytics/signal_lab.py` already ranks individually — this "
-        "page only adds the combine-and-bucket step on top. A bucket only reads UP/DOWN if the "
-        "composite clears `up_thresh` AND at least `min_agree` adapters independently agree — "
-        "one lens alone never flips the recommendation.\n"
+        "- **Composite signal** = mean of 6 adapters (Dow Theory structure, EMA Ribbon regime, "
+        "EMA Moat Balance, RSI weekly/daily alignment, daily SuperTrend, Bollinger %B fade), "
+        "reusing the SAME pure engine functions `analytics/signal_lab.py` already ranks "
+        "individually — this page only adds the combine-and-bucket step on top. Bollinger fade "
+        "is sign-flipped before joining the mean (`_bollinger_fade_composite_adapter`) so its "
+        "OWN validated (oversold) reading aligns with this composite's DOWN convention — see the "
+        "comment above `DEFAULT_ADAPTERS` in `analytics/position_sizing_backtest.py` for why. A "
+        "bucket only reads UP/DOWN if the composite clears `up_thresh` AND at least `min_agree` "
+        "adapters independently agree — one lens alone never flips the recommendation.\n"
         "- 1H history (needed for Dow Theory) is capped by Kite's 60-minute history limit, same "
         "as pages 22/23 — pick a lookback within that cap.")
 
@@ -103,30 +106,20 @@ with c4:
 with c5:
     up_thresh = st.slider("Composite UP/DOWN threshold", 0.1, 0.8, 0.4, 0.05, key="p26_up_thresh")
 with c6:
-    min_agree = st.slider("Min adapters agreeing", 1, 5, 3, key="p26_min_agree")
+    min_agree = st.slider("Min adapters agreeing", 1, 6, 3, key="p26_min_agree")
 with c7:
     tuesdays_only = st.checkbox("Tuesdays only (anchor days)", value=True, key="p26_tue_only")
-
-include_bollinger = st.checkbox(
-    "Also test Bollinger %B Fade (reference-only — not in the composite yet)",
-    value=False, key="p26_include_bollinger",
-    help="Adds ps.REFERENCE_ADAPTERS['bollinger_fade'] to this run's per-indicator scoring, "
-         "including its own early/late split-validation (section 1b below). It does NOT join "
-         "the composite in section 2 — that only happens if you promote it to DEFAULT_ADAPTERS "
-         "in analytics/position_sizing_backtest.py once it clears the same bar the composite's "
-         "DOWN rule cleared: same breach-rate asymmetry direction in both halves.")
 
 if st.button("▶ Run position-sizing backtest", type="primary", key="p26_run"):
     st.session_state.p26_ran = True
     st.session_state.p26_inputs = dict(
         lookback=lookback, h1_days=h1_days, call_pct=call_pct, put_pct=put_pct,
         horizon=horizon, up_thresh=up_thresh, min_agree=min_agree, tuesdays_only=tuesdays_only,
-        include_bollinger=include_bollinger,
     )
 
 if not st.session_state.get("p26_ran"):
     st.info("Pick your lookback and thresholds, then click Run. First run pulls daily + 1H "
-            "candles and scores 5 adapters individually plus their composite (~15-30s).")
+            "candles and scores 6 adapters individually plus their composite (~15-30s).")
     st.stop()
 
 _in = st.session_state.p26_inputs
@@ -146,7 +139,6 @@ with st.spinner("Building composite signal and scoring buckets…"):
         daily, h1 if h1 is not None else pd.DataFrame(),
         horizon=_in["horizon"], call_pct=_in["call_pct"], put_pct=_in["put_pct"],
         up_thresh=_in["up_thresh"], min_agree=_in["min_agree"], tuesdays_only=_in["tuesdays_only"],
-        reference_adapters=ps.REFERENCE_ADAPTERS if _in.get("include_bollinger") else None,
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -188,17 +180,18 @@ else:
                            "p26_per_indicator_breach.csv", key="p26_dl_per_signal")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1b · Per-indicator early/late split — the promotion bar for a reference adapter
+# 1b · Per-indicator early/late split — the promotion bar for a candidate adapter
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("1b · Per-indicator early half vs late half")
 st.caption("Same out-of-sample check section 2b gives the COMPOSITE, but scored off EACH "
-          "indicator alone. This is the exact bar a reference-only adapter (e.g. Bollinger %B "
-          "Fade, toggle above) needs to clear before it's safe to promote from "
-          "`REFERENCE_ADAPTERS` to `DEFAULT_ADAPTERS` in analytics/position_sizing_backtest.py: "
-          "the SAME call_breach%/put_breach% asymmetry direction in both the early and late half, "
-          "not just a whole-window average that could be one dominant stretch. If it flips or "
-          "disagrees between halves, it isn't confirmed yet — leave it as reference-only.")
+          "indicator alone (now including bollinger_fade, promoted into DEFAULT_ADAPTERS after "
+          "clearing this exact bar). This is what ANY future candidate signal needs to clear "
+          "before it's safe to promote — same direction call_breach%/put_breach% asymmetry in "
+          "BOTH the early and late half, not just a whole-window average that could be one "
+          "dominant stretch. Add a candidate to `REFERENCE_ADAPTERS` in "
+          "analytics/position_sizing_backtest.py and pass it via this function's "
+          "`reference_adapters` argument to test it here without touching the composite.")
 
 _psplit = result.get("per_signal_split", {})
 if not _psplit:

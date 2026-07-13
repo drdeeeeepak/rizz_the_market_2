@@ -31,35 +31,45 @@ from analytics import signal_adapters as sa
 # adapter that was already purpose-built for skewed-IC lot/strike guidance
 # (DowTheoryEngine.ic_shape emits "1:2 — CE further" on UPTREND today) —
 # kept first in the dict for that reason, not because it's weighted higher.
+#
+# bollinger_fade was promoted here from REFERENCE_ADAPTERS after Page 26's
+# split_validation confirmed it: adapt_bollinger_pctb reads POSITIVE on
+# oversold (%B low) and this direction showed the SAME "call side tested
+# more" asymmetry as this composite's own DOWN rule, in BOTH history halves
+# (Page 26 per-indicator split run). Its OTHER (overbought/negative) reading
+# stayed noise-level in the first half and was never confirmed.
+#
+# _bollinger_fade_composite_adapter flips that sign before it joins the mean/
+# agreement math below: this composite's OWN convention is negative=bearish/
+# DOWN=the validated "sell more puts" side, the OPPOSITE of adapt_bollinger_
+# pctb's own mean-reversion convention (positive=oversold=confirmed). Without
+# the flip, the CONFIRMED oversold reading would incorrectly count toward
+# UP agreement (never acted on) and the UNCONFIRMED overbought reading would
+# incorrectly count toward DOWN (the one rule this app actually trusts). With
+# the flip: confirmed-oversold -> negative -> can only ever help DOWN agree,
+# unconfirmed-overbought -> positive -> can only ever help UP agree (already
+# informational-only) — so the unvalidated half can never influence the
+# sell-2-puts call, structurally, not just by convention.
+def _bollinger_fade_composite_adapter(daily: pd.DataFrame) -> pd.Series:
+    sig = sa.adapt_bollinger_pctb(daily)
+    return -sig if sig is not None else sig
+
+
 DEFAULT_ADAPTERS = {
     "dow_theory":       sa.adapt_dow_theory,
     "ema_ribbon":       sa.adapt_ema_ribbon,
     "ema_moat_balance": sa.adapt_ema_moat_balance,
     "rsi_alignment":    sa.adapt_rsi_alignment,
     "supertrend":       sa.adapt_supertrend,
+    "bollinger_fade":   _bollinger_fade_composite_adapter,
 }
 _NEEDS_1H = {"dow_theory"}
 
-# Shown for CONTEXT only — deliberately NOT part of DEFAULT_ADAPTERS, so it
-# never influences the composite/bucket that drives the "sell 2 puts" call.
-# Pages 24 and 25's rules don't fit here at all: they answer different
-# questions in a different shape (page 24 = "is a FRESH short safe right
-# now," a one-off entry check; page 25 = roll/drift thresholds on an
-# EXISTING position) — neither produces the one-value-per-day directional
-# reading this module's SIGNAL CONTRACT needs, so there's nothing to plug
-# in. Page 26 IS this module — it's the backtest that validated the DOWN
-# rule above, not a separate signal to add on top of it.
-# Bollinger IS directly compatible — analytics/signal_adapters.py already
-# has it in this exact daily-directional shape, and adapt_bollinger_pctb is
-# ALREADY built mean-reversion (fade) framed, a natural fit for this app's
-# whole "fade a confirmed trend" thesis. It just hasn't been through
-# split_validation (see Page 26) yet, so it stays a reference-only reading
-# here until it has — adding it straight to DEFAULT_ADAPTERS would silently
-# invalidate the two-halves confirmation that's the only reason the DOWN
-# rule is trusted at all.
-REFERENCE_ADAPTERS = {
-    "bollinger_fade": sa.adapt_bollinger_pctb,
-}
+# Kept as an empty registry (not removed) — the reusable pattern for testing
+# a FUTURE candidate signal through Page 26's per-signal split_validation
+# before deciding whether to promote it into DEFAULT_ADAPTERS, exactly how
+# bollinger_fade itself was validated before landing above.
+REFERENCE_ADAPTERS = {}
 
 
 def _norm_idx(idx) -> pd.DatetimeIndex:
@@ -427,47 +437,6 @@ def grade_ripeness(bucket: str, agree_count: int) -> str:
     return f"{strength} {bucket} — {_GRADE_NOTE.get(bucket, 'unrecognized bucket')}"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Bollinger %B fade — the ONE validated reading, wired into the live sell-put
-# call as a second, independent trigger (Page 26's split_validation run:
-# call_breach% > put_breach% in BOTH history halves when this fires — same
-# shape as the composite's DOWN rule, so it earns the same "sell 2 puts : 1
-# call" action). Bollinger's OTHER reading (overbought / "DOWN" by the same
-# >=0.3 / <=-0.3 convention used everywhere else in this module) stayed
-# noise-level in the early half (3.3% vs 3.7% — essentially a coin flip) and
-# is deliberately never consulted here.
-# ══════════════════════════════════════════════════════════════════════════════
-
-def bollinger_fade_confirmed_series(daily: pd.DataFrame) -> pd.Series:
-    """TRUE only on the validated Bollinger %B fade reading (oversold, %B
-    low — coded as a positive/'>=0.3' signal by adapt_bollinger_pctb's own
-    mean-reversion framing), for every historical day at once. Never true on
-    the unvalidated overbought/negative reading, regardless of how strong
-    that reading looks. Used by both live_snapshot (last value) and
-    hourly_history_table / page 27's chart (full series, so past rows colour
-    consistently with today's live rule)."""
-    sig = sa.adapt_bollinger_pctb(daily)
-    if sig is None or sig.empty:
-        return pd.Series(dtype=bool)
-    idx = _norm_idx(sig.index)
-    out = pd.Series((sig >= 0.3).to_numpy(), index=idx)
-    return out[~out.index.duplicated(keep="last")]
-
-
-def sell_more_puts_decision(composite_bucket, bollinger_confirmed) -> bool:
-    """Single combined rule used by BOTH live_snapshot (today) and
-    hourly_history_table (history), so the two views can never disagree:
-    sell 2 PUTS : 1 CALL if EITHER the composite reads DOWN OR Bollinger
-    fade's own validated direction fires — an OR, because each is
-    independently-confirmed evidence for the same action, not a joint
-    requirement. Accepts either a scalar bucket/bool pair (today) or two
-    aligned pandas Series (history)."""
-    is_down = composite_bucket == "DOWN"   # vectorizes fine whether this is a scalar or a Series
-    if isinstance(is_down, pd.Series):
-        return is_down | bollinger_confirmed
-    return bool(is_down or bollinger_confirmed)
-
-
 def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0.4,
                    min_agree: int = 3, adapters: dict = None,
                    reference_adapters: dict = None) -> dict:
@@ -531,14 +500,7 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
     else:
         bucket = "NEUTRAL"
 
-    # Bollinger fade's OWN validated reading (see sell_more_puts_decision's
-    # docstring) can ALSO trigger the sell-2-puts call, independently of the
-    # composite bucket above — computed here from `reference` (already
-    # fetched above) rather than re-running the adapter.
-    bollinger_confirmed = reference.get("bollinger_fade", {}).get("bucket") == "UP"
-    sell_more_puts = sell_more_puts_decision(bucket, bollinger_confirmed)
-    lots_ce, lots_pe = LOT_SCHEMES["flip_calibrated"]["DOWN"] if sell_more_puts \
-        else LOT_SCHEMES["flip_calibrated"].get(bucket, (2, 1))
+    lots_ce, lots_pe = LOT_SCHEMES["flip_calibrated"].get(bucket, (2, 1))
 
     return {
         "as_of": str(as_of.date()) if hasattr(as_of, "date") else str(as_of),
@@ -548,8 +510,6 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
         "n_signals": n_sig,
         "bucket": bucket,
         "grade": grade_ripeness(bucket, agree),
-        "bollinger_confirmed": bollinger_confirmed,
-        "sell_more_puts": sell_more_puts,
         "suggested_lots_ce": lots_ce,
         "suggested_lots_pe": lots_pe,
         "frame": frame,
@@ -559,25 +519,17 @@ def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0
 
 def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float = 0.4,
                           min_agree: int = 3, days: int = 3,
-                          adapters: dict = None, daily: pd.DataFrame = None) -> pd.DataFrame:
+                          adapters: dict = None) -> pd.DataFrame:
     """Last `days` TRADING days of hourly candles, newest first, each hour
-    tagged with that CALENDAR day's reading — both the 5 individual
-    indicator VALUES and the combined day's reading / agreement count. The
-    signals are a once-per-day (EOD) read, not an intraday one, so every
-    hour inside the same trading day carries the SAME values — this table
-    exists to show recent price action next to what each signal said on
-    that day, not to imply any of them update hourly. Uses
-    classify_composite (the SAME function live_snapshot's bucket and every
-    backtest bucket table already use) so the reading column always matches
-    the rest of the app.
-
-    `daily` (optional, pass the same daily OHLCV live_snapshot used) adds a
-    'sell 2P:1C' column via the SAME sell_more_puts_decision live_snapshot
-    uses — Bollinger fade's validated reading can mark a day as a sell-more-
-    puts day even when the 5-signal composite alone reads NEUTRAL/UP, so
-    this keeps the history table consistent with today's live call instead
-    of silently under-reporting it. Omit `daily` to skip this column
-    entirely (backward compatible)."""
+    tagged with that CALENDAR day's reading — both the individual indicator
+    VALUES (now 6, including bollinger_fade) and the combined day's reading /
+    agreement count. The signals are a once-per-day (EOD) read, not an
+    intraday one, so every hour inside the same trading day carries the SAME
+    values — this table exists to show recent price action next to what
+    each signal said on that day, not to imply any of them update hourly.
+    Uses classify_composite (the SAME function live_snapshot's bucket and
+    every backtest bucket table already use) so the reading column always
+    matches the rest of the app."""
     if h1 is None or h1.empty or frame.empty:
         return pd.DataFrame()
 
@@ -600,7 +552,6 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
     adapters = adapters or DEFAULT_ADAPTERS
     indicator_names = [n for n in adapters if n in frame.columns]
     bucket_series = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree)
-    bfade_series = bollinger_fade_confirmed_series(daily) if daily is not None else None
 
     rows = []
     prev_close = None
@@ -620,9 +571,6 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
         ns = frame.loc[day, "n_signals"] if day in frame.index else None
         row_dict["day's reading"] = reading
         row_dict["agreement"] = f"{int(ac)}/{int(ns)}" if pd.notna(ac) and pd.notna(ns) else "—"
-        if bfade_series is not None:
-            bfade_today = bool(bfade_series.get(day, False))
-            row_dict["sell 2P:1C"] = "YES" if sell_more_puts_decision(reading, bfade_today) else "no"
         rows.append(row_dict)
 
     out = pd.DataFrame(rows)
