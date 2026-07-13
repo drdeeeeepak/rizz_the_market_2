@@ -446,6 +446,11 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
 
     d = h1.copy()
     d.index = pd.to_datetime(d.index)
+    if getattr(d.index, "tz", None) is not None:
+        d.index = d.index.tz_localize(None)   # match frame's tz-naive index (_norm_idx) — Kite
+                                                # returns tz-aware timestamps, frame does not, so
+                                                # every `day in frame.index` lookup below silently
+                                                # failed and every signal column came back None.
     d = d.sort_index()
     all_days = sorted(set(d.index.normalize()))
     if not all_days:
