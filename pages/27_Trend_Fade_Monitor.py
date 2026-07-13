@@ -7,6 +7,7 @@
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
 import importlib
 import data.live_fetcher as _lf
@@ -172,3 +173,43 @@ else:
                 column_config={c: st.column_config.NumberColumn(format="%.1f") for c in _num_cols})
     st.caption("Signal columns range roughly -1 (strongly bearish, deep red) to +1 (strongly "
                "bullish, deep green); white/pale means close to neutral.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 15-day hourly chart
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("15-day hourly chart")
+st.caption("Real hourly price candles with each trading day shaded by that day's reading — "
+           "**red = confirmed downtrend day (the validated 2-puts setup)**, green = confirmed "
+           "uptrend day (no proven sizing edge — shown for reference only), no shading = no "
+           "clear read that day.")
+
+CHART_DAYS = 15
+if h1 is not None and not h1.empty:
+    h1c = h1.copy()
+    h1c.index = pd.to_datetime(h1c.index)
+    if getattr(h1c.index, "tz", None) is not None:
+        h1c.index = h1c.index.tz_localize(None)
+    h1c = h1c.sort_index()
+    chart_days = sorted(set(h1c.index.normalize()))[-CHART_DAYS:]
+    h1c = h1c[h1c.index.normalize().isin(set(chart_days))]
+
+    bucket_series = ps.classify_composite(snap["frame"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=h1c.index, open=h1c["open"], high=h1c["high"], low=h1c["low"], close=h1c["close"],
+        name="Nifty", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
+        showlegend=False))
+
+    _shade = {"UP": "rgba(22,163,74,0.14)", "DOWN": "rgba(220,38,38,0.14)"}
+    for day in chart_days:
+        colour = _shade.get(bucket_series.get(day, "NEUTRAL"))
+        if colour:
+            fig.add_vrect(x0=day, x1=day + pd.Timedelta(days=1), fillcolor=colour, line_width=0)
+
+    fig.update_layout(height=500, xaxis_rangeslider_visible=False, plot_bgcolor="white",
+                      margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Nifty")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Not enough hourly data to draw the chart.")
