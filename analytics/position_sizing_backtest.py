@@ -342,3 +342,86 @@ def run_position_sizing_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
             "tuesdays_only": tuesdays_only,
         },
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Live snapshot — TODAY's reading, not a backtest
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Only the DOWN read has cleared BOTH validation bars this app has actually
+# run: the full ~4-year window (docs/PAGE_26_WORKFLOW.md) AND an early/late
+# chronological split (split_validation) confirming the SAME direction in
+# two independent halves — call breaches more than put when the composite
+# reads DOWN. The UP read showed the mirror pattern in the early half but
+# was inconclusive (zero breaches either side) in the late half — shown for
+# completeness, never labeled as a confirmed edge.
+_GRADE_NOTE = {
+    "DOWN": "fade setup — historically the CALL side gets tested more this week (confirmed in both an early and a late independent half of the backtest)",
+    "UP":   "read only — NOT validated as a sizing edge (confirmed in one half of the backtest, inconclusive in the other). Keep default sizing.",
+    "NEUTRAL": "no confirmed trend read today — keep default sizing.",
+}
+
+
+def grade_ripeness(bucket: str, agree_count: int) -> str:
+    """Human label for how STRONGLY today's composite reading is confirmed
+    (agreement count, not a claim of profitability by itself) plus the
+    validation status note for that bucket. STRONG/MODERATE/WEAK reflects
+    only how many of the 5 adapters agree — see _GRADE_NOTE for whether
+    that bucket has actually earned a sizing change in this app's own
+    backtest."""
+    if bucket == "NEUTRAL":
+        return f"NOT RIPE — {_GRADE_NOTE['NEUTRAL']}"
+    strength = "STRONG" if agree_count >= 4 else "MODERATE" if agree_count >= 3 else "WEAK"
+    return f"{strength} {bucket} — {_GRADE_NOTE.get(bucket, 'unrecognized bucket')}"
+
+
+def live_snapshot(daily: pd.DataFrame, df_1h: pd.DataFrame, up_thresh: float = 0.4,
+                   min_agree: int = 3, adapters: dict = None) -> dict:
+    """TODAY's reading only — the live counterpart to run_position_sizing_backtest's
+    historical scoring. Same build_composite_signal() used everywhere else in
+    this module, just reading the LAST row instead of scoring history. Returns
+    {} if there's no usable data (e.g. daily/1H both empty)."""
+    adapters = adapters or DEFAULT_ADAPTERS
+    frame = build_composite_signal(daily, df_1h, adapters)
+    if frame.empty:
+        return {}
+
+    last = frame.iloc[-1]
+    as_of = frame.index[-1]
+
+    per_indicator = {}
+    for name in adapters:
+        val = last.get(name)
+        if pd.isna(val):
+            per_indicator[name] = {"value": None, "bucket": "NO DATA"}
+            continue
+        val = float(val)
+        b = "UP" if val >= 0.3 else "DOWN" if val <= -0.3 else "NEUTRAL"
+        per_indicator[name] = {"value": round(val, 2), "bucket": b}
+
+    composite_val = float(last["composite"]) if pd.notna(last["composite"]) else 0.0
+    agree = int(last["agree_count"]) if pd.notna(last["agree_count"]) else 0
+    n_sig = int(last["n_signals"]) if pd.notna(last["n_signals"]) else 0
+
+    if n_sig == 0:
+        bucket = "NEUTRAL"
+    elif composite_val >= up_thresh and agree >= min_agree:
+        bucket = "UP"
+    elif composite_val <= -up_thresh and agree >= min_agree:
+        bucket = "DOWN"
+    else:
+        bucket = "NEUTRAL"
+
+    lots_ce, lots_pe = LOT_SCHEMES["flip_calibrated"].get(bucket, (2, 1))
+
+    return {
+        "as_of": str(as_of.date()) if hasattr(as_of, "date") else str(as_of),
+        "per_indicator": per_indicator,
+        "composite": round(composite_val, 3),
+        "agree_count": agree,
+        "n_signals": n_sig,
+        "bucket": bucket,
+        "grade": grade_ripeness(bucket, agree),
+        "suggested_lots_ce": lots_ce,
+        "suggested_lots_pe": lots_pe,
+    }
