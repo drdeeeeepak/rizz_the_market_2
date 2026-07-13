@@ -218,8 +218,12 @@ def get_kite():
             log.info("OAuth complete — token saved and GitHub push initiated")
             st.rerun()
         except Exception as e:
-            st.error(f"❌ Kite login failed: {e}")
+            st.query_params.clear()
+            st.session_state.pop("kite_authenticated", None)
             _clear_token()
+            st.error(f"❌ Kite login failed: {e}")
+            st.info("The login link expired before it was used — click below to try again.")
+            _show_login_ui(kite)
             st.stop()
 
     # ② Try saved token from file
