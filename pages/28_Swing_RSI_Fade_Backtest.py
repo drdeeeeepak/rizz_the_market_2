@@ -48,6 +48,184 @@ with st.expander("⚠️ What this tests (and its limits) — read once", expand
         "Home page.")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Live RSI Dashboard (60m + 30m for spread entry/management)
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.subheader("📊 Live RSI Dashboard — Spread Entry/Roll Signals")
+st.caption("Real-time 60-minute & 30-minute RSI for Bull Put / Bear Call entry and position management")
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _fetch_live_60m(days=2):
+    try:
+        return _lf.get_nifty_1h_phase(days=days)
+    except Exception:
+        return None
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_live_30m(days=2):
+    try:
+        return _lf.get_nifty_30m(days=days)
+    except Exception:
+        return None
+
+with st.spinner("Fetching live RSI data…"):
+    df_live_60m = _fetch_live_60m(1)
+    df_live_30m = _fetch_live_30m(1)
+
+if (df_live_60m is None or df_live_60m.empty) and (df_live_30m is None or df_live_30m.empty):
+    st.warning("Could not fetch live RSI data. Log in via Home page.")
+else:
+    # Calculate RSI for live data
+    if df_live_60m is not None and not df_live_60m.empty:
+        df_live_60m_rsi = rfb.compute_rsi(df_live_60m, 14)
+        rsi_60m_current = df_live_60m_rsi["rsi"].iloc[-1] if len(df_live_60m_rsi) > 0 else None
+        rsi_60m_prev = df_live_60m_rsi["rsi"].iloc[-2] if len(df_live_60m_rsi) > 1 else rsi_60m_current
+        price_60m = df_live_60m_rsi["close"].iloc[-1] if len(df_live_60m_rsi) > 0 else None
+    else:
+        rsi_60m_current = rsi_60m_prev = price_60m = None
+
+    if df_live_30m is not None and not df_live_30m.empty:
+        df_live_30m_rsi = rfb.compute_rsi(df_live_30m, 14)
+        rsi_30m_current = df_live_30m_rsi["rsi"].iloc[-1] if len(df_live_30m_rsi) > 0 else None
+        rsi_30m_prev = df_live_30m_rsi["rsi"].iloc[-2] if len(df_live_30m_rsi) > 1 else rsi_30m_current
+        price_30m = df_live_30m_rsi["close"].iloc[-1] if len(df_live_30m_rsi) > 0 else None
+    else:
+        rsi_30m_current = rsi_30m_prev = price_30m = None
+
+    # Determine zones and trends
+    def _rsi_zone(rsi_val):
+        if rsi_val < 25:
+            return "🟢", "OVERSOLD"
+        elif rsi_val < 30:
+            return "🟡", "CAUTION"
+        elif rsi_val > 75:
+            return "🟢", "OVERBOUGHT"
+        elif rsi_val > 70:
+            return "🟡", "CAUTION"
+        else:
+            return "⚫", "NEUTRAL"
+
+    def _trend_arrow(prev, curr):
+        if curr > prev + 2:
+            return "↗ Rising"
+        elif curr < prev - 2:
+            return "↘ Falling"
+        else:
+            return "→ Flat"
+
+    # Display RSI cards
+    rsi_col1, rsi_col2 = st.columns(2)
+
+    with rsi_col1:
+        if rsi_60m_current is not None:
+            zone_60m, zone_label_60m = _rsi_zone(rsi_60m_current)
+            trend_60m = _trend_arrow(rsi_60m_prev, rsi_60m_current)
+            st.metric(
+                f"{zone_60m} 60-MINUTE RSI",
+                f"{rsi_60m_current:.1f}",
+                delta=f"{rsi_60m_current - rsi_60m_prev:.1f} — {trend_60m}",
+                delta_color="off"
+            )
+            st.caption(f"Zone: {zone_label_60m} | Spot: {price_60m:.0f}")
+        else:
+            st.warning("60m data unavailable")
+
+    with rsi_col2:
+        if rsi_30m_current is not None:
+            zone_30m, zone_label_30m = _rsi_zone(rsi_30m_current)
+            trend_30m = _trend_arrow(rsi_30m_prev, rsi_30m_current)
+            st.metric(
+                f"{zone_30m} 30-MINUTE RSI",
+                f"{rsi_30m_current:.1f}",
+                delta=f"{rsi_30m_current - rsi_30m_prev:.1f} — {trend_30m}",
+                delta_color="off"
+            )
+            st.caption(f"Zone: {zone_label_30m} | Spot: {price_30m:.0f}")
+        else:
+            st.warning("30m data unavailable")
+
+    # Signal generation
+    if rsi_60m_current is not None and rsi_30m_current is not None:
+        signal_col1, signal_col2 = st.columns(2)
+
+        # Bull Put signal
+        with signal_col1:
+            if rsi_60m_current < 25 and rsi_30m_current < 25:
+                st.success("✅ **BULL PUT READY** (Extreme oversold)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} < 25 & 30m RSI {rsi_30m_current:.1f} < 25 — Strong entry signal")
+                if st.button("Enter Bull Put Spread", key="bull_put_entry"):
+                    st.info("Note: Manually enter position in broker. Strike recommendation: Sell 1-1.5% below spot.")
+            elif rsi_60m_current < 30 and rsi_30m_current < 30:
+                st.warning("⚠️ **BULL PUT MODERATE** (Oversold, not extreme)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} & 30m RSI {rsi_30m_current:.1f} — Moderate signal, wait for confirmation")
+            elif rsi_60m_current < 22 and rsi_30m_current > rsi_30m_prev:
+                st.info("🔴 **ROLL DOWN** (Extreme oversold, bounce starting)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} < 22 & 30m RSI rising — Safe to roll your short put down")
+                if st.button("Confirm Roll Down", key="roll_down_confirm"):
+                    st.success("Prepare to roll: Buy back put, sell lower strike for credit.")
+            else:
+                st.info("⭕ No Bull Put signal right now")
+
+        # Bear Call signal
+        with signal_col2:
+            if rsi_60m_current > 75 and rsi_30m_current > 75:
+                st.success("✅ **BEAR CALL READY** (Extreme overbought)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} > 75 & 30m RSI {rsi_30m_current:.1f} > 75 — Strong entry signal")
+                if st.button("Enter Bear Call Spread", key="bear_call_entry"):
+                    st.info("Note: Manually enter position in broker. Strike recommendation: Sell 1-1.5% above spot.")
+            elif rsi_60m_current > 70 and rsi_30m_current > 70:
+                st.warning("⚠️ **BEAR CALL MODERATE** (Overbought, not extreme)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} & 30m RSI {rsi_30m_current:.1f} — Moderate signal, wait for confirmation")
+            elif rsi_60m_current > 78 and rsi_30m_current < rsi_30m_prev:
+                st.info("🔴 **ROLL UP** (Extreme overbought, correction starting)")
+                st.caption(f"60m RSI {rsi_60m_current:.1f} > 78 & 30m RSI falling — Safe to roll your short call up")
+                if st.button("Confirm Roll Up", key="roll_up_confirm"):
+                    st.success("Prepare to roll: Buy back call, sell higher strike for credit.")
+            else:
+                st.info("⭕ No Bear Call signal right now")
+
+    # Mini RSI trend charts
+    st.divider()
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        if df_live_60m_rsi is not None and len(df_live_60m_rsi) > 1:
+            st.subheader("60m RSI Trend (last 4 hours)")
+            fig_60m = go.Figure()
+            fig_60m.add_trace(go.Scatter(
+                x=list(range(len(df_live_60m_rsi))),
+                y=df_live_60m_rsi["rsi"],
+                mode="lines+markers",
+                line=dict(color="#3b82f6", width=2),
+                name="RSI(14)"
+            ))
+            fig_60m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
+            fig_60m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
+            fig_60m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
+            fig_60m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
+            fig_60m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+            st.plotly_chart(fig_60m, use_container_width=True, key="chart_60m_rsi")
+
+    with chart_col2:
+        if df_live_30m_rsi is not None and len(df_live_30m_rsi) > 1:
+            st.subheader("30m RSI Trend (last 2 hours)")
+            fig_30m = go.Figure()
+            fig_30m.add_trace(go.Scatter(
+                x=list(range(len(df_live_30m_rsi))),
+                y=df_live_30m_rsi["rsi"],
+                mode="lines+markers",
+                line=dict(color="#f59e0b", width=2),
+                name="RSI(14)"
+            ))
+            fig_30m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
+            fig_30m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
+            fig_30m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
+            fig_30m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
+            fig_30m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+            st.plotly_chart(fig_30m, use_container_width=True, key="chart_30m_rsi")
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Inputs
 # ══════════════════════════════════════════════════════════════════════════════
 c1, c2 = st.columns(2)
