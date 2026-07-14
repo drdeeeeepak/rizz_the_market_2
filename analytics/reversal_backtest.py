@@ -667,4 +667,89 @@ def min_pullback_by_rise_size(grid: pd.DataFrame, horizon: int, max_touch_rate: 
                     "n_combo": int(best["n_combo"]),
                     f"touch_high_rate_{horizon}d%": best[col],
                     f"hit_rate_{horizon}d%": best[f"hit_rate_{horizon}d%"]})
+    return pd.DataFrame(rows)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Dual-confirmation — the case neither the fall-episode nor rise-episode scans
+# above ever isolate: a SINGLE day whose EOD close both bounced enough off
+# its own low AND pulled back enough off its own high to independently
+# confirm BOTH sides. Since PUT-safety and CALL-safety are validated as two
+# SEPARATE claims (not mutually exclusive), a day satisfying both isn't
+# automatically a conflict needing a directional tiebreak — it could just
+# mean both sides are protected (an Iron Condor day). This scan measures
+# which is actually true, instead of assuming either way.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
+                           pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
+                           rise_trigger_pct: float = 0.0,
+                           forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """Per-DAY (not episode-merged — the validated 0%-trigger finding already
+    means the trigger itself filters nothing, so every day is its own
+    'episode' of width 1) classification into PUT_ONLY / CALL_ONLY / BOTH /
+    NEITHER, using the SAME definitions already validated in
+    docs/PAGE_24_RULE_BOOK.md:
+        fall_pct        = (close[t-1] - low[t])  / close[t-1] * 100
+        bounce_today     = (close[t]   - low[t])  / low[t]     * 100
+        rise_pct        = (high[t]    - close[t-1]) / close[t-1] * 100
+        pullback_today   = (high[t]    - close[t])  / high[t]   * 100
+    fall_confirmed = fall_pct >= fall_trigger_pct AND bounce_today >= bounce_pct
+    rise_confirmed = rise_pct >= rise_trigger_pct AND pullback_today >= pullback_pct
+
+    For every bucket, tracks forward from day t (INTRADAY, using the low/high
+    columns — the same stricter, conservative "deciding metric" convention
+    already established over hit_rate/close-only checks): does price's LOW
+    ever undercut day t's own low (touch_low) or its HIGH ever exceed day
+    t's own high (touch_high) within the next `h` trading days, for every
+    horizon in forward_horizons. The BOTH row directly answers "on a day
+    that confirms both ways, which side actually breaches more" — compare
+    its touch_low_rate vs touch_high_rate columns."""
+    d = _norm_ohlc(daily)
+    close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+    if n < 5:
+        return pd.DataFrame()
+
+    fall_pct = np.full(n, np.nan)
+    bounce_today = np.full(n, np.nan)
+    rise_pct = np.full(n, np.nan)
+    pullback_today = np.full(n, np.nan)
+    fall_pct[1:] = (close[:-1] - low[1:]) / close[:-1] * 100
+    bounce_today[1:] = np.where(low[1:] > 0, (close[1:] - low[1:]) / low[1:] * 100, np.nan)
+    rise_pct[1:] = (high[1:] - close[:-1]) / close[:-1] * 100
+    pullback_today[1:] = np.where(high[1:] > 0, (high[1:] - close[1:]) / high[1:] * 100, np.nan)
+
+    fall_confirmed = (np.nan_to_num(fall_pct) >= fall_trigger_pct) & \
+                     (np.nan_to_num(bounce_today) >= bounce_pct)
+    rise_confirmed = (np.nan_to_num(rise_pct) >= rise_trigger_pct) & \
+                     (np.nan_to_num(pullback_today) >= pullback_pct)
+    fall_confirmed[0] = False   # no prior close to measure day 0's fall/rise from
+    rise_confirmed[0] = False
+
+    label = np.full(n, "NEITHER", dtype=object)
+    label[fall_confirmed & ~rise_confirmed] = "PUT_ONLY"
+    label[rise_confirmed & ~fall_confirmed] = "CALL_ONLY"
+    label[fall_confirmed & rise_confirmed] = "BOTH"
+
+    rows = []
+    for bucket in ("PUT_ONLY", "CALL_ONLY", "BOTH", "NEITHER"):
+        idx = np.where(label == bucket)[0]
+        row = {"bucket": bucket, "n": int(len(idx))}
+        for h in forward_horizons:
+            touch_low, touch_high, rets = [], [], []
+            for t in idx:
+                end_k = min(t + h, n - 1)
+                if end_k <= t:
+                    continue
+                window_low = low[t + 1:end_k + 1]
+                window_high = high[t + 1:end_k + 1]
+                touch_low.append(bool((window_low < low[t]).any()))
+                touch_high.append(bool((window_high > high[t]).any()))
+                rets.append((close[end_k] - close[t]) / close[t] * 100)
+            row[f"touch_low_rate_{h}d%"] = round(float(np.mean(touch_low)) * 100, 1) if touch_low else np.nan
+            row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch_high)) * 100, 1) if touch_high else np.nan
+            row[f"avg_fwd_ret_{h}d%"] = round(float(np.mean(rets)), 2) if rets else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
     return pd.DataFrame(rows).sort_values("rise_pct").reset_index(drop=True)

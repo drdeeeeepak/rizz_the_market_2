@@ -37,9 +37,124 @@ with st.expander("📜 Final Rule Book — put & call selling (read this first)"
     except Exception:
         st.caption("Rule book file not found — see docs/PAGE_24_RULE_BOOK.md in the repo.")
 
-mode = st.radio("Mode", ["Fall — put-seller safety", "Rise — call-seller safety"], horizontal=True,
+mode = st.radio("Mode", ["Fall — put-seller safety", "Rise — call-seller safety",
+                         "Pinpoint — dual-confirmation long/short"], horizontal=True,
                 key="p24_mode")
 is_fall = mode.startswith("Fall")
+is_pinpoint = mode.startswith("Pinpoint")
+
+if is_pinpoint:
+    st.caption("On days where BOTH the fall+bounce (PUT) AND rise+pullback (CALL) confirmations "
+               "fire — which, at the validated 0% trigger, turns out to be the MAJORITY of days, "
+               "not a rare edge case — which side actually breaches more? PUT-safety and "
+               "CALL-safety were validated as two SEPARATE claims, so a day confirming both isn't "
+               "automatically a directional conflict — it might just mean both sides are safe "
+               "(an Iron Condor day). This measures which is actually true instead of assuming.")
+
+    with st.expander("⚠️ What this is (and its limits) — read once"):
+        st.markdown(
+            "- Uses the SAME validated definitions as the Fall/Rise modes above — fall/rise "
+            "trigger and bounce/pullback confirmation, same formulas, defaulting to the confirmed "
+            "0% trigger / 0.25% confirmation from the rule book.\n"
+            "- Classifies EVERY day into one of 4 buckets: **PUT_ONLY** (only the low bounced "
+            "enough — lean long/sell put), **CALL_ONLY** (only the high pulled back enough — lean "
+            "short/sell call), **BOTH** (both confirmed the same day — the case this section "
+            "exists to resolve), **NEITHER** (no signal, stay out).\n"
+            "- Touch rates are INTRADAY (uses the low/high columns, not just the close) — the same "
+            "stricter, conservative 'deciding metric' already established over hit_rate in the "
+            "Fall/Rise modes.\n"
+            "- This is NOT episode-merged like the Fall/Rise modes above — every day is scored on "
+            "its own. At the validated 0% trigger that's the correct granularity anyway (the "
+            "trigger stopped filtering anything once it hit 0%).")
+
+    lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24p_lb")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        bounce_pct = st.number_input("Bounce confirmation % (off the low)", 0.0, 3.0, 0.25, 0.05,
+                                     key="p24p_bounce")
+    with c2:
+        pullback_pct = st.number_input("Pullback confirmation % (off the high)", 0.0, 3.0, 0.25, 0.05,
+                                       key="p24p_pullback")
+    with c3:
+        fall_trigger = st.number_input("Fall trigger % (0 = validated floor)", 0.0, 3.0, 0.0, 0.05,
+                                       key="p24p_fall_trig")
+    with c4:
+        rise_trigger = st.number_input("Rise trigger % (0 = validated floor)", 0.0, 3.0, 0.0, 0.05,
+                                       key="p24p_rise_trig")
+    horizons_str = st.text_input("Forward horizons (trading days, comma-separated)", "3,5,10",
+                                 key="p24p_horizons")
+    try:
+        horizons = tuple(int(x.strip()) for x in horizons_str.split(","))
+    except ValueError:
+        horizons = (3, 5, 10)
+        st.caption("Couldn't parse horizons — using default 3,5,10.")
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _p24p_load_daily(days):
+        return _lf.get_nifty_daily(days=days)
+
+    if st.button("▶ Run dual-confirmation scan", type="primary", key="p24p_run"):
+        st.session_state.p24p_ran = True
+        st.session_state.p24p_inputs = dict(lookback=lookback, bounce_pct=bounce_pct,
+                                            pullback_pct=pullback_pct, fall_trigger=fall_trigger,
+                                            rise_trigger=rise_trigger, horizons=horizons)
+
+    if not st.session_state.get("p24p_ran"):
+        st.info("Pick your settings and click Run. Only needs daily candles.")
+        st.stop()
+
+    _in = st.session_state.p24p_inputs
+    with st.spinner("Fetching daily history and classifying every day…"):
+        daily = _p24p_load_daily(_in["lookback"])
+
+    if daily is None or daily.empty:
+        st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
+        st.stop()
+
+    scan = rb.dual_confirmation_scan(daily, bounce_pct=_in["bounce_pct"],
+                                     pullback_pct=_in["pullback_pct"],
+                                     fall_trigger_pct=_in["fall_trigger"],
+                                     rise_trigger_pct=_in["rise_trigger"],
+                                     forward_horizons=_in["horizons"])
+
+    if scan.empty:
+        st.error("Not enough daily history for this lookback.")
+        st.stop()
+
+    st.success(f"Classified **{int(scan['n'].sum())}** days into 4 buckets.")
+    st.subheader("Bucket counts and forward touch rates")
+    st.caption("**BOTH** is the row that answers the actual question: compare its "
+              "touch_low_rate vs touch_high_rate at each horizon. Close together and both low → "
+              "both sides genuinely safe, sell an Iron Condor on these days. One clearly higher → "
+              "that's the side more likely to breach, lean the OTHER way instead.")
+    st.dataframe(scan, use_container_width=True, hide_index=True)
+
+    both_row = scan[scan["bucket"] == "BOTH"]
+    if not both_row.empty:
+        h0 = _in["horizons"][0]
+        tl = both_row.iloc[0].get(f"touch_low_rate_{h0}d%")
+        th = both_row.iloc[0].get(f"touch_high_rate_{h0}d%")
+        if pd.notna(tl) and pd.notna(th):
+            gap = abs(tl - th)
+            if gap <= 5:
+                st.info(f"At {h0}d: touch_low_rate {tl}% vs touch_high_rate {th}% on BOTH-confirmed "
+                       f"days — close together, no real asymmetry. These look like genuine "
+                       f"both-sides-safe days, not a directional pick.")
+            elif tl > th:
+                st.warning(f"At {h0}d: touch_low_rate {tl}% > touch_high_rate {th}% on BOTH-confirmed "
+                          f"days — the PUT side breaches more often here. Lean toward the CALL side "
+                          f"(sell call / short-biased) on these days, not both equally.")
+            else:
+                st.warning(f"At {h0}d: touch_high_rate {th}% > touch_low_rate {tl}% on BOTH-confirmed "
+                          f"days — the CALL side breaches more often here. Lean toward the PUT side "
+                          f"(sell put / long-biased) on these days, not both equally.")
+
+    with st.expander("⬇ Download the full scan"):
+        st.download_button("Download CSV", scan.to_csv(index=False).encode("utf-8"),
+                           file_name="dual_confirmation_scan.csv", mime="text/csv",
+                           key="p24p_dl_scan")
+
+    st.stop()
 
 if is_fall:
     st.caption("After a fall of >=0.1% in a day (even intraday, vs. yesterday's close) or "
