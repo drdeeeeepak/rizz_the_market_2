@@ -626,8 +626,10 @@ _P24_BOUNCE_CONFIRM_PCT = 0.25
 _P24_PULLBACK_CONFIRM_PCT = 0.25
 
 
-def adapt_page24_reversal(daily: pd.DataFrame) -> pd.Series:
-    """EOD-only translation of page 24's validated fall/bounce (PUT side) and
+def _page24_reversal_signal(daily: pd.DataFrame, trigger_pct: float,
+                            confirm_pct: float, name: str) -> pd.Series:
+    """Shared core for adapt_page24_reversal / adapt_page24_reversal_tight —
+    EOD-only translation of page 24's fall/bounce (PUT side) and
     rise/pullback (CALL side) rule into ONE per-day directional score, using
     each day's OWN close as the confirmation point (the live intraday version
     in position_sizing_backtest.intraday_reversal_snapshot uses today's
@@ -649,10 +651,15 @@ def adapt_page24_reversal(daily: pd.DataFrame) -> pd.Series:
     reading) scores NEGATIVE. A confirmed RISE+PULLBACK (reversing DOWN off
     a high) scores POSITIVE, matching the composite's UP convention. Both
     firing the same day (rare — a same-day double reversal) or neither
-    firing scores 0 (no opinion)."""
+    firing scores 0 (no opinion).
+
+    trigger_pct/confirm_pct use the SAME value for both the fall/rise
+    trigger and the bounce/pullback confirmation (unlike page 24's own
+    asymmetric 0.1%/0.25% default) — kept simple since this is a sensitivity
+    check, not a re-run of page 24's full threshold scan."""
     d = _to_dt_index(daily)
     if d.empty:
-        return pd.Series(dtype=float, name="page24_reversal")
+        return pd.Series(dtype=float, name=name)
     close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
     n = len(d)
 
@@ -665,19 +672,38 @@ def adapt_page24_reversal(daily: pd.DataFrame) -> pd.Series:
     rise_pct[1:] = (high[1:] - close[:-1]) / close[:-1] * 100
     pullback_pct[1:] = np.where(high[1:] > 0, (high[1:] - close[1:]) / high[1:] * 100, np.nan)
 
-    fall_confirmed = (np.nan_to_num(fall_pct) >= _P24_FALL_TRIGGER_PCT) & \
-                     (np.nan_to_num(bounce_pct) >= _P24_BOUNCE_CONFIRM_PCT)
-    rise_confirmed = (np.nan_to_num(rise_pct) >= _P24_RISE_TRIGGER_PCT) & \
-                     (np.nan_to_num(pullback_pct) >= _P24_PULLBACK_CONFIRM_PCT)
+    fall_confirmed = (np.nan_to_num(fall_pct) >= trigger_pct) & \
+                     (np.nan_to_num(bounce_pct) >= confirm_pct)
+    rise_confirmed = (np.nan_to_num(rise_pct) >= trigger_pct) & \
+                     (np.nan_to_num(pullback_pct) >= confirm_pct)
     both = fall_confirmed & rise_confirmed   # same-day double reversal — ambiguous, treat as no opinion
 
     sig = np.zeros(n)
     sig[fall_confirmed & ~both] = -1.0
     sig[rise_confirmed & ~both] = 1.0
 
-    out = pd.Series(sig, index=d.index, name="page24_reversal")
+    out = pd.Series(sig, index=d.index, name=name)
     out.index = out.index.normalize()
     return out
+
+
+def adapt_page24_reversal(daily: pd.DataFrame) -> pd.Series:
+    """Page 24's OWN validated numbers: 0.1% trigger, 0.25% confirmation.
+    Tested on Page 26 and found too weak to promote — DOWN side barely
+    separated (1.4pp/2.8pp gap across the two history halves) and UP side
+    showed ZERO separation in the first half. Kept as the baseline reference
+    point for adapt_page24_reversal_tight to compare against."""
+    return _page24_reversal_signal(daily, _P24_FALL_TRIGGER_PCT, _P24_BOUNCE_CONFIRM_PCT,
+                                   "page24_reversal")
+
+
+def adapt_page24_reversal_tight(daily: pd.DataFrame) -> pd.Series:
+    """Tightened variant requested after the 0.1%/0.25% version tested weak:
+    0.3% trigger, 0.4% confirmation — bigger, more decisive moves only, on
+    the theory that the loose version was picking up too much noise. Same
+    UNVALIDATED status as adapt_page24_reversal until it clears Page 26's
+    split_validation."""
+    return _page24_reversal_signal(daily, 0.3, 0.4, "page24_reversal_tight")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -702,4 +728,5 @@ ADAPTERS = {
     "EMA Slope Phases":      {"fn": adapt_ema_slope_phases,  "needs": ("h1",),        "cadence": "1H, daily read"},
     "Futures OI Buildup":    {"fn": adapt_oi_buildup,        "needs": ("fut_daily",), "cadence": "daily (needs OI history)"},
     "Page 24 Reversal":      {"fn": adapt_page24_reversal,   "needs": ("daily",),     "cadence": "daily, EOD-only twin of the live intraday check"},
+    "Page 24 Reversal (tight)": {"fn": adapt_page24_reversal_tight, "needs": ("daily",), "cadence": "daily, 0.3%/0.4% thresholds"},
 }

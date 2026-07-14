@@ -65,17 +65,23 @@ DEFAULT_ADAPTERS = {
 }
 _NEEDS_1H = {"dow_theory"}
 
-# page24_reversal is a NEW candidate, not yet validated for THIS composite's
-# question. Page 24 validated a DIFFERENT claim (does this day's own low/high
-# get re-touched in 3-5 days — strike-placement safety); this composite asks
-# whether a confirmed reversal day predicts which side (CALL/PUT) gets
-# tested MORE over the coming week. adapt_page24_reversal's own sign
-# convention already matches this composite's (no flip needed, unlike
-# bollinger_fade) — see its docstring in analytics/signal_adapters.py. Stays
-# here, reference-only, until Page 26's split_validation confirms the same
-# call/put breach asymmetry direction in both history halves.
+# page24_reversal / page24_reversal_tight are candidates, not yet validated
+# for THIS composite's question. Page 24 validated a DIFFERENT claim (does
+# this day's own low/high get re-touched in 3-5 days — strike-placement
+# safety); this composite asks whether a confirmed reversal day predicts
+# which side (CALL/PUT) gets tested MORE over the coming week. Both
+# adapters' sign convention already matches this composite's (no flip
+# needed, unlike bollinger_fade) — see their docstrings in
+# analytics/signal_adapters.py.
+#
+# page24_reversal (0.1%/0.25%, page 24's own numbers) tested WEAK on Page 26:
+# DOWN side barely separated (1.4pp/2.8pp gap across the two halves), UP
+# side showed ZERO separation in the first half — not promoted.
+# page24_reversal_tight (0.3%/0.4%) is the tightened re-test, kept here
+# reference-only until ITS split_validation is checked the same way.
 REFERENCE_ADAPTERS = {
     "page24_reversal": sa.adapt_page24_reversal,
+    "page24_reversal_tight": sa.adapt_page24_reversal_tight,
 }
 
 
