@@ -214,7 +214,7 @@ else:
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
         def _build_hist_table(df_60m, df_30m):
-            """Build historical RSI table with 30m nested under 60m"""
+            """Build flat historical RSI table: 30m rows with 60m data in cols 2-4"""
             if df_60m is None or df_60m.empty:
                 df_60m = pd.DataFrame()
             if df_30m is None or df_30m.empty:
@@ -229,86 +229,82 @@ else:
                 df_30m.index = pd.to_datetime(df_30m.index)
 
             # Get last 5 trading days
-            if not df_60m.empty:
-                dates_60m = df_60m.index.date
-                unique_dates = sorted(set(dates_60m), reverse=True)[:5]
-            elif not df_30m.empty:
+            if not df_30m.empty:
                 dates_30m = df_30m.index.date
                 unique_dates = sorted(set(dates_30m), reverse=True)[:5]
+            elif not df_60m.empty:
+                dates_60m = df_60m.index.date
+                unique_dates = sorted(set(dates_60m), reverse=True)[:5]
             else:
                 return pd.DataFrame()
 
             for date in sorted(unique_dates):
                 rows.append({
                     'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
-                    'RSI': '', 'Zone': '', 'Trend': '', 'Signal': ''
+                    '60m_RSI': '', '60m_Zone': '', '60m_Trend': '',
+                    '30m_RSI': '', '30m_Zone': '', '30m_Trend': '', 'Signal': ''
                 })
 
-                # 60m candles for this date with nested 30m
-                if not df_60m.empty:
-                    day_60m = df_60m[df_60m.index.date == date]
-                    day_30m = df_30m[df_30m.index.date == date] if not df_30m.empty else pd.DataFrame()
+                # Iterate through all 30m candles for this date
+                if not df_30m.empty:
+                    day_30m = df_30m[df_30m.index.date == date]
+                    day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
 
-                    for i, (idx_60m, row_60m) in enumerate(day_60m.iterrows()):
-                        rsi_60m = row_60m['rsi']
-                        if pd.isna(rsi_60m):
+                    for i, (idx_30m, row_30m) in enumerate(day_30m.iterrows()):
+                        rsi_30m = row_30m['rsi']
+                        if pd.isna(rsi_30m):
                             continue
 
-                        zone_dot_60m, zone_label_60m = _rsi_zone(rsi_60m)
-                        prev_rsi_60m = day_60m['rsi'].iloc[i-1] if i > 0 else rsi_60m
-                        trend_60m = _trend_arrow(prev_rsi_60m, rsi_60m)
+                        zone_dot_30m, zone_label_30m = _rsi_zone(rsi_30m)
+                        prev_rsi_30m = day_30m['rsi'].iloc[i-1] if i > 0 else rsi_30m
+                        trend_30m = _trend_arrow(prev_rsi_30m, rsi_30m)
 
-                        signal_60m = ""
-                        if rsi_60m < 22:
-                            signal_60m = "🔴 EXTREME OS"
-                        elif rsi_60m > 78:
-                            signal_60m = "🔴 EXTREME OB"
+                        # Find corresponding 60m candle (same hour as 30m candle)
+                        hour_30m = idx_30m.hour
+                        minute_30m = idx_30m.minute
 
-                        # Add 60m row
-                        rows.append({
-                            'Time': f"  ▶ {idx_60m.strftime('%H:%M')} [60m]",
-                            'RSI': f"{rsi_60m:.1f}",
-                            'Zone': f"{zone_dot_60m} {zone_label_60m}",
-                            'Trend': trend_60m,
-                            'Signal': signal_60m
-                        })
+                        rsi_60m_val = ""
+                        zone_60m_str = ""
+                        trend_60m_str = ""
 
-                        # Add nested 30m candles for this 60m hour
-                        if not day_30m.empty:
-                            hour = idx_60m.hour
-                            minute = idx_60m.minute
-                            # Get 30m candles within this 60m period
-                            nested_30m = day_30m[
-                                ((day_30m.index.hour == hour) & (day_30m.index.minute >= minute)) |
-                                ((day_30m.index.hour == hour + 1) & (day_30m.index.minute < minute))
+                        if not day_60m.empty:
+                            # Get 60m candle that covers this 30m time
+                            covering_60m = day_60m[
+                                ((day_60m.index.hour == hour_30m) & (day_60m.index.minute <= minute_30m)) |
+                                ((day_60m.index.hour == hour_30m + 1) & (day_60m.index.minute > minute_30m))
                             ]
-                            if not nested_30m.empty:
-                                for j, (idx_30m, row_30m) in enumerate(nested_30m.iterrows()):
-                                    rsi_30m = row_30m['rsi']
-                                    if pd.isna(rsi_30m):
-                                        continue
+                            if len(covering_60m) > 0:
+                                idx_60m = covering_60m.index[-1]
+                                rsi_60m = covering_60m['rsi'].iloc[-1]
+                                if not pd.isna(rsi_60m):
+                                    zone_dot_60m, zone_label_60m = _rsi_zone(rsi_60m)
+                                    idx_60m_prev = day_60m.index.get_indexer([idx_60m], method='backfill')
+                                    prev_rsi_60m = day_60m['rsi'].iloc[idx_60m_prev[0]-1] if idx_60m_prev[0] > 0 else rsi_60m
+                                    trend_60m_str = _trend_arrow(prev_rsi_60m, rsi_60m)
+                                    rsi_60m_val = f"{rsi_60m:.1f}"
+                                    zone_60m_str = f"{zone_dot_60m} {zone_label_60m}"
 
-                                    zone_dot_30m, zone_label_30m = _rsi_zone(rsi_30m)
-                                    prev_rsi_30m = nested_30m['rsi'].iloc[j-1] if j > 0 else rsi_30m
-                                    trend_30m = _trend_arrow(prev_rsi_30m, rsi_30m)
+                        # Determine 30m signal
+                        signal = ""
+                        if rsi_30m < 25 and i > 0 and day_30m['rsi'].iloc[i-1] > 30:
+                            signal = "✅ BULL PUT"
+                        elif rsi_30m > 75 and i > 0 and day_30m['rsi'].iloc[i-1] < 70:
+                            signal = "✅ BEAR CALL"
+                        elif rsi_30m < 22:
+                            signal = "🔴 ROLL DOWN"
+                        elif rsi_30m > 78:
+                            signal = "🔴 ROLL UP"
 
-                                    signal_30m = ""
-                                    if rsi_30m < 25 and j > 0 and nested_30m['rsi'].iloc[j-1] > 30:
-                                        signal_30m = "✅ BULL PUT"
-                                    elif rsi_30m > 75 and j > 0 and nested_30m['rsi'].iloc[j-1] < 70:
-                                        signal_30m = "✅ BEAR CALL"
-                                    elif rsi_30m < 22:
-                                        signal_30m = "🔴 ROLL DOWN"
-                                    elif rsi_30m > 78:
-                                        signal_30m = "🔴 ROLL UP"
-
-                                    rows.append({
-                                        'Time': f"    └─ {idx_30m.strftime('%H:%M')} [30m]",
-                                        'RSI': f"{rsi_30m:.1f}",
-                                        'Zone': f"{zone_dot_30m} {zone_label_30m}",
-                                        'Trend': trend_30m,
-                                        'Signal': signal_30m
-                                    })
+                        rows.append({
+                            'Time': idx_30m.strftime('%H:%M'),
+                            '60m_RSI': rsi_60m_val,
+                            '60m_Zone': zone_60m_str,
+                            '60m_Trend': trend_60m_str,
+                            '30m_RSI': f"{rsi_30m:.1f}",
+                            '30m_Zone': f"{zone_dot_30m} {zone_label_30m}",
+                            '30m_Trend': trend_30m,
+                            'Signal': signal
+                        })
 
             return pd.DataFrame(rows)
 
