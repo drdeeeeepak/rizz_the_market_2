@@ -672,84 +672,118 @@ def min_pullback_by_rise_size(grid: pd.DataFrame, horizon: int, max_touch_rate: 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Dual-confirmation — the case neither the fall-episode nor rise-episode scans
-# above ever isolate: a SINGLE day whose EOD close both bounced enough off
-# its own low AND pulled back enough off its own high to independently
-# confirm BOTH sides. Since PUT-safety and CALL-safety are validated as two
+# above ever isolate: a day whose PROPER episode-anchored bounce (PUT side)
+# AND episode-anchored pullback (CALL side) trigger confirm on the SAME
+# calendar day. Since PUT-safety and CALL-safety are validated as two
 # SEPARATE claims (not mutually exclusive), a day satisfying both isn't
 # automatically a conflict needing a directional tiebreak — it could just
 # mean both sides are protected (an Iron Condor day). This scan measures
 # which is actually true, instead of assuming either way.
+#
+# REBUILT from a first version that compared forward touches against a
+# single day's OWN low/high (a shallow, easily-touched level) instead of
+# the EPISODE's anchor (the true capitulation low/high, which can walk
+# further before the bounce/pullback trigger actually fires) — that version
+# scored 51-89% touch rates, wildly inconsistent with the ~0% the validated
+# engine finds elsewhere in this file. This version reuses the EXACT same
+# anchor-walk trigger mechanism as reversal_threshold_scan_daily /
+# pullback_threshold_scan_daily, so its numbers are directly comparable to
+# the rest of page 24's validated results.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
                            pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
-                           rise_trigger_pct: float = 0.0,
+                           rise_trigger_pct: float = 0.0, merge_gap_days: int = 1,
+                           max_track_days: int = 30,
                            forward_horizons=(3, 5, 10)) -> pd.DataFrame:
-    """Per-DAY (not episode-merged — the validated 0%-trigger finding already
-    means the trigger itself filters nothing, so every day is its own
-    'episode' of width 1) classification into PUT_ONLY / CALL_ONLY / BOTH /
-    NEITHER, using the SAME definitions already validated in
-    docs/PAGE_24_RULE_BOOK.md:
-        fall_pct        = (close[t-1] - low[t])  / close[t-1] * 100
-        bounce_today     = (close[t]   - low[t])  / low[t]     * 100
-        rise_pct        = (high[t]    - close[t-1]) / close[t-1] * 100
-        pullback_today   = (high[t]    - close[t])  / high[t]   * 100
-    fall_confirmed = fall_pct >= fall_trigger_pct AND bounce_today >= bounce_pct
-    rise_confirmed = rise_pct >= rise_trigger_pct AND pullback_today >= pullback_pct
+    """Finds every fall-episode's PUT trigger day (bounce_pct off the
+    episode's anchor low, walking the anchor down on new lower lows exactly
+    like reversal_threshold_scan_daily) and every rise-episode's CALL
+    trigger day (pullback_pct off the episode's anchor high, mirrored),
+    then classifies each trigger day as PUT_ONLY / CALL_ONLY / BOTH
+    depending on whether the other side ALSO triggered that same day. Days
+    with neither trigger are NEITHER (touch rates not meaningful there — no
+    anchor was ever established, so they're reported as n only).
 
-    For every bucket, tracks forward from day t (INTRADAY, using the low/high
-    columns — the same stricter, conservative "deciding metric" convention
-    already established over hit_rate/close-only checks): does price's LOW
-    ever undercut day t's own low (touch_low) or its HIGH ever exceed day
-    t's own high (touch_high) within the next `h` trading days, for every
-    horizon in forward_horizons. The BOTH row directly answers "on a day
-    that confirms both ways, which side actually breaches more" — compare
-    its touch_low_rate vs touch_high_rate columns."""
+    Forward touch tracking uses each side's PROPER anchor (not the single
+    day's own low/high) — the anchor_low from the fall episode that
+    triggered (which may sit well before the trigger day itself, and may
+    have walked down multiple times), and the anchor_high from the rise
+    episode, matching reversal_threshold_scan_daily/
+    pullback_threshold_scan_daily exactly. The BOTH row directly answers
+    "on a day that confirms both ways, which side actually breaches more" —
+    compare its touch_low_rate vs touch_high_rate columns."""
     d = _norm_ohlc(daily)
     close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
     n = len(d)
     if n < 5:
         return pd.DataFrame()
 
-    fall_pct = np.full(n, np.nan)
-    bounce_today = np.full(n, np.nan)
-    rise_pct = np.full(n, np.nan)
-    pullback_today = np.full(n, np.nan)
-    fall_pct[1:] = (close[:-1] - low[1:]) / close[:-1] * 100
-    bounce_today[1:] = np.where(low[1:] > 0, (close[1:] - low[1:]) / low[1:] * 100, np.nan)
-    rise_pct[1:] = (high[1:] - close[:-1]) / close[:-1] * 100
-    pullback_today[1:] = np.where(high[1:] > 0, (high[1:] - close[1:]) / high[1:] * 100, np.nan)
+    fall_episodes = find_fall_episodes_daily(daily, fall_1d_pct=fall_trigger_pct, fall_2d_pct=1e9,
+                                             merge_gap_days=merge_gap_days,
+                                             require_green_confirmation=False)
+    rise_episodes = find_rise_episodes_daily(daily, rise_1d_pct=rise_trigger_pct, rise_2d_pct=1e9,
+                                             merge_gap_days=merge_gap_days,
+                                             require_red_confirmation=False)
 
-    fall_confirmed = (np.nan_to_num(fall_pct) >= fall_trigger_pct) & \
-                     (np.nan_to_num(bounce_today) >= bounce_pct)
-    rise_confirmed = (np.nan_to_num(rise_pct) >= rise_trigger_pct) & \
-                     (np.nan_to_num(pullback_today) >= pullback_pct)
-    fall_confirmed[0] = False   # no prior close to measure day 0's fall/rise from
-    rise_confirmed[0] = False
+    # trigger day index -> anchor level at the moment of trigger, one entry
+    # per episode that actually confirms within max_track_days.
+    put_triggers: dict[int, float] = {}
+    for _, ep in fall_episodes.iterrows():
+        anchor_idx, anchor_low = int(ep["low_idx"]), float(ep["low"])
+        j, steps = anchor_idx + 1, 0
+        while j < n and steps < max_track_days:
+            if low[j] < anchor_low:
+                anchor_low, anchor_idx = float(low[j]), j
+            if (high[j] - anchor_low) / anchor_low * 100 >= bounce_pct:
+                put_triggers.setdefault(j, anchor_low)
+                break
+            j += 1
+            steps += 1
 
-    label = np.full(n, "NEITHER", dtype=object)
-    label[fall_confirmed & ~rise_confirmed] = "PUT_ONLY"
-    label[rise_confirmed & ~fall_confirmed] = "CALL_ONLY"
-    label[fall_confirmed & rise_confirmed] = "BOTH"
+    call_triggers: dict[int, float] = {}
+    for _, ep in rise_episodes.iterrows():
+        anchor_idx, anchor_high = int(ep["high_idx"]), float(ep["high"])
+        j, steps = anchor_idx + 1, 0
+        while j < n and steps < max_track_days:
+            if high[j] > anchor_high:
+                anchor_high, anchor_idx = float(high[j]), j
+            if (anchor_high - low[j]) / anchor_high * 100 >= pullback_pct:
+                call_triggers.setdefault(j, anchor_high)
+                break
+            j += 1
+            steps += 1
 
-    rows = []
-    for bucket in ("PUT_ONLY", "CALL_ONLY", "BOTH", "NEITHER"):
-        idx = np.where(label == bucket)[0]
-        row = {"bucket": bucket, "n": int(len(idx))}
+    put_days, call_days = set(put_triggers), set(call_triggers)
+    both_days = put_days & call_days
+    put_only_days = put_days - both_days
+    call_only_days = call_days - both_days
+    neither_days = set(range(n)) - put_days - call_days
+
+    def _score(idxs, use_put_anchor: bool, use_call_anchor: bool) -> dict:
+        row = {"n": int(len(idxs))}
         for h in forward_horizons:
             touch_low, touch_high, rets = [], [], []
-            for t in idx:
+            for t in idxs:
                 end_k = min(t + h, n - 1)
                 if end_k <= t:
                     continue
-                window_low = low[t + 1:end_k + 1]
-                window_high = high[t + 1:end_k + 1]
-                touch_low.append(bool((window_low < low[t]).any()))
-                touch_high.append(bool((window_high > high[t]).any()))
+                if use_put_anchor:
+                    window_low = low[t + 1:end_k + 1]
+                    touch_low.append(bool(len(window_low) and (window_low < put_triggers[t]).any()))
+                if use_call_anchor:
+                    window_high = high[t + 1:end_k + 1]
+                    touch_high.append(bool(len(window_high) and (window_high > call_triggers[t]).any()))
                 rets.append((close[end_k] - close[t]) / close[t] * 100)
             row[f"touch_low_rate_{h}d%"] = round(float(np.mean(touch_low)) * 100, 1) if touch_low else np.nan
             row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch_high)) * 100, 1) if touch_high else np.nan
             row[f"avg_fwd_ret_{h}d%"] = round(float(np.mean(rets)), 2) if rets else np.nan
-        rows.append(row)
+        return row
+
+    rows = [
+        {"bucket": "PUT_ONLY", **_score(put_only_days, True, False)},
+        {"bucket": "CALL_ONLY", **_score(call_only_days, False, True)},
+        {"bucket": "BOTH", **_score(both_days, True, True)},
+        {"bucket": "NEITHER", **_score(neither_days, False, False)},
+    ]
     return pd.DataFrame(rows)
-    return pd.DataFrame(rows).sort_values("rise_pct").reset_index(drop=True)
