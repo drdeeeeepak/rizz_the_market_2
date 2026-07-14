@@ -85,6 +85,30 @@ other edge in this series.
 8. **Caveats:** same as puts, plus samples thin out fast above ~2% rise size (down
    to single digits) — treat those rows as directional, not precise.
 
+## Pinpoint signal — exact-day long/short (page 24 → "Pinpoint" mode)
+
+A daily directional call built directly from the PUT and CALL rules above,
+using the real episode-anchored trigger (not a raw single-day check — see
+`dual_confirmation_scan` in `analytics/reversal_backtest.py`):
+
+1. **A day can trigger PUT_ONLY, CALL_ONLY, BOTH, or NEITHER.** Live-tested:
+   PUT_ONLY n=40 (touch_low_rate 2.6%/5.1%/15.4% at 3d/5d/10d), CALL_ONLY
+   n=18 (touch_high_rate flat 0.0% at every horizon), BOTH n=**0**, NEITHER
+   n=902 (the vast majority of days — this is a selective, episode-based
+   signal, not a daily one; only ~6% of days produced any trigger at all).
+2. **The "does one side breach if both confirm" question is moot** — BOTH
+   essentially never occurs once the real episode-anchored definition is
+   used (an earlier buggy version that compared against a single day's own
+   low/high showed BOTH as the MAJORITY case and 51-89% touch rates; that
+   was a measurement error, not a real finding — fixed by reusing the same
+   anchor-walk trigger mechanism the rest of this rule book is built on).
+3. **The signal: PUT_ONLY → lean long/sell put. CALL_ONLY → lean short/sell
+   call. BOTH → no tiebreak needed, doesn't meaningfully happen. NEITHER →
+   no signal, stay out.**
+4. **Caveat:** CALL_ONLY's n=18 is a small sample — 0% touch is strong
+   evidence, not a literal guarantee (rule-of-three caution applies, same
+   as elsewhere in this document).
+
 ## Position-management tools for the CALL leg specifically (separate from page 24)
 
 Page 24's call-side analysis answers "is a fresh short call safe to place." For
