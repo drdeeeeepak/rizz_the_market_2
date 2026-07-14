@@ -68,6 +68,13 @@ if is_sameday:
             "the number chosen.")
 
     lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24sd_lb")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        thr_min = st.number_input("Threshold min %", 0.05, 3.0, 0.1, 0.05, key="p24sd_thr_min")
+    with c2:
+        thr_max = st.number_input("Threshold max %", 0.1, 5.0, 3.0, 0.05, key="p24sd_thr_max")
+    with c3:
+        thr_step = st.number_input("Threshold step %", 0.05, 1.0, 0.1, 0.05, key="p24sd_thr_step")
     horizons_str = st.text_input("Forward horizons (trading days, comma-separated)", "3,5,10",
                                  key="p24sd_horizons")
     try:
@@ -81,8 +88,10 @@ if is_sameday:
         return _lf.get_nifty_daily(days=days)
 
     if st.button("▶ Run same-day scan", type="primary", key="p24sd_run"):
+        thresholds = tuple(round(x, 2) for x in np.arange(thr_min, thr_max + thr_step / 2, thr_step))
         st.session_state.p24sd_ran = True
-        st.session_state.p24sd_inputs = dict(lookback=lookback, horizons=horizons)
+        st.session_state.p24sd_inputs = dict(lookback=lookback, horizons=horizons,
+                                             thresholds=thresholds)
 
     if not st.session_state.get("p24sd_ran"):
         st.info("Pick your settings and click Run. Only needs daily candles.")
@@ -96,8 +105,10 @@ if is_sameday:
         st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
         st.stop()
 
-    bounce_scan = rb.same_day_bounce_scan(daily, forward_horizons=_in["horizons"])
-    pullback_scan = rb.same_day_pullback_scan(daily, forward_horizons=_in["horizons"])
+    bounce_scan = rb.same_day_bounce_scan(daily, bounce_pcts=_in["thresholds"],
+                                         forward_horizons=_in["horizons"])
+    pullback_scan = rb.same_day_pullback_scan(daily, pullback_pcts=_in["thresholds"],
+                                              forward_horizons=_in["horizons"])
 
     st.subheader("Low side — today's close X% above today's own low")
     st.dataframe(bounce_scan, use_container_width=True, hide_index=True)

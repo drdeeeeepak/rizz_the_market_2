@@ -9,6 +9,7 @@
 #   python3 scripts/analyze_dual_confirmation.py path/to/nifty_daily.csv
 
 import sys
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, ".")
@@ -72,15 +73,17 @@ def main():
     print("\n=== Forward safety (touch-rate) by bucket ===")
     print(scan.to_string(index=False))
 
-    print("\n=== Same-day, no-merge, no-anchor scan (low side) ===")
+    fine_thresholds = tuple(round(x, 2) for x in np.arange(0.1, 3.01, 0.1))
+
+    print("\n=== Same-day, no-merge, no-anchor scan (low side, 0.1% steps) ===")
     print("If TODAY's close sits X% above TODAY's own low, does TODAY's own low")
     print("hold for the next 3/5/10 days? No episode-merging, no running anchor.")
-    print(rb.same_day_bounce_scan(daily).to_string(index=False))
+    print(rb.same_day_bounce_scan(daily, bounce_pcts=fine_thresholds).to_string(index=False))
 
-    print("\n=== Same-day, no-merge, no-anchor scan (high side) ===")
+    print("\n=== Same-day, no-merge, no-anchor scan (high side, 0.1% steps) ===")
     print("If TODAY's close sits X% below TODAY's own high, does TODAY's own high")
     print("hold for the next 3/5/10 days?")
-    print(rb.same_day_pullback_scan(daily).to_string(index=False))
+    print(rb.same_day_pullback_scan(daily, pullback_pcts=fine_thresholds).to_string(index=False))
 
     out_path = sys.argv[1].rsplit(".", 1)[0] + "_pinpoint_labels.csv"
     labels.to_csv(out_path)
