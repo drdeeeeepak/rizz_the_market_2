@@ -85,12 +85,24 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
                          os_: float = 30.0, entry_mode: str = "zone_exit",
                          max_bars: int = 48, stop_pct: float = 1.5, target_pct: float = 2.5,
                          midline_exit: bool = True, require_divergence: bool = False,
-                         div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
+                         div_lookback: int = 20, div_min_gap: float = 2.0,
+                         require_cooldown: bool = False, cooldown_bars: int = 20) -> pd.DataFrame:
     """
     Exit = first of: stop_pct hit, target_pct hit, RSI midline (50) cross-back
     (if midline_exit), or max_bars candles held (time stop). If a bar's high/low
     range hits both stop and target, the stop is assumed to have hit first
     (conservative — intrabar order is unknowable from OHLC alone).
+
+    require_cooldown — alternative (less blunt) fix for the same "fade a genuine
+    trend, get run over" failure mode require_divergence targets. Instead of
+    judging each signal on momentum confirmation, this just refuses to re-enter
+    the SAME direction within cooldown_bars of the last time that direction was
+    traded — i.e. take the FIRST fade of a stretch, skip the repeat re-triggers
+    that pile on while the trend grinds on. The cooldown for a side clears
+    immediately the moment a trade fires in the OPPOSITE direction (a real
+    reversal has shown up, so the "don't re-fade this side yet" restriction no
+    longer applies).
+
     Returns a trade-log DataFrame, one row per completed trade.
     """
     d = compute_rsi(df, rsi_period)
@@ -103,6 +115,8 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
     rsi = d["rsi"].to_numpy()
     short_sig = d["short_signal"].to_numpy()
     long_sig = d["long_signal"].to_numpy()
+    opposite = {"LONG": "SHORT", "SHORT": "LONG"}
+    last_entry_bar = {"LONG": -10**9, "SHORT": -10**9}
 
     trades = []
     i = 0
@@ -112,6 +126,10 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
         elif long_sig[i]:
             side = "LONG"
         else:
+            i += 1
+            continue
+
+        if require_cooldown and (i - last_entry_bar[side]) < cooldown_bars:
             i += 1
             continue
 
@@ -153,6 +171,8 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
             bars_held=exit_j - i, pnl_pts=round(float(pnl_pts), 2),
             pnl_pct=round(float(pnl_pts / entry_price * 100), 3),
         ))
+        last_entry_bar[side] = i
+        last_entry_bar[opposite[side]] = -10**9   # a reversal clears the other side's cooldown
         i = exit_j + 1   # no new entries while a position is open
 
     return pd.DataFrame(trades)
@@ -201,14 +221,16 @@ def threshold_scan(df: pd.DataFrame, timeframe_label: str, rsi_period: int = 14,
                    ob_os_pairs=DEFAULT_OB_OS_PAIRS, entry_mode: str = "zone_exit",
                    max_bars: int = 48, stop_pct: float = 1.5, target_pct: float = 2.5,
                    midline_exit: bool = True, require_divergence: bool = False,
-                   div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
+                   div_lookback: int = 20, div_min_gap: float = 2.0,
+                   require_cooldown: bool = False, cooldown_bars: int = 20) -> pd.DataFrame:
     """Grid-scan OB/OS threshold pairs for one timeframe — the table that answers
     'which threshold (and, joined across timeframes, which timeframe) actually works'."""
     rows = []
     for ob, os_ in ob_os_pairs:
         trades = simulate_fade_trades(df, rsi_period, ob, os_, entry_mode, max_bars,
                                       stop_pct, target_pct, midline_exit,
-                                      require_divergence, div_lookback, div_min_gap)
+                                      require_divergence, div_lookback, div_min_gap,
+                                      require_cooldown, cooldown_bars)
         stats = trade_stats(trades)
         stats.update(timeframe=timeframe_label, ob=ob, os=os_)
         rows.append(stats)
@@ -223,19 +245,24 @@ def compare_timeframes(dfs: dict, rsi_period: int = 14, ob_os_pairs=DEFAULT_OB_O
                        entry_mode: str = "zone_exit", max_bars_map: dict = None,
                        stop_pct: float = 1.5, target_pct: float = 2.5,
                        midline_exit: bool = True, require_divergence: bool = False,
-                       div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
-    """dfs: {timeframe_label: ohlc_df}. max_bars_map: {timeframe_label: max_bars}
+                       div_lookback: int = 20, div_min_gap: float = 2.0,
+                       require_cooldown: bool = False, cooldown_bars_map: dict = None) -> pd.DataFrame:
+    """dfs: {timeframe_label: ohlc_df}. max_bars_map / cooldown_bars_map: {timeframe_label: bars}
     (bar counts don't mean the same thing across timeframes — 48 30m-bars is 1
-    trading day, 48 60m-bars is 8 — so each timeframe gets its own time-stop)."""
+    trading day, 48 60m-bars is 8 — so each timeframe gets its own time-stop and
+    its own cooldown window)."""
     max_bars_map = max_bars_map or {}
+    cooldown_bars_map = cooldown_bars_map or {}
     parts = []
     for label, df in dfs.items():
         if df is None or df.empty:
             continue
         mb = max_bars_map.get(label, 48)
+        cb = cooldown_bars_map.get(label, 20)
         parts.append(threshold_scan(df, label, rsi_period, ob_os_pairs, entry_mode,
                                     mb, stop_pct, target_pct, midline_exit,
-                                    require_divergence, div_lookback, div_min_gap))
+                                    require_divergence, div_lookback, div_min_gap,
+                                    require_cooldown, cb))
     if not parts:
         return pd.DataFrame()
     return pd.concat(parts, ignore_index=True).sort_values(

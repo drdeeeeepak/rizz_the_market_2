@@ -109,6 +109,30 @@ with f2:
 with f3:
     div_min_gap = st.number_input("Min RSI gap (points)", 0.0, 15.0, 2.0, 0.5,
                                   key="p28_div_gap", disabled=not require_divergence)
+st.caption("⚠️ Tested live: this blocked the March pile-on entirely, but it also blocked most "
+          "of the best month (Feb 2026) — fast V-shaped reversals don't leave RSI time to "
+          "diverge either. Try loosening the gap/lookback, or use the cooldown filter below "
+          "instead — it's a less blunt fix for the same problem.")
+
+st.markdown("**Trend filter — option 3: cooldown between same-direction re-entries**")
+st.caption(
+    "A less blunt alternative to divergence: instead of judging each signal on momentum "
+    "confirmation, this just takes the FIRST fade of a stretch and refuses to re-enter the "
+    "SAME direction again until cooldown_bars has passed — no repeat re-triggers piling on "
+    "while a trend grinds on. The cooldown clears immediately the moment a trade fires in the "
+    "OPPOSITE direction (a real reversal already showed up, so the restriction no longer "
+    "applies). Unlike divergence, this doesn't touch the FIRST trade of any stretch — including "
+    "fast V-reversals — so it should cost less of the good trades.")
+g1, g2, g3 = st.columns(3)
+with g1:
+    require_cooldown = st.checkbox("Require cooldown between same-direction re-entries",
+                                   value=False, key="p28_cooldown")
+with g2:
+    cooldown_bars_30m = st.number_input("30m cooldown (candles, 12/day)", 4, 240, 48, 4,
+                                        key="p28_cooldown30", disabled=not require_cooldown)
+with g3:
+    cooldown_bars_60m = st.number_input("60m cooldown (candles, 6/day)", 2, 120, 24, 2,
+                                        key="p28_cooldown60", disabled=not require_cooldown)
 
 run = st.button("▶ Run backtest", type="primary", key="p28_run")
 if run:
@@ -120,6 +144,8 @@ if run:
         max_bars_30m=int(max_bars_30m), max_bars_60m=int(max_bars_60m),
         require_divergence=require_divergence, div_lookback=int(div_lookback),
         div_min_gap=float(div_min_gap),
+        require_cooldown=require_cooldown, cooldown_bars_30m=int(cooldown_bars_30m),
+        cooldown_bars_60m=int(cooldown_bars_60m),
     )
 
 if not st.session_state.get("p28_ran"):
@@ -148,6 +174,18 @@ if (df_30m is None or df_30m.empty) and (df_60m is None or df_60m.empty):
     st.error("Could not load either 30m or 60m Nifty history. Log in via Home → Kite, then retry.")
     st.stop()
 
+if df_30m is None or df_30m.empty:
+    st.warning(
+        "30m history came back empty — 60m loaded fine below, but the 30m half of every "
+        "section on this page will be blank. `get_nifty_30m()` swallows its own errors and "
+        "returns empty on failure (never crashes), and this page caches THAT result for 30 "
+        "minutes — so a transient failure (or an older cached empty result from before a fix "
+        "was deployed) can look like a permanent one. Click below to force a fresh fetch.")
+    if st.button("🔄 Clear cached 30m/60m fetch & retry", key="p28_clear_cache"):
+        _load_30m.clear()
+        _load_60m.clear()
+        st.rerun()
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Detailed single-config backtest — per timeframe
 # ══════════════════════════════════════════════════════════════════════════════
@@ -156,12 +194,12 @@ st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f
             f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
 
 tf_configs = [
-    ("30-minute", df_30m, _in["max_bars_30m"]),
-    ("60-minute (hourly)", df_60m, _in["max_bars_60m"]),
+    ("30-minute", df_30m, _in["max_bars_30m"], _in.get("cooldown_bars_30m", 48)),
+    ("60-minute (hourly)", df_60m, _in["max_bars_60m"], _in.get("cooldown_bars_60m", 24)),
 ]
 
 detail_cols = st.columns(2)
-for col, (label, df, max_bars) in zip(detail_cols, tf_configs):
+for col, (label, df, max_bars, cooldown_bars) in zip(detail_cols, tf_configs):
     with col:
         st.markdown(f"**{label}**")
         if df is None or df.empty:
@@ -172,7 +210,8 @@ for col, (label, df, max_bars) in zip(detail_cols, tf_configs):
             entry_mode=_in["entry_mode"], max_bars=max_bars, stop_pct=_in["stop_pct"],
             target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
             require_divergence=_in.get("require_divergence", False),
-            div_lookback=_in.get("div_lookback", 20), div_min_gap=_in.get("div_min_gap", 2.0))
+            div_lookback=_in.get("div_lookback", 20), div_min_gap=_in.get("div_min_gap", 2.0),
+            require_cooldown=_in.get("require_cooldown", False), cooldown_bars=cooldown_bars)
         stats = rfb.trade_stats(trades)
 
         m1, m2, m3 = st.columns(3)
@@ -218,13 +257,17 @@ st.caption("Runs OB/OS pairs 65/35, 70/30, 75/25, 80/20 on both timeframes with 
 
 dfs = {"30-minute": df_30m, "60-minute (hourly)": df_60m}
 max_bars_map = {"30-minute": _in["max_bars_30m"], "60-minute (hourly)": _in["max_bars_60m"]}
+cooldown_bars_map = {"30-minute": _in.get("cooldown_bars_30m", 48),
+                     "60-minute (hourly)": _in.get("cooldown_bars_60m", 24)}
 
 scan = rfb.compare_timeframes(dfs, rsi_period=_in["rsi_period"], entry_mode=_in["entry_mode"],
                               max_bars_map=max_bars_map, stop_pct=_in["stop_pct"],
                               target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
                               require_divergence=_in.get("require_divergence", False),
                               div_lookback=_in.get("div_lookback", 20),
-                              div_min_gap=_in.get("div_min_gap", 2.0))
+                              div_min_gap=_in.get("div_min_gap", 2.0),
+                              require_cooldown=_in.get("require_cooldown", False),
+                              cooldown_bars_map=cooldown_bars_map)
 
 if scan.empty:
     st.caption("Not enough data loaded to run the scan.")
