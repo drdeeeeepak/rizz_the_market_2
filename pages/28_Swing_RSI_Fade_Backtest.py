@@ -185,6 +185,161 @@ else:
             else:
                 st.info("⭕ No Bear Call signal right now")
 
+    # Historical RSI table (last 5 trading days)
+    st.divider()
+    st.subheader("📋 Historical RSI Status (Last 5 Trading Days)")
+    st.caption("7 × 60m candles + 13 × 30m candles per day | Signals show when Bull Put/Bear Call/Roll conditions were met")
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _fetch_hist_60m():
+        try:
+            return _lf.get_nifty_1h_phase(days=6)
+        except Exception:
+            return None
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _fetch_hist_30m():
+        try:
+            return _lf.get_nifty_30m(days=6)
+        except Exception:
+            return None
+
+    df_hist_60m = _fetch_hist_60m()
+    df_hist_30m = _fetch_hist_30m()
+
+    if df_hist_60m is not None and not df_hist_60m.empty:
+        df_hist_60m = rfb.compute_rsi(df_hist_60m, 14)
+    if df_hist_30m is not None and not df_hist_30m.empty:
+        df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
+
+    if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
+        def _build_hist_table(df_60m, df_30m):
+            """Build historical RSI table by date"""
+            if df_60m is None or df_60m.empty:
+                df_60m = pd.DataFrame()
+            if df_30m is None or df_30m.empty:
+                df_30m = pd.DataFrame()
+
+            rows = []
+
+            # Normalize index to datetime
+            if not df_60m.empty and not isinstance(df_60m.index, pd.DatetimeIndex):
+                df_60m.index = pd.to_datetime(df_60m.index)
+            if not df_30m.empty and not isinstance(df_30m.index, pd.DatetimeIndex):
+                df_30m.index = pd.to_datetime(df_30m.index)
+
+            # Get last 5 trading days
+            if not df_60m.empty:
+                dates_60m = df_60m.index.date
+                unique_dates = sorted(set(dates_60m), reverse=True)[:5]
+            elif not df_30m.empty:
+                dates_30m = df_30m.index.date
+                unique_dates = sorted(set(dates_30m), reverse=True)[:5]
+            else:
+                return pd.DataFrame()
+
+            for date in sorted(unique_dates):
+                rows.append({
+                    'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
+                    '60m_RSI': None, '60m_Zone': '', '60m_Trend': '',
+                    '30m_RSI': None, '30m_Zone': '', '30m_Trend': '', 'Signal': ''
+                })
+
+                # 60m candles for this date
+                if not df_60m.empty:
+                    day_60m = df_60m[df_60m.index.date == date]
+                    for i, (idx, row) in enumerate(day_60m.iterrows()):
+                        rsi_val = row['rsi']
+                        if pd.isna(rsi_val):
+                            continue
+
+                        zone_dot, zone_label = _rsi_zone(rsi_val)
+                        prev_rsi = day_60m['rsi'].iloc[i-1] if i > 0 else rsi_val
+                        trend = _trend_arrow(prev_rsi, rsi_val)
+
+                        # Determine signal
+                        signal = ""
+                        if rsi_val < 25 and i > 0 and day_60m['rsi'].iloc[i-1] > 30:
+                            signal = "✅ OVERSOLD"
+                        elif rsi_val > 75 and i > 0 and day_60m['rsi'].iloc[i-1] < 70:
+                            signal = "✅ OVERBOUGHT"
+                        elif rsi_val < 22:
+                            signal = "🔴 EXTREME OS"
+                        elif rsi_val > 78:
+                            signal = "🔴 EXTREME OB"
+
+                        rows.append({
+                            'Time': idx.strftime('%H:%M'),
+                            '60m_RSI': f"{rsi_val:.1f}",
+                            '60m_Zone': f"{zone_dot} {zone_label}",
+                            '60m_Trend': trend,
+                            '30m_RSI': '',
+                            '30m_Zone': '',
+                            '30m_Trend': '',
+                            'Signal': signal
+                        })
+
+                # 30m candles for this date
+                if not df_30m.empty:
+                    day_30m = df_30m[df_30m.index.date == date]
+                    for i, (idx, row) in enumerate(day_30m.iterrows()):
+                        rsi_val = row['rsi']
+                        if pd.isna(rsi_val):
+                            continue
+
+                        zone_dot, zone_label = _rsi_zone(rsi_val)
+                        prev_rsi = day_30m['rsi'].iloc[i-1] if i > 0 else rsi_val
+                        trend = _trend_arrow(prev_rsi, rsi_val)
+
+                        # Determine signal
+                        signal = ""
+                        if rsi_val < 25 and i > 0 and day_30m['rsi'].iloc[i-1] > 30:
+                            signal = "✅ BULL PUT"
+                        elif rsi_val > 75 and i > 0 and day_30m['rsi'].iloc[i-1] < 70:
+                            signal = "✅ BEAR CALL"
+                        elif rsi_val < 22:
+                            signal = "🔴 ROLL DOWN"
+                        elif rsi_val > 78:
+                            signal = "🔴 ROLL UP"
+
+                        rows.append({
+                            'Time': idx.strftime('%H:%M'),
+                            '60m_RSI': '',
+                            '60m_Zone': '',
+                            '60m_Trend': '',
+                            '30m_RSI': f"{rsi_val:.1f}",
+                            '30m_Zone': f"{zone_dot} {zone_label}",
+                            '30m_Trend': trend,
+                            'Signal': signal
+                        })
+
+            return pd.DataFrame(rows)
+
+        hist_table = _build_hist_table(df_hist_60m, df_hist_30m)
+
+        if not hist_table.empty:
+            # Display table
+            st.dataframe(
+                hist_table,
+                use_container_width=True,
+                hide_index=True,
+                height=600
+            )
+
+            # Download button
+            csv_data = hist_table.to_csv(index=False)
+            st.download_button(
+                "⬇ Download Historical RSI as CSV",
+                csv_data.encode('utf-8'),
+                file_name="nifty_rsi_historical_5days.csv",
+                mime="text/csv",
+                key="hist_rsi_download"
+            )
+        else:
+            st.warning("Not enough historical data to display table.")
+    else:
+        st.info("Historical RSI data loading… (requires 5+ days of data)")
+
     # Mini RSI trend charts
     st.divider()
     chart_col1, chart_col2 = st.columns(2)
