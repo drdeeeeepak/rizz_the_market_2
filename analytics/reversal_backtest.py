@@ -18,6 +18,23 @@ import pandas as pd
 
 DEFAULT_THRESHOLDS = tuple(round(x, 2) for x in np.arange(0.25, 3.01, 0.25))
 
+# Named Pinpoint parameter sets — dual_confirmation_daily_labels/dual_confirmation_scan
+# (used live by page 27's Pinpoint section and page 24's Pinpoint mode) default to
+# whichever preset ACTIVE_PINPOINT_PRESET names below. To switch what's live everywhere
+# (page 27 snapshot/table/chart, page 24 defaults), change ONLY the ACTIVE_PINPOINT_PRESET
+# string and reload — no other file needs editing. Add new presets here as more get tested.
+PINPOINT_PRESETS = {
+    "current_live": dict(bounce_pct=0.25, pullback_pct=0.25, fall_trigger_pct=0.0,
+                         rise_trigger_pct=0.0, merge_gap_days=1),
+    "lower_confirmation_0.1": dict(bounce_pct=0.10, pullback_pct=0.10, fall_trigger_pct=0.0,
+                                   rise_trigger_pct=0.0, merge_gap_days=1),
+    "tighter_formation_0.5": dict(bounce_pct=0.25, pullback_pct=0.25, fall_trigger_pct=0.5,
+                                  rise_trigger_pct=0.5, merge_gap_days=1),
+    "both_combined": dict(bounce_pct=0.10, pullback_pct=0.10, fall_trigger_pct=0.5,
+                          rise_trigger_pct=0.5, merge_gap_days=1),
+}
+ACTIVE_PINPOINT_PRESET = "current_live"
+
 
 def _norm_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
@@ -743,10 +760,14 @@ def _dual_confirmation_triggers(daily: pd.DataFrame, bounce_pct: float, pullback
     return put_triggers, call_triggers
 
 
-def dual_confirmation_daily_labels(daily: pd.DataFrame, bounce_pct: float = 0.25,
-                                   pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
-                                   rise_trigger_pct: float = 0.0, merge_gap_days: int = 1,
-                                   max_track_days: int = 30) -> pd.DataFrame:
+def dual_confirmation_daily_labels(
+        daily: pd.DataFrame,
+        bounce_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["bounce_pct"],
+        pullback_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["pullback_pct"],
+        fall_trigger_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["fall_trigger_pct"],
+        rise_trigger_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["rise_trigger_pct"],
+        merge_gap_days: int = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["merge_gap_days"],
+        max_track_days: int = 30) -> pd.DataFrame:
     """Per-day table — one row per trading day with its Pinpoint label
     (PUT_ONLY / CALL_ONLY / BOTH / NEITHER) and the relevant anchor level(s),
     for the live snapshot (today's row), a historical verification table
@@ -778,11 +799,15 @@ def dual_confirmation_daily_labels(daily: pd.DataFrame, bounce_pct: float = 0.25
     }).set_index("date")
 
 
-def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
-                           pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
-                           rise_trigger_pct: float = 0.0, merge_gap_days: int = 1,
-                           max_track_days: int = 30,
-                           forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+def dual_confirmation_scan(
+        daily: pd.DataFrame,
+        bounce_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["bounce_pct"],
+        pullback_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["pullback_pct"],
+        fall_trigger_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["fall_trigger_pct"],
+        rise_trigger_pct: float = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["rise_trigger_pct"],
+        merge_gap_days: int = PINPOINT_PRESETS[ACTIVE_PINPOINT_PRESET]["merge_gap_days"],
+        max_track_days: int = 30,
+        forward_horizons=(3, 5, 10)) -> pd.DataFrame:
     """Finds every fall-episode's PUT trigger day (bounce_pct off the
     episode's anchor low, walking the anchor down on new lower lows exactly
     like reversal_threshold_scan_daily) and every rise-episode's CALL
@@ -965,3 +990,26 @@ def rolling_high_pullback_scan(daily: pd.DataFrame, lookback_days: int = 2,
             row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def compare_pinpoint_presets(daily: pd.DataFrame, presets: dict = None,
+                             forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """Runs dual_confirmation_scan once per named preset in PINPOINT_PRESETS (or a
+    custom presets dict passed in) and stacks every result into ONE comparison table,
+    tagged by a 'preset' column — so testing several parameter sets never requires
+    touching sliders one at a time. 'current_live' is always the baseline row to
+    compare everything else against; it's whatever ACTIVE_PINPOINT_PRESET points to
+    in dual_confirmation_daily_labels/dual_confirmation_scan's own defaults, so this
+    table and the live page always describe the same thing unless you deliberately
+    pass a different presets dict here."""
+    presets = presets or PINPOINT_PRESETS
+    rows = []
+    for name, p in presets.items():
+        scan = dual_confirmation_scan(daily, bounce_pct=p["bounce_pct"], pullback_pct=p["pullback_pct"],
+                                      fall_trigger_pct=p["fall_trigger_pct"],
+                                      rise_trigger_pct=p["rise_trigger_pct"],
+                                      merge_gap_days=p["merge_gap_days"],
+                                      forward_horizons=forward_horizons)
+        scan.insert(0, "preset", name)
+        rows.append(scan)
+    return pd.concat(rows, ignore_index=True)

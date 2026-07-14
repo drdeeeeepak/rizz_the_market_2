@@ -96,6 +96,13 @@ def main():
         print(rb.rolling_high_pullback_scan(daily, lookback_days=n_days,
                                             pullback_pcts=fine_thresholds).to_string(index=False))
 
+    print("\n=== Pinpoint preset comparison (current_live vs. more-events variants) ===")
+    compare_df = rb.compare_pinpoint_presets(daily)
+    print(compare_df.to_string(index=False))
+    compare_path = sys.argv[1].rsplit(".", 1)[0] + "_preset_comparison.csv"
+    compare_df.to_csv(compare_path, index=False)
+    print(f"Preset comparison written to {compare_path}")
+
     out_path = sys.argv[1].rsplit(".", 1)[0] + "_pinpoint_labels.csv"
     labels.to_csv(out_path)
     print(f"\nFull per-day label table written to {out_path}")

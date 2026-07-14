@@ -264,6 +264,32 @@ if is_pinpoint:
                            file_name="dual_confirmation_scan.csv", mime="text/csv",
                            key="p24p_dl_scan")
 
+    st.divider()
+    st.subheader("Preset comparison — auto-tests more-events variants, one click")
+    st.caption(
+        "Runs 4 FIXED presets from `analytics/reversal_backtest.py` (`PINPOINT_PRESETS`) in one "
+        "click — no sliders to set: **current_live** (today's default — 0.25% confirm, 0% "
+        "formation trigger), **lower_confirmation_0.1** (confirm dropped to 0.1%, already known "
+        "safety-flat from the rule book), **tighter_formation_0.5** (formation trigger raised to "
+        "0.5% — fewer noise-dips merging into one giant episode, so MORE independent episodes), "
+        "and **both_combined**. Compare `n` and touch rates per preset in one table before "
+        "deciding whether a change is worth making live.")
+    if st.button("▶ Run preset comparison", key="p24p_compare_run"):
+        st.session_state.p24p_compare_ran = True
+    if st.session_state.get("p24p_compare_ran"):
+        compare_df = rb.compare_pinpoint_presets(daily, forward_horizons=_in["horizons"])
+        st.dataframe(compare_df, use_container_width=True, hide_index=True)
+        st.download_button("Download preset comparison CSV",
+                           compare_df.to_csv(index=False).encode("utf-8"),
+                           file_name="pinpoint_preset_comparison.csv", mime="text/csv",
+                           key="p24p_compare_dl")
+        st.caption(
+            f"**Currently LIVE preset** (used by page 27's snapshot/table/chart and this page's "
+            f"own defaults above): `{rb.ACTIVE_PINPOINT_PRESET}`. To switch, change ONLY the "
+            f"`ACTIVE_PINPOINT_PRESET` line near the top of `analytics/reversal_backtest.py` to "
+            f"one of the preset names above and redeploy — every page picks it up automatically, "
+            f"nothing else needs editing. To revert, change it back to `\"current_live\"`.")
+
     st.stop()
 
 if is_fall:
