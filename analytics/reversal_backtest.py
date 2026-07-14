@@ -843,3 +843,62 @@ def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
         {"bucket": "NEITHER", **_score(neither_days, False, False)},
     ]
     return pd.DataFrame(rows)
+
+
+def same_day_bounce_scan(daily: pd.DataFrame, bounce_pcts=DEFAULT_THRESHOLDS,
+                         forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """The naive, no-merge, no-anchor version of the low-side signal: does
+    TODAY's close sit bounce_pct% above TODAY's OWN low (close is the ~3:25pm
+    proxy - daily bars carry no intraday ticks), with no episode-merging and
+    no multi-day anchor tracking at all. For each threshold, reports how
+    often TODAY's own low gets touched again within the next h trading days.
+    Directly answers "if today's close is X% above today's low, is today's
+    low safe for N days" without needing to track a running low across
+    multiple days - contrast with reversal_threshold_scan_daily, which asks
+    the same safety question but off an anchor that may be several days old."""
+    d = _norm_ohlc(daily)
+    close, low = d["close"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+    bounce_today = (close - low) / low * 100
+
+    rows = []
+    for thr in bounce_pcts:
+        idxs = np.where(bounce_today >= thr)[0]
+        row = {"bounce_pct": float(thr), "n": int(len(idxs))}
+        for h in forward_horizons:
+            touch = []
+            for t in idxs:
+                end_k = min(t + h, n - 1)
+                if end_k <= t:
+                    continue
+                touch.append(bool((low[t + 1:end_k + 1] < low[t]).any()))
+            row[f"touch_low_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def same_day_pullback_scan(daily: pd.DataFrame, pullback_pcts=DEFAULT_THRESHOLDS,
+                           forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """Mirror of same_day_bounce_scan for the high side: does today's close
+    sit pullback_pct% below today's OWN high, no merging/anchor tracking.
+    For each threshold, reports how often today's own high gets touched
+    again within the next h trading days."""
+    d = _norm_ohlc(daily)
+    close, high = d["close"].to_numpy(), d["high"].to_numpy()
+    n = len(d)
+    pullback_today = (high - close) / high * 100
+
+    rows = []
+    for thr in pullback_pcts:
+        idxs = np.where(pullback_today >= thr)[0]
+        row = {"pullback_pct": float(thr), "n": int(len(idxs))}
+        for h in forward_horizons:
+            touch = []
+            for t in idxs:
+                end_k = min(t + h, n - 1)
+                if end_k <= t:
+                    continue
+                touch.append(bool((high[t + 1:end_k + 1] > high[t]).any()))
+            row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)

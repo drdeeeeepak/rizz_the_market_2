@@ -72,6 +72,16 @@ def main():
     print("\n=== Forward safety (touch-rate) by bucket ===")
     print(scan.to_string(index=False))
 
+    print("\n=== Same-day, no-merge, no-anchor scan (low side) ===")
+    print("If TODAY's close sits X% above TODAY's own low, does TODAY's own low")
+    print("hold for the next 3/5/10 days? No episode-merging, no running anchor.")
+    print(rb.same_day_bounce_scan(daily).to_string(index=False))
+
+    print("\n=== Same-day, no-merge, no-anchor scan (high side) ===")
+    print("If TODAY's close sits X% below TODAY's own high, does TODAY's own high")
+    print("hold for the next 3/5/10 days?")
+    print(rb.same_day_pullback_scan(daily).to_string(index=False))
+
     out_path = sys.argv[1].rsplit(".", 1)[0] + "_pinpoint_labels.csv"
     labels.to_csv(out_path)
     print(f"\nFull per-day label table written to {out_path}")
