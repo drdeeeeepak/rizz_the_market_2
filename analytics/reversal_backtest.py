@@ -691,6 +691,93 @@ def min_pullback_by_rise_size(grid: pd.DataFrame, horizon: int, max_touch_rate: 
 # the rest of page 24's validated results.
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _dual_confirmation_triggers(daily: pd.DataFrame, bounce_pct: float, pullback_pct: float,
+                                fall_trigger_pct: float, rise_trigger_pct: float,
+                                merge_gap_days: int, max_track_days: int):
+    """Shared core for dual_confirmation_scan (aggregate stats) and
+    dual_confirmation_daily_labels (per-day table / live snapshot / chart
+    markers) — finds every fall-episode's PUT trigger day (bounce_pct off
+    the episode's anchor low, walking the anchor down on new lower lows
+    exactly like reversal_threshold_scan_daily) and every rise-episode's
+    CALL trigger day (pullback_pct off the episode's anchor high, mirrored).
+    Returns (put_triggers, call_triggers) — each a dict of trigger day index
+    -> anchor level at the moment of trigger, one entry per episode that
+    actually confirms within max_track_days."""
+    d = _norm_ohlc(daily)
+    close, high, low = d["close"].to_numpy(), d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+
+    fall_episodes = find_fall_episodes_daily(daily, fall_1d_pct=fall_trigger_pct, fall_2d_pct=1e9,
+                                             merge_gap_days=merge_gap_days,
+                                             require_green_confirmation=False)
+    rise_episodes = find_rise_episodes_daily(daily, rise_1d_pct=rise_trigger_pct, rise_2d_pct=1e9,
+                                             merge_gap_days=merge_gap_days,
+                                             require_red_confirmation=False)
+
+    put_triggers: dict[int, float] = {}
+    for _, ep in fall_episodes.iterrows():
+        anchor_idx, anchor_low = int(ep["low_idx"]), float(ep["low"])
+        j, steps = anchor_idx + 1, 0
+        while j < n and steps < max_track_days:
+            if low[j] < anchor_low:
+                anchor_low, anchor_idx = float(low[j]), j
+            if (high[j] - anchor_low) / anchor_low * 100 >= bounce_pct:
+                put_triggers.setdefault(j, anchor_low)
+                break
+            j += 1
+            steps += 1
+
+    call_triggers: dict[int, float] = {}
+    for _, ep in rise_episodes.iterrows():
+        anchor_idx, anchor_high = int(ep["high_idx"]), float(ep["high"])
+        j, steps = anchor_idx + 1, 0
+        while j < n and steps < max_track_days:
+            if high[j] > anchor_high:
+                anchor_high, anchor_idx = float(high[j]), j
+            if (anchor_high - low[j]) / anchor_high * 100 >= pullback_pct:
+                call_triggers.setdefault(j, anchor_high)
+                break
+            j += 1
+            steps += 1
+
+    return put_triggers, call_triggers
+
+
+def dual_confirmation_daily_labels(daily: pd.DataFrame, bounce_pct: float = 0.25,
+                                   pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
+                                   rise_trigger_pct: float = 0.0, merge_gap_days: int = 1,
+                                   max_track_days: int = 30) -> pd.DataFrame:
+    """Per-day table — one row per trading day with its Pinpoint label
+    (PUT_ONLY / CALL_ONLY / BOTH / NEITHER) and the relevant anchor level(s),
+    for the live snapshot (today's row), a historical verification table
+    (last N rows), and chart markers (every PUT_ONLY/CALL_ONLY row). Same
+    trigger definitions as dual_confirmation_scan — see that function's
+    docstring for the full rationale."""
+    d = _norm_ohlc(daily)
+    n = len(d)
+    if n < 5:
+        return pd.DataFrame()
+
+    put_triggers, call_triggers = _dual_confirmation_triggers(
+        daily, bounce_pct, pullback_pct, fall_trigger_pct, rise_trigger_pct,
+        merge_gap_days, max_track_days)
+
+    label = np.full(n, "NEITHER", dtype=object)
+    anchor_low_col = np.full(n, np.nan)
+    anchor_high_col = np.full(n, np.nan)
+    for idx, anchor in put_triggers.items():
+        label[idx] = "BOTH" if idx in call_triggers else "PUT_ONLY"
+        anchor_low_col[idx] = anchor
+    for idx, anchor in call_triggers.items():
+        label[idx] = "BOTH" if idx in put_triggers else "CALL_ONLY"
+        anchor_high_col[idx] = anchor
+
+    return pd.DataFrame({
+        "date": d.index, "close": d["close"].to_numpy(), "label": label,
+        "anchor_low": anchor_low_col, "anchor_high": anchor_high_col,
+    }).set_index("date")
+
+
 def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
                            pullback_pct: float = 0.25, fall_trigger_pct: float = 0.0,
                            rise_trigger_pct: float = 0.0, merge_gap_days: int = 1,
@@ -719,40 +806,9 @@ def dual_confirmation_scan(daily: pd.DataFrame, bounce_pct: float = 0.25,
     if n < 5:
         return pd.DataFrame()
 
-    fall_episodes = find_fall_episodes_daily(daily, fall_1d_pct=fall_trigger_pct, fall_2d_pct=1e9,
-                                             merge_gap_days=merge_gap_days,
-                                             require_green_confirmation=False)
-    rise_episodes = find_rise_episodes_daily(daily, rise_1d_pct=rise_trigger_pct, rise_2d_pct=1e9,
-                                             merge_gap_days=merge_gap_days,
-                                             require_red_confirmation=False)
-
-    # trigger day index -> anchor level at the moment of trigger, one entry
-    # per episode that actually confirms within max_track_days.
-    put_triggers: dict[int, float] = {}
-    for _, ep in fall_episodes.iterrows():
-        anchor_idx, anchor_low = int(ep["low_idx"]), float(ep["low"])
-        j, steps = anchor_idx + 1, 0
-        while j < n and steps < max_track_days:
-            if low[j] < anchor_low:
-                anchor_low, anchor_idx = float(low[j]), j
-            if (high[j] - anchor_low) / anchor_low * 100 >= bounce_pct:
-                put_triggers.setdefault(j, anchor_low)
-                break
-            j += 1
-            steps += 1
-
-    call_triggers: dict[int, float] = {}
-    for _, ep in rise_episodes.iterrows():
-        anchor_idx, anchor_high = int(ep["high_idx"]), float(ep["high"])
-        j, steps = anchor_idx + 1, 0
-        while j < n and steps < max_track_days:
-            if high[j] > anchor_high:
-                anchor_high, anchor_idx = float(high[j]), j
-            if (anchor_high - low[j]) / anchor_high * 100 >= pullback_pct:
-                call_triggers.setdefault(j, anchor_high)
-                break
-            j += 1
-            steps += 1
+    put_triggers, call_triggers = _dual_confirmation_triggers(
+        daily, bounce_pct, pullback_pct, fall_trigger_pct, rise_trigger_pct,
+        merge_gap_days, max_track_days)
 
     put_days, call_days = set(put_triggers), set(call_triggers)
     both_days = put_days & call_days

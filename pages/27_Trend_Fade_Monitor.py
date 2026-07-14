@@ -12,10 +12,12 @@ import plotly.graph_objects as go
 import importlib
 import data.live_fetcher as _lf
 from analytics import position_sizing_backtest as ps
+from analytics import reversal_backtest as rb
 
 try:
     importlib.reload(_lf)
     importlib.reload(ps)
+    importlib.reload(rb)
 except Exception:
     pass
 
@@ -106,43 +108,70 @@ if snap["bucket"] != "DOWN":
                "downtrend day.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Live intraday check — genuinely updates every hour, unlike the reading above
+# Pinpoint signal — page 24's episode-anchored fall/bounce + rise/pullback,
+# replaces the old intraday-only check
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
-st.subheader("Live intraday check")
-st.caption("The reading above only refreshes at market close. THIS updates every hour, straight "
-           "off today's still-forming price — it's page 24's own validated fall/bounce and "
-           "rise/pullback rule (see docs/PAGE_24_RULE_BOOK.md), answering a different question: "
-           "**has today already shown a confirmed move worth trusting for a FRESH short right "
-           "now** — not which leg to size heavier for the cycle.")
+st.subheader("Pinpoint signal — page 24's exact-day long/short")
+st.caption("Replaces the old intraday-only check, which compared today's price against TODAY's "
+           "OWN high/low — a shallow level that turned out NOT to match what page 24 actually "
+           "validated (that version would have shown 51-89% touch rates if backtested — a real "
+           "bug, not a real finding). This uses the SAME episode-anchored trigger the rest of "
+           "page 24 is built on: the true capitulation low/high, which can sit days earlier and "
+           "can walk further before the bounce/pullback confirms. That makes this EOD-only, like "
+           "the composite reading above — no longer a live intraday updater.")
 
-intraday = ps.intraday_reversal_snapshot(daily, h1 if h1 is not None else pd.DataFrame())
+pinpoint_labels = rb.dual_confirmation_daily_labels(daily)
 
-if not intraday:
-    st.info("Not enough of today's candles yet to compute this.")
+if pinpoint_labels.empty:
+    st.info("Not enough daily history to compute this.")
 else:
-    ic1, ic2, ic3, ic4 = st.columns(4)
-    ic1.metric("Prior close", f"{intraday['prior_close']:,.1f}")
-    ic2.metric("Today's high so far", f"{intraday['today_high']:,.1f}")
-    ic3.metric("Today's low so far", f"{intraday['today_low']:,.1f}")
-    ic4.metric("Now", f"{intraday['current']:,.1f}")
+    today_row = pinpoint_labels.iloc[-1]
+    today_lbl = today_row["label"]
+    _pin_word = {"PUT_ONLY": "LEAN LONG — sell PUT", "CALL_ONLY": "LEAN SHORT — sell CALL",
+                "BOTH": "BOTH SIDES SAFE (rare — no tiebreak needed)", "NEITHER": "NO SIGNAL — stay out"}
+    _pin_colour = {"PUT_ONLY": "#16a34a", "CALL_ONLY": "#dc2626", "BOTH": "#0ea5e9", "NEITHER": "#64748b"}
+    _today_colour = _pin_colour.get(today_lbl, "#64748b")
+    _today_word = _pin_word.get(today_lbl, today_lbl)
+    st.markdown(
+        f"### As of {pinpoint_labels.index[-1].date()}: "
+        f"<span style='color:{_today_colour}'>**{_today_word}**</span>",
+        unsafe_allow_html=True)
+    if today_lbl == "PUT_ONLY":
+        st.caption(f"Anchor low: {today_row['anchor_low']:,.1f} — this reading held (never touched "
+                  f"again) 97.4%/94.9% of the time out to 3d/5d in the live backtest (n=40).")
+    elif today_lbl == "CALL_ONLY":
+        st.caption(f"Anchor high: {today_row['anchor_high']:,.1f} — this reading held 100%/100% of "
+                  f"the time out to 3d/5d in the live backtest (n=18 — small sample, treat as "
+                  f"strong evidence, not a guarantee).")
+    elif today_lbl == "NEITHER":
+        st.caption("No confirmed reversal trigger today — this is the MAJORITY reading (only ~6% "
+                  "of days show any trigger at all in the live backtest), not a gap in the data.")
+    else:
+        st.caption("Both sides confirmed today — historically a near-zero-occurrence event "
+                  "(n=0 in the live backtest). Worth a second look before acting on it.")
 
-    put_s, call_s = intraday["put_side"], intraday["call_side"]
+    st.markdown("**Last 10 days — visual verification**")
+    hist10 = pinpoint_labels.tail(10).iloc[::-1].reset_index()
+    hist10["date"] = hist10["date"].dt.strftime("%d-%b-%Y")
+    hist10["close"] = hist10["close"].round(1)
+    hist10["anchor_low"] = hist10["anchor_low"].round(1)
+    hist10["anchor_high"] = hist10["anchor_high"].round(1)
 
-    def _status_line(side_label, s, trigger_label, confirm_label):
-        if s["confirmed"]:
-            return f"🟢 **{side_label}: CONFIRMED** — {trigger_label} {s.get('rise_pct', s.get('fall_pct')):.2f}%, {confirm_label} {s.get('pullback_pct', s.get('bounce_pct')):.2f}%. Page 24's rule says this has historically stayed untouched ~97-100% of the time out to 5 days."
-        if s["triggered"]:
-            return f"🟡 **{side_label}: triggered, not yet confirmed** — {trigger_label} {s.get('rise_pct', s.get('fall_pct')):.2f}%, waiting for the {confirm_label} to clear 0.25%."
-        return f"⚪ **{side_label}: no trigger yet today.**"
+    def _colour_pin_label(val):
+        if val == "PUT_ONLY":
+            return "background-color:#16a34a; color:#ffffff; font-weight:600;"
+        if val == "CALL_ONLY":
+            return "background-color:#dc2626; color:#ffffff; font-weight:600;"
+        if val == "BOTH":
+            return "background-color:#0ea5e9; color:#ffffff; font-weight:600;"
+        return ""
 
-    st.markdown(_status_line("PUT side (fall + bounce)", put_s, "fall", "bounce"))
-    st.markdown(_status_line("CALL side (rise + pullback)", call_s, "rise", "pullback"))
-    st.caption("This is an ENTRY-safety check for a strike placed beyond today's high/low — it "
-               "does not by itself change the CALL:PUT lot ratio above. A CONFIRMED call-side "
-               "reading, for instance, means a call sold above today's high looks safe by page "
-               "24's own numbers — it does not mean \"go 2 calls,\" which page 26 found isn't "
-               "backed by the data (see the callout at the top of this page).")
+    st.dataframe(hist10.style.map(_colour_pin_label, subset=["label"]),
+                hide_index=True, use_container_width=True)
+    st.caption("Green = PUT_ONLY (leaned long that day) · Red = CALL_ONLY (leaned short) · Blue = "
+              "BOTH (rare) · Blank = NEITHER (no signal that day). Cross-check each labeled day "
+              "against the chart below — a green ▲ / red ▼ marks the same days there.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Per-indicator breakdown
@@ -232,7 +261,8 @@ st.divider()
 st.subheader("10-day hourly chart")
 st.caption("Real hourly price candles. **Shaded background = confirmed downtrend day — the "
            "validated 2-puts setup.** No shading = no action (either uptrend or no clear read; "
-           "neither changes your default sizing).")
+           "neither changes your default sizing). **Green ▲ = Pinpoint PUT_ONLY (leaned long) · "
+           "Red ▼ = Pinpoint CALL_ONLY (leaned short)** — same days as the table above.")
 
 CHART_DAYS = 10
 if h1 is not None and not h1.empty:
@@ -278,6 +308,24 @@ if h1 is not None and not h1.empty:
         if bucket_series.get(day, "NEUTRAL") == "DOWN":
             fig.add_vrect(x0=first_i - 0.5, x1=last_i + 0.5,
                           fillcolor="rgba(22,163,74,0.16)", line_width=0)
+
+    # Pinpoint markers: green ▲ below the day's low (PUT_ONLY, leaned long),
+    # red ▼ above the day's high (CALL_ONLY, leaned short) — same convention
+    # as buy/sell arrows on a normal charting tool.
+    for day, (first_i, last_i) in day_bounds.items():
+        if day not in pinpoint_labels.index:
+            continue
+        lbl = pinpoint_labels.loc[day, "label"]
+        if lbl not in ("PUT_ONLY", "CALL_ONLY"):
+            continue
+        mid_i = (first_i + last_i) / 2
+        day_slice = h1c.iloc[first_i:last_i + 1]
+        if lbl == "PUT_ONLY":
+            fig.add_annotation(x=mid_i, y=float(day_slice["low"].min()), text="▲", showarrow=False,
+                              font=dict(size=20, color="#16a34a"), yshift=-16)
+        else:
+            fig.add_annotation(x=mid_i, y=float(day_slice["high"].max()), text="▼", showarrow=False,
+                              font=dict(size=20, color="#dc2626"), yshift=16)
 
     # dragmode="pan": one-finger/mouse drag PANS the chart body itself; two-finger pinch
     # zooms BOTH axes at once (this is Plotly's native pinch behavior on a cartesian plot

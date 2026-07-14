@@ -631,10 +631,13 @@ def _page24_reversal_signal(daily: pd.DataFrame, trigger_pct: float,
     """Shared core for adapt_page24_reversal / adapt_page24_reversal_tight —
     EOD-only translation of page 24's fall/bounce (PUT side) and
     rise/pullback (CALL side) rule into ONE per-day directional score, using
-    each day's OWN close as the confirmation point (the live intraday version
-    in position_sizing_backtest.intraday_reversal_snapshot uses today's
-    still-forming high/low instead — this is its once-per-day, backtestable
-    twin).
+    each day's OWN close/high/low as the confirmation point. NOTE: this is
+    the single-day check, not the episode-anchored trigger page 27's live
+    Pinpoint signal uses (analytics.reversal_backtest.dual_confirmation_scan)
+    — that's the one with a validated ~0% touch rate; this adapter's own
+    split_validation on page 26 tested weak (see REFERENCE_ADAPTERS in
+    analytics/position_sizing_backtest.py) precisely because it shares this
+    simpler, single-day definition.
 
     IMPORTANT — this is a DIFFERENT claim than page 24 validated, not a
     re-statement of it: page 24 checked "does this day's own low/high get
