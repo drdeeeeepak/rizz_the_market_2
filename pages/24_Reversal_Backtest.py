@@ -259,10 +259,24 @@ if is_pinpoint:
                           f"days — the CALL side breaches more often here. Lean toward the PUT side "
                           f"(sell put / long-biased) on these days, not both equally.")
 
+    labels = rb.dual_confirmation_daily_labels(daily, bounce_pct=_in["bounce_pct"],
+                                               pullback_pct=_in["pullback_pct"],
+                                               fall_trigger_pct=_in["fall_trigger"],
+                                               rise_trigger_pct=_in["rise_trigger"])
+    labels_full = labels.join(daily[["open", "high", "low"]].set_axis(
+        pd.to_datetime(daily.index)))
+
     with st.expander("⬇ Download the full scan"):
-        st.download_button("Download CSV", scan.to_csv(index=False).encode("utf-8"),
+        st.download_button("Download aggregate CSV (bucket summary)",
+                           scan.to_csv(index=False).encode("utf-8"),
                            file_name="dual_confirmation_scan.csv", mime="text/csv",
                            key="p24p_dl_scan")
+        st.download_button(
+            "Download per-day CSV (every day's label + anchor + OHLC — for verifying "
+            "any specific trigger day by hand)",
+            labels_full.to_csv().encode("utf-8"),
+            file_name="dual_confirmation_daily_labels.csv", mime="text/csv",
+            key="p24p_dl_labels")
 
     st.divider()
     st.subheader("Preset comparison — auto-tests more-events variants, one click")
