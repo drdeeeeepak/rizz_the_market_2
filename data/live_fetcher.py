@@ -239,7 +239,13 @@ def _get_nifty_30m_cached(days: int = ST_30M_DAYS) -> pd.DataFrame:
     """Inner fetch — raises on failure so Streamlit never caches an empty result."""
     kite      = _get_kite_safe()
     to_date   = date.today()
-    from_date = to_date - timedelta(days=days + 5)
+    # Kite hard-caps a single 30minute historical_data call at 200 calendar days —
+    # asking for more raises an InputException, which get_nifty_30m() below catches
+    # and turns into a silent empty DataFrame. Clamp the request span here so a
+    # caller passing a large `days` (e.g. a backtest wanting max history) degrades
+    # to the largest window Kite will actually serve, instead of failing outright.
+    span_days = min(days + 5, 200)
+    from_date = to_date - timedelta(days=span_days)
     log.info("Fetching 30m ST: %s → %s", from_date, to_date)
     data = kite.historical_data(
         NIFTY_INDEX_TOKEN,

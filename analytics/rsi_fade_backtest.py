@@ -34,7 +34,9 @@ def compute_rsi(df: pd.DataFrame, rsi_period: int = 14) -> pd.DataFrame:
     return d
 
 
-def _entry_signals(d: pd.DataFrame, ob: float, os_: float, entry_mode: str) -> pd.DataFrame:
+def _entry_signals(d: pd.DataFrame, ob: float, os_: float, entry_mode: str,
+                   require_divergence: bool = False, div_lookback: int = 20,
+                   div_min_gap: float = 2.0) -> pd.DataFrame:
     """
     entry_mode:
       "touch"     — fires the bar RSI first crosses INTO the zone (>=ob or <=os_).
@@ -42,23 +44,48 @@ def _entry_signals(d: pd.DataFrame, ob: float, os_: float, entry_mode: str) -> p
                     during a strong one-sided run RSI can sit pinned at an extreme for
                     a day or two before actually turning, so "touch" risks entering too
                     early and eating that continuation.
+
+    require_divergence — the fix for the "fade a genuine trend, get run over" failure
+    mode: a real 3-6 day one-sided move keeps making fresh price extremes WITH RSI
+    confirming each one (RSI also makes a fresh extreme), so plain OB/OS fades keep
+    re-triggering all the way down/up. Requiring divergence — price makes a fresh
+    div_lookback-bar extreme but RSI does NOT — only fades once momentum has visibly
+    stopped confirming the move, which is much closer to "day 3-5, the move is
+    stalling" than "RSI crossed 70/30 at all, trend or no trend."
+      LONG:  low[i] <= rolling_min(low, div_lookback)  AND  rsi[i] > rolling_min(rsi, div_lookback) + div_min_gap
+      SHORT: high[i] >= rolling_max(high, div_lookback) AND rsi[i] < rolling_max(rsi, div_lookback) - div_min_gap
+    (rolling windows are computed on the PRIOR div_lookback bars, excluding bar i itself.)
     """
     d = d.copy()
     rsi = d["rsi"]
     prev = rsi.shift(1)
     if entry_mode == "touch":
-        d["short_signal"] = ((prev < ob) & (rsi >= ob)).fillna(False)
-        d["long_signal"] = ((prev > os_) & (rsi <= os_)).fillna(False)
+        short_sig = (prev < ob) & (rsi >= ob)
+        long_sig = (prev > os_) & (rsi <= os_)
     else:  # zone_exit
-        d["short_signal"] = ((prev >= ob) & (rsi < ob)).fillna(False)
-        d["long_signal"] = ((prev <= os_) & (rsi > os_)).fillna(False)
+        short_sig = (prev >= ob) & (rsi < ob)
+        long_sig = (prev <= os_) & (rsi > os_)
+
+    if require_divergence:
+        prior_low_price = d["low"].shift(1).rolling(div_lookback).min()
+        prior_low_rsi = rsi.shift(1).rolling(div_lookback).min()
+        prior_high_price = d["high"].shift(1).rolling(div_lookback).max()
+        prior_high_rsi = rsi.shift(1).rolling(div_lookback).max()
+        bullish_div = (d["low"] <= prior_low_price) & (rsi > prior_low_rsi + div_min_gap)
+        bearish_div = (d["high"] >= prior_high_price) & (rsi < prior_high_rsi - div_min_gap)
+        long_sig = long_sig & bullish_div
+        short_sig = short_sig & bearish_div
+
+    d["short_signal"] = short_sig.fillna(False)
+    d["long_signal"] = long_sig.fillna(False)
     return d
 
 
 def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.0,
                          os_: float = 30.0, entry_mode: str = "zone_exit",
                          max_bars: int = 48, stop_pct: float = 1.5, target_pct: float = 2.5,
-                         midline_exit: bool = True) -> pd.DataFrame:
+                         midline_exit: bool = True, require_divergence: bool = False,
+                         div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
     """
     Exit = first of: stop_pct hit, target_pct hit, RSI midline (50) cross-back
     (if midline_exit), or max_bars candles held (time stop). If a bar's high/low
@@ -67,7 +94,7 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
     Returns a trade-log DataFrame, one row per completed trade.
     """
     d = compute_rsi(df, rsi_period)
-    d = _entry_signals(d, ob, os_, entry_mode)
+    d = _entry_signals(d, ob, os_, entry_mode, require_divergence, div_lookback, div_min_gap)
     n = len(d)
     idx = d.index
     close = d["close"].to_numpy()
@@ -173,13 +200,15 @@ DEFAULT_OB_OS_PAIRS = ((65, 35), (70, 30), (75, 25), (80, 20))
 def threshold_scan(df: pd.DataFrame, timeframe_label: str, rsi_period: int = 14,
                    ob_os_pairs=DEFAULT_OB_OS_PAIRS, entry_mode: str = "zone_exit",
                    max_bars: int = 48, stop_pct: float = 1.5, target_pct: float = 2.5,
-                   midline_exit: bool = True) -> pd.DataFrame:
+                   midline_exit: bool = True, require_divergence: bool = False,
+                   div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
     """Grid-scan OB/OS threshold pairs for one timeframe — the table that answers
     'which threshold (and, joined across timeframes, which timeframe) actually works'."""
     rows = []
     for ob, os_ in ob_os_pairs:
         trades = simulate_fade_trades(df, rsi_period, ob, os_, entry_mode, max_bars,
-                                      stop_pct, target_pct, midline_exit)
+                                      stop_pct, target_pct, midline_exit,
+                                      require_divergence, div_lookback, div_min_gap)
         stats = trade_stats(trades)
         stats.update(timeframe=timeframe_label, ob=ob, os=os_)
         rows.append(stats)
@@ -193,7 +222,8 @@ def threshold_scan(df: pd.DataFrame, timeframe_label: str, rsi_period: int = 14,
 def compare_timeframes(dfs: dict, rsi_period: int = 14, ob_os_pairs=DEFAULT_OB_OS_PAIRS,
                        entry_mode: str = "zone_exit", max_bars_map: dict = None,
                        stop_pct: float = 1.5, target_pct: float = 2.5,
-                       midline_exit: bool = True) -> pd.DataFrame:
+                       midline_exit: bool = True, require_divergence: bool = False,
+                       div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
     """dfs: {timeframe_label: ohlc_df}. max_bars_map: {timeframe_label: max_bars}
     (bar counts don't mean the same thing across timeframes — 48 30m-bars is 1
     trading day, 48 60m-bars is 8 — so each timeframe gets its own time-stop)."""
@@ -204,7 +234,8 @@ def compare_timeframes(dfs: dict, rsi_period: int = 14, ob_os_pairs=DEFAULT_OB_O
             continue
         mb = max_bars_map.get(label, 48)
         parts.append(threshold_scan(df, label, rsi_period, ob_os_pairs, entry_mode,
-                                    mb, stop_pct, target_pct, midline_exit))
+                                    mb, stop_pct, target_pct, midline_exit,
+                                    require_divergence, div_lookback, div_min_gap))
     if not parts:
         return pd.DataFrame()
     return pd.concat(parts, ignore_index=True).sort_values(

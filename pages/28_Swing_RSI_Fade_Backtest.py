@@ -92,6 +92,24 @@ st.caption(f"30m time-stop ≈ {max_bars_30m/12:.1f} trading days · "
           f"60m time-stop ≈ {max_bars_60m/6:.1f} trading days — keep these in the 3-6 day "
           "range the setup is built around, not much longer.")
 
+st.markdown("**Trend filter — require RSI divergence**")
+st.caption(
+    "The failure mode seen in a live run (March 2026): every LONG fade kept getting stopped "
+    "because price kept making fresh lows WITH RSI also making fresh lows in lockstep — a "
+    "genuine sustained decline, not a stalling move. Turning this on only fades once price "
+    "makes a new N-candle extreme that RSI does NOT confirm (classic bullish/bearish "
+    "divergence) — much closer to 'the move is stalling' than 'RSI crossed 70/30,' trend or "
+    "no trend.")
+f1, f2, f3 = st.columns(3)
+with f1:
+    require_divergence = st.checkbox("Require divergence to enter", value=False, key="p28_div")
+with f2:
+    div_lookback = st.number_input("Divergence lookback (candles)", 5, 60, 20, 1,
+                                   key="p28_div_lookback", disabled=not require_divergence)
+with f3:
+    div_min_gap = st.number_input("Min RSI gap (points)", 0.0, 15.0, 2.0, 0.5,
+                                  key="p28_div_gap", disabled=not require_divergence)
+
 run = st.button("▶ Run backtest", type="primary", key="p28_run")
 if run:
     st.session_state.p28_ran = True
@@ -100,6 +118,8 @@ if run:
         entry_mode=entry_mode, midline_exit=midline_exit, ob=float(ob), os_=float(os_),
         stop_pct=float(stop_pct), target_pct=float(target_pct),
         max_bars_30m=int(max_bars_30m), max_bars_60m=int(max_bars_60m),
+        require_divergence=require_divergence, div_lookback=int(div_lookback),
+        div_min_gap=float(div_min_gap),
     )
 
 if not st.session_state.get("p28_ran"):
@@ -150,7 +170,9 @@ for col, (label, df, max_bars) in zip(detail_cols, tf_configs):
         trades = rfb.simulate_fade_trades(
             df, rsi_period=_in["rsi_period"], ob=_in["ob"], os_=_in["os_"],
             entry_mode=_in["entry_mode"], max_bars=max_bars, stop_pct=_in["stop_pct"],
-            target_pct=_in["target_pct"], midline_exit=_in["midline_exit"])
+            target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
+            require_divergence=_in.get("require_divergence", False),
+            div_lookback=_in.get("div_lookback", 20), div_min_gap=_in.get("div_min_gap", 2.0))
         stats = rfb.trade_stats(trades)
 
         m1, m2, m3 = st.columns(3)
@@ -199,7 +221,10 @@ max_bars_map = {"30-minute": _in["max_bars_30m"], "60-minute (hourly)": _in["max
 
 scan = rfb.compare_timeframes(dfs, rsi_period=_in["rsi_period"], entry_mode=_in["entry_mode"],
                               max_bars_map=max_bars_map, stop_pct=_in["stop_pct"],
-                              target_pct=_in["target_pct"], midline_exit=_in["midline_exit"])
+                              target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
+                              require_divergence=_in.get("require_divergence", False),
+                              div_lookback=_in.get("div_lookback", 20),
+                              div_min_gap=_in.get("div_min_gap", 2.0))
 
 if scan.empty:
     st.caption("Not enough data loaded to run the scan.")
