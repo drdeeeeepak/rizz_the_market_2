@@ -902,3 +902,66 @@ def same_day_pullback_scan(daily: pd.DataFrame, pullback_pcts=DEFAULT_THRESHOLDS
             row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def rolling_low_bounce_scan(daily: pd.DataFrame, lookback_days: int = 2,
+                            bounce_pcts=DEFAULT_THRESHOLDS,
+                            forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """Bounded middle ground between same_day_bounce_scan (lookback_days=1:
+    anchor = today's own low) and the full open-ended episode anchor used by
+    reversal_threshold_scan_daily/Pinpoint. Anchor = the lowest low over the
+    last `lookback_days` days INCLUDING today (a fixed, small window - no
+    open-ended walk). lookback_days=2 is "today's low is at/above yesterday's
+    low, i.e. the decline paused" - the user's proposed rule. Trigger: today's
+    high bounces bounce_pct% off that rolling anchor. Forward touch checked
+    against the SAME anchor level, starting the day after."""
+    d = _norm_ohlc(daily)
+    high, low = d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+    anchor = pd.Series(low).rolling(lookback_days, min_periods=lookback_days).min().to_numpy()
+
+    rows = []
+    for thr in bounce_pcts:
+        idxs = [t for t in range(n) if not np.isnan(anchor[t]) and
+               (high[t] - anchor[t]) / anchor[t] * 100 >= thr]
+        row = {"bounce_pct": float(thr), "n": int(len(idxs))}
+        for h in forward_horizons:
+            touch = []
+            for t in idxs:
+                end_k = min(t + h, n - 1)
+                if end_k <= t:
+                    continue
+                touch.append(bool((low[t + 1:end_k + 1] < anchor[t]).any()))
+            row[f"touch_low_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def rolling_high_pullback_scan(daily: pd.DataFrame, lookback_days: int = 2,
+                               pullback_pcts=DEFAULT_THRESHOLDS,
+                               forward_horizons=(3, 5, 10)) -> pd.DataFrame:
+    """Mirror of rolling_low_bounce_scan for the high side. Anchor = the
+    highest high over the last `lookback_days` days including today.
+    lookback_days=2 is "today's high is at/below yesterday's high, i.e. the
+    rise paused." Trigger: today's low pulls back pullback_pct% off that
+    rolling anchor."""
+    d = _norm_ohlc(daily)
+    high, low = d["high"].to_numpy(), d["low"].to_numpy()
+    n = len(d)
+    anchor = pd.Series(high).rolling(lookback_days, min_periods=lookback_days).max().to_numpy()
+
+    rows = []
+    for thr in pullback_pcts:
+        idxs = [t for t in range(n) if not np.isnan(anchor[t]) and
+               (anchor[t] - low[t]) / anchor[t] * 100 >= thr]
+        row = {"pullback_pct": float(thr), "n": int(len(idxs))}
+        for h in forward_horizons:
+            touch = []
+            for t in idxs:
+                end_k = min(t + h, n - 1)
+                if end_k <= t:
+                    continue
+                touch.append(bool((high[t + 1:end_k + 1] > anchor[t]).any()))
+            row[f"touch_high_rate_{h}d%"] = round(float(np.mean(touch)) * 100, 1) if touch else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)

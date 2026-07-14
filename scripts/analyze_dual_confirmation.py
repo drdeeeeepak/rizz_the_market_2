@@ -85,6 +85,17 @@ def main():
     print("hold for the next 3/5/10 days?")
     print(rb.same_day_pullback_scan(daily, pullback_pcts=fine_thresholds).to_string(index=False))
 
+    for n_days in (2, 3, 5):
+        print(f"\n=== Rolling {n_days}-day anchor scan (low side) ===")
+        print(f"Anchor = lowest low over the last {n_days} days (incl. today). Bounded middle "
+              "ground between same-day (N=1) and the full open-ended episode anchor.")
+        print(rb.rolling_low_bounce_scan(daily, lookback_days=n_days,
+                                        bounce_pcts=fine_thresholds).to_string(index=False))
+
+        print(f"\n=== Rolling {n_days}-day anchor scan (high side) ===")
+        print(rb.rolling_high_pullback_scan(daily, lookback_days=n_days,
+                                            pullback_pcts=fine_thresholds).to_string(index=False))
+
     out_path = sys.argv[1].rsplit(".", 1)[0] + "_pinpoint_labels.csv"
     labels.to_csv(out_path)
     print(f"\nFull per-day label table written to {out_path}")

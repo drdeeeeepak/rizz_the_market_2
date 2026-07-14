@@ -83,6 +83,13 @@ if is_sameday:
         horizons = (3, 5, 10)
         st.caption("Couldn't parse horizons — using default 3,5,10.")
 
+    st.markdown("**Rolling N-day anchor** — bounded middle ground: anchor = lowest low / "
+               "highest high over the last N days (including today), instead of just today's "
+               "own low/high. N=2 = \"today's low is at/above yesterday's low\" (the decline "
+               "paused) + the same bounce confirmation.")
+    lookback_days_n = st.number_input("Rolling anchor window N (trading days, incl. today)",
+                                      1, 10, 2, 1, key="p24sd_roll_n")
+
     @st.cache_data(ttl=3600, show_spinner=False)
     def _p24sd_load_daily(days):
         return _lf.get_nifty_daily(days=days)
@@ -91,7 +98,7 @@ if is_sameday:
         thresholds = tuple(round(x, 2) for x in np.arange(thr_min, thr_max + thr_step / 2, thr_step))
         st.session_state.p24sd_ran = True
         st.session_state.p24sd_inputs = dict(lookback=lookback, horizons=horizons,
-                                             thresholds=thresholds)
+                                             thresholds=thresholds, roll_n=int(lookback_days_n))
 
     if not st.session_state.get("p24sd_ran"):
         st.info("Pick your settings and click Run. Only needs daily candles.")
@@ -116,11 +123,33 @@ if is_sameday:
     st.subheader("High side — today's close X% below today's own high")
     st.dataframe(pullback_scan, use_container_width=True, hide_index=True)
 
-    with st.expander("⬇ Download both scans"):
+    roll_n = _in["roll_n"]
+    roll_low_scan = rb.rolling_low_bounce_scan(daily, lookback_days=roll_n,
+                                               bounce_pcts=_in["thresholds"],
+                                               forward_horizons=_in["horizons"])
+    roll_high_scan = rb.rolling_high_pullback_scan(daily, lookback_days=roll_n,
+                                                   pullback_pcts=_in["thresholds"],
+                                                   forward_horizons=_in["horizons"])
+
+    st.subheader(f"Rolling {roll_n}-day anchor — low side")
+    st.dataframe(roll_low_scan, use_container_width=True, hide_index=True)
+
+    st.subheader(f"Rolling {roll_n}-day anchor — high side")
+    st.dataframe(roll_high_scan, use_container_width=True, hide_index=True)
+
+    with st.expander("⬇ Download all four scans"):
         st.download_button("Download low-side CSV", bounce_scan.to_csv(index=False).encode("utf-8"),
                            file_name="same_day_bounce_scan.csv", mime="text/csv", key="p24sd_dl_low")
         st.download_button("Download high-side CSV", pullback_scan.to_csv(index=False).encode("utf-8"),
                            file_name="same_day_pullback_scan.csv", mime="text/csv", key="p24sd_dl_high")
+        st.download_button(f"Download rolling {roll_n}d low-side CSV",
+                           roll_low_scan.to_csv(index=False).encode("utf-8"),
+                           file_name=f"rolling_{roll_n}d_bounce_scan.csv", mime="text/csv",
+                           key="p24sd_dl_roll_low")
+        st.download_button(f"Download rolling {roll_n}d high-side CSV",
+                           roll_high_scan.to_csv(index=False).encode("utf-8"),
+                           file_name=f"rolling_{roll_n}d_pullback_scan.csv", mime="text/csv",
+                           key="p24sd_dl_roll_high")
 
     st.stop()
 
