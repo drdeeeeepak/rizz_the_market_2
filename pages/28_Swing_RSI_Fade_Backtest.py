@@ -26,7 +26,7 @@ st.title("Page 28 — Swing RSI Fade Backtest")
 st.caption("Fade hourly / 30-minute RSI overbought & oversold extremes as a swing entry "
           "for the 3-6 day one-sided-move-then-reverse pattern.")
 
-with st.expander("⚠️ What this tests (and its limits) — read once", expanded=True):
+with st.expander("⚠️ What this tests (and its limits) — read once", expanded=False):
     st.markdown(
         "- **Fade = contrarian.** RSI overbought → go SHORT; RSI oversold → go LONG. One "
         "position at a time — a new signal while a trade is open is skipped, same as a real "
