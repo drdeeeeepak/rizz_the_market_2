@@ -195,6 +195,57 @@ st.caption("Strength runs roughly -1 (strongly bearish) to +1 (strongly bullish)
            "vote.")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Swing-signal backtest — Pinpoint trigger x composite direction, joint +
+# split-validated. Answers: does requiring x/6 agreement on a Pinpoint
+# trigger day improve the entry over Pinpoint alone, and does a looser
+# Pinpoint preset (more triggers) still hold up once crossed with the
+# composite, or is it just more noise?
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("🔬 Swing-signal backtest — x/6 composite × Pinpoint, joint")
+st.caption(
+    "Sells the OTM strike on the day **Pinpoint fires** (not the weekly Tuesday anchor "
+    "breach_by_bucket/split_validation above use), tagged by what the **x/6 composite also said "
+    "that same day**. Joint buckets like `PUT_ONLY | composite=UP` are both lenses agreeing "
+    "bullish; `PUT_ONLY | composite=DOWN` is Pinpoint saying bounce while the composite says the "
+    "down-leg isn't done — scored separately, not averaged away. Split into first/second half "
+    "(chronological, out-of-sample) same as the composite's own DOWN validation, so a joint bucket "
+    "only means something if it holds in BOTH halves, not just the full-history average.")
+
+_sw1, _sw2, _sw3 = st.columns(3)
+_sw_call_pct = _sw1.number_input("Call strike OTM %", value=3.0, step=0.5, key="p27_sw_call")
+_sw_put_pct = _sw2.number_input("Put strike OTM %", value=3.5, step=0.5, key="p27_sw_put")
+_sw_preset = _sw3.selectbox("Pinpoint preset", list(rb.PINPOINT_PRESETS.keys()),
+                            index=list(rb.PINPOINT_PRESETS.keys()).index(rb.ACTIVE_PINPOINT_PRESET),
+                            key="p27_sw_preset")
+
+if st.button("▶ Run swing-signal backtest", key="p27_sw_run"):
+    st.session_state.p27_sw_ran = True
+
+if st.session_state.get("p27_sw_ran"):
+    sw_result = ps.swing_signal_backtest(daily, h1 if h1 is not None else pd.DataFrame(),
+                                         call_pct=_sw_call_pct, put_pct=_sw_put_pct,
+                                         pinpoint_preset=_sw_preset)
+    if not sw_result:
+        st.info("Not enough history to run this — check daily/1H data loaded above.")
+    else:
+        for _seg_label, _seg_title in (("full", "Full history"), ("first_half", "First half"),
+                                       ("second_half", "Second half")):
+            _tbl = sw_result.get(_seg_label)
+            if _tbl is None or _tbl.empty:
+                continue
+            st.markdown(f"**{_seg_title}**")
+            st.dataframe(_tbl, use_container_width=True)
+        sw_csv = ps.swing_signal_scan_to_frame(sw_result)
+        st.download_button("Download swing-signal backtest CSV",
+                           sw_csv.to_csv(index=False).encode("utf-8"),
+                           file_name="swing_signal_backtest.csv", mime="text/csv",
+                           key="p27_sw_dl")
+        st.caption("A joint bucket is only worth trading if `n` is large enough to trust AND the "
+                  "same direction/sign holds in both first_half and second_half — exactly the bar "
+                  "the composite's own DOWN reading had to clear before being called validated.")
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Last 3 days, hourly
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()

@@ -24,6 +24,7 @@ import pandas as pd
 
 from analytics import backtest as bt
 from analytics import signal_adapters as sa
+from analytics import reversal_backtest as rb
 
 # Adapters used to build the composite trend-confirmation signal. All are
 # DAILY-cadence directional reads except dow_theory, which needs the 1H
@@ -588,3 +589,106 @@ def hourly_history_table(h1: pd.DataFrame, frame: pd.DataFrame, up_thresh: float
 
     out = pd.DataFrame(rows)
     return out.iloc[::-1].reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Swing-signal backtest — Pinpoint (page 24's episode-anchored turning-point
+# trigger) crossed with the x/6 composite's OWN direction that same day,
+# scored as an options-sell ENTRY ON THE TRIGGER DAY ITSELF — not the weekly
+# Tuesday anchor breach_by_bucket/split_validation use above. That's the
+# actual swing question: does composite agreement on a Pinpoint trigger day
+# improve the entry (fewer breaches) over Pinpoint alone, and does chasing
+# MORE Pinpoint triggers (a looser preset) still hold up once crossed with
+# the composite, or does it just add noise (as the preset comparison CSV
+# already suggested — tighter_formation_0.5 roughly 4x'd the trigger count
+# by segmenting episodes differently, not by loosening a % threshold, and
+# tripled+ the touch-again rate in the process).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def swing_signal_backtest(daily: pd.DataFrame, df_1h: pd.DataFrame,
+                           horizons: tuple = (3, 5, 10),
+                           call_pct: float = 3.0, put_pct: float = 3.5,
+                           pinpoint_preset: str = "current_live",
+                           up_thresh: float = 0.4, min_agree: int = 3,
+                           adapters: dict = None, n_splits: int = 2) -> dict:
+    """Backtests selling an OTM strike on the day Pinpoint fires (PUT_ONLY /
+    CALL_ONLY / BOTH — NEITHER is ~94% of days and isn't a trigger, excluded
+    here), tagged by what the x/6 composite ALSO said that same day
+    (UP/DOWN/NEUTRAL, or NO_1H_DATA if the composite couldn't be computed).
+    Joint buckets like "PUT_ONLY | composite=UP" (both lenses agree bullish)
+    are what a real swing filter would require; "PUT_ONLY | composite=DOWN"
+    (Pinpoint says bounce, composite says the down-leg isn't done) is the
+    disagreement case worth seeing scored separately rather than averaged
+    away.
+
+    Returns {"full": df, "first_half": df, "second_half": df} (chronological
+    out-of-sample split on TRIGGER days, same convention as split_validation
+    above). Each df is indexed by joint bucket, columns
+    n / call_breach{h}% / put_breach{h}% / avg_ret{h}% per horizon, sorted by
+    n descending so the buckets with enough sample to trust sit on top."""
+    adapters = adapters or DEFAULT_ADAPTERS
+    frame = build_composite_signal(daily, df_1h, adapters)
+    composite_bucket = classify_composite(frame, up_thresh=up_thresh, min_agree=min_agree) \
+        if not frame.empty else pd.Series(dtype=object)
+
+    preset = rb.PINPOINT_PRESETS.get(pinpoint_preset, rb.PINPOINT_PRESETS["current_live"])
+    pin = rb.dual_confirmation_daily_labels(daily, **preset)
+    if pin.empty:
+        return {}
+    pin_label = pin["label"].copy()
+    pin_label.index = _norm_idx(pin_label.index)
+    pin_label = pin_label[pin_label != "NEITHER"]   # only actual trigger days = the swing entries
+    if pin_label.empty:
+        return {}
+
+    per_horizon = {}
+    for h in horizons:
+        outc = bt.forward_outcomes(daily, horizons=(h,), call_pct=call_pct, put_pct=put_pct)
+        outc.index = _norm_idx(outc.index)
+        df = outc.copy()
+        df["pinpoint"] = pin_label.reindex(df.index)
+        df = df[df[f"ret{h}"].notna() & df["pinpoint"].notna()]
+        df["composite"] = composite_bucket.reindex(df.index).fillna("NO_1H_DATA")
+        df["joint"] = df["pinpoint"].astype(str) + " | composite=" + df["composite"].astype(str)
+        per_horizon[h] = df.sort_index()
+
+    def _score(seg_frames: dict) -> pd.DataFrame:
+        rows = {}
+        for h, seg in seg_frames.items():
+            for name, g in seg.groupby("joint"):
+                r = rows.setdefault(name, {"joint": name, "n": int(len(g))})
+                r[f"call_breach{h}%"] = round(float(g["breach_call"].mean() * 100), 1)
+                r[f"put_breach{h}%"] = round(float(g["breach_put"].mean() * 100), 1)
+                r[f"avg_ret{h}%"] = round(float(g[f"ret{h}"].mean()), 2)
+        out = pd.DataFrame(list(rows.values()))
+        return out.set_index("joint").sort_values("n", ascending=False) if not out.empty else out
+
+    result = {"full": _score(per_horizon)}
+
+    all_trigger_days = sorted(pin_label.index)
+    seg_size = len(all_trigger_days) // n_splits
+    labels = ["first_half", "second_half"] if n_splits == 2 else [f"segment_{i+1}" for i in range(n_splits)]
+    for i, label in enumerate(labels):
+        start = i * seg_size
+        end = (i + 1) * seg_size if i < n_splits - 1 else len(all_trigger_days)
+        seg_days = set(all_trigger_days[start:end])
+        seg_frames = {h: df[df.index.isin(seg_days)] for h, df in per_horizon.items()}
+        result[label] = _score(seg_frames)
+
+    return result
+
+
+def swing_signal_scan_to_frame(result: dict) -> pd.DataFrame:
+    """Flattens swing_signal_backtest's {segment: df} dict into ONE frame
+    tagged by a 'segment' column — same stacking convention
+    reversal_backtest.compare_pinpoint_presets uses for its 'preset' column,
+    so this exports in a shape directly comparable to
+    pinpoint_preset_comparison.csv."""
+    parts = []
+    for label, table in result.items():
+        if table is None or table.empty:
+            continue
+        t = table.reset_index()
+        t.insert(0, "segment", label)
+        parts.append(t)
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
