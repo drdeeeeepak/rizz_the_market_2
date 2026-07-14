@@ -38,10 +38,80 @@ with st.expander("📜 Final Rule Book — put & call selling (read this first)"
         st.caption("Rule book file not found — see docs/PAGE_24_RULE_BOOK.md in the repo.")
 
 mode = st.radio("Mode", ["Fall — put-seller safety", "Rise — call-seller safety",
-                         "Pinpoint — dual-confirmation long/short"], horizontal=True,
+                         "Pinpoint — dual-confirmation long/short",
+                         "Same-day scan — no merge, no anchor"], horizontal=True,
                 key="p24_mode")
 is_fall = mode.startswith("Fall")
 is_pinpoint = mode.startswith("Pinpoint")
+is_sameday = mode.startswith("Same-day")
+
+if is_sameday:
+    st.caption("The naive version of the low/high-side signal: does TODAY's close sit X% above "
+              "TODAY's own low (or X% below TODAY's own high), with NO episode-merging and NO "
+              "running anchor across multiple days? For each X% threshold, checks whether TODAY's "
+              "own low/high gets touched again within the next 3/5/10 trading days. This directly "
+              "answers 'if my 3:25pm price is X% above today's low, is today's low safe' — the "
+              "question of whether a bigger same-day threshold alone (no multi-day tracking) is "
+              "enough, contrasted with the Pinpoint mode above which tracks a running anchor.")
+
+    with st.expander("⚠️ What this is (and its limits) — read once"):
+        st.markdown(
+            "- **No episode-merging, no anchor-walk.** Every day is scored purely against its own "
+            "low/high — unlike Fall/Rise/Pinpoint above, a multi-day decline's anchor never "
+            "shifts to an earlier, more extreme day.\n"
+            "- **Watch the `n` column.** Sample size collapses fast as the threshold rises (few "
+            "days ever see a huge same-day round-trip) — a threshold with n<10 is not a reliable "
+            "read, even if its touch-rate looks great.\n"
+            "- **This is the version already known to test weak at the smallest threshold "
+            "(0.25%)** — this scan exists to check honestly whether a BIGGER threshold actually "
+            "fixes that, or whether the structural gap (no running anchor) persists regardless of "
+            "the number chosen.")
+
+    lookback = st.slider("Lookback (calendar days)", 365, 1460, 730, step=30, key="p24sd_lb")
+    horizons_str = st.text_input("Forward horizons (trading days, comma-separated)", "3,5,10",
+                                 key="p24sd_horizons")
+    try:
+        horizons = tuple(int(x.strip()) for x in horizons_str.split(","))
+    except ValueError:
+        horizons = (3, 5, 10)
+        st.caption("Couldn't parse horizons — using default 3,5,10.")
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _p24sd_load_daily(days):
+        return _lf.get_nifty_daily(days=days)
+
+    if st.button("▶ Run same-day scan", type="primary", key="p24sd_run"):
+        st.session_state.p24sd_ran = True
+        st.session_state.p24sd_inputs = dict(lookback=lookback, horizons=horizons)
+
+    if not st.session_state.get("p24sd_ran"):
+        st.info("Pick your settings and click Run. Only needs daily candles.")
+        st.stop()
+
+    _in = st.session_state.p24sd_inputs
+    with st.spinner("Fetching daily history and scanning thresholds…"):
+        daily = _p24sd_load_daily(_in["lookback"])
+
+    if daily is None or daily.empty:
+        st.error("Could not load daily Nifty history. Log in via Home → Kite, then retry.")
+        st.stop()
+
+    bounce_scan = rb.same_day_bounce_scan(daily, forward_horizons=_in["horizons"])
+    pullback_scan = rb.same_day_pullback_scan(daily, forward_horizons=_in["horizons"])
+
+    st.subheader("Low side — today's close X% above today's own low")
+    st.dataframe(bounce_scan, use_container_width=True, hide_index=True)
+
+    st.subheader("High side — today's close X% below today's own high")
+    st.dataframe(pullback_scan, use_container_width=True, hide_index=True)
+
+    with st.expander("⬇ Download both scans"):
+        st.download_button("Download low-side CSV", bounce_scan.to_csv(index=False).encode("utf-8"),
+                           file_name="same_day_bounce_scan.csv", mime="text/csv", key="p24sd_dl_low")
+        st.download_button("Download high-side CSV", pullback_scan.to_csv(index=False).encode("utf-8"),
+                           file_name="same_day_pullback_scan.csv", mime="text/csv", key="p24sd_dl_high")
+
+    st.stop()
 
 if is_pinpoint:
     st.caption("On days where BOTH the fall+bounce (PUT) AND rise+pullback (CALL) confirmations "
