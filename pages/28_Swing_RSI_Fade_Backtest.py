@@ -213,20 +213,27 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
-        def _rsi_css(val):
-            """Color RSI cells based on trading zones: Red=SHORT (OB), Blue=LONG (OS), Green=Neutral"""
+        def _rsi_css(val, is_declining=False):
+            """Color RSI cells: Red if declining, Blue if oversold rising, Green if rising/neutral"""
             try:
                 rsi = float(val)
+                # If RSI is declining, show red (regardless of absolute level)
+                if is_declining:
+                    if rsi >= 70:
+                        return "background-color:#be123c;color:#ffffff;font-weight:800;"  # Dark red - declining from overbought
+                    else:
+                        return "background-color:#ef4444;color:#ffffff;font-weight:700;"  # Light red - declining
+                # If rising or stationary, use zone colors
                 if rsi >= 75:
-                    return "background-color:#be123c;color:#ffffff;font-weight:800;"  # Dark red - extreme OB (SHORT)
+                    return "background-color:#059669;color:#ffffff;font-weight:800;"  # Dark green - rising at extreme OB
                 elif rsi >= 70:
-                    return "background-color:#ef4444;color:#ffffff;font-weight:700;"  # Red - overbought
+                    return "background-color:#10b981;color:#ffffff;font-weight:700;"  # Green - rising overbought
                 elif rsi <= 22:
-                    return "background-color:#0d47a1;color:#ffffff;font-weight:800;"  # Dark blue - extreme OS (LONG)
+                    return "background-color:#0d47a1;color:#ffffff;font-weight:800;"  # Dark blue - extreme OS
                 elif rsi <= 30:
                     return "background-color:#1e40af;color:#ffffff;font-weight:700;"  # Blue - oversold
                 else:
-                    return "background-color:#10b981;color:#ffffff;font-weight:600;"  # Green - neutral
+                    return "background-color:#94a3b8;color:#ffffff;font-weight:600;"  # Gray - neutral
             except:
                 return ""
 
@@ -393,8 +400,14 @@ else:
                 def _rsi_row(row):
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
-                        if col in ['60m_RSI', '30m_RSI']:
-                            styles[i] = _rsi_css(row[col])
+                        if col == '60m_RSI':
+                            # Check if 60m trend shows declining (↓)
+                            is_declining = '↓' in str(row.get('60m_Trend', ''))
+                            styles[i] = _rsi_css(row[col], is_declining)
+                        elif col == '30m_RSI':
+                            # Check if 30m trend shows declining (↓)
+                            is_declining = '↓' in str(row.get('30m_Trend', ''))
+                            styles[i] = _rsi_css(row[col], is_declining)
                         else:
                             styles[i] = ''
                     return styles
