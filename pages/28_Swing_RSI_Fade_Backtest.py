@@ -428,7 +428,7 @@ else:
                 return styler
 
             styled_table = _style_rsi_table(hist_table)
-            st.dataframe(styled_table, use_container_width=True, height=600)
+            st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
 
             # Download button
             csv_data = hist_table.to_csv(index=False)
