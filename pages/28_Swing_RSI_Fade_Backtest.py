@@ -519,169 +519,167 @@ else:
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.divider()
-st.subheader("🧪 Backtest Configuration & Results")
-st.caption("Adjust settings below, then click 'Run backtest' to test the fade strategy with your parameters.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Inputs
-# ══════════════════════════════════════════════════════════════════════════════
-c1, c2 = st.columns(2)
-with c1:
-    days_30m = st.slider("30m lookback (calendar days, Kite caps 30-minute history ~200d)",
-                         30, 200, 150, step=10, key="p28_days30")
-with c2:
-    days_60m = st.slider("60m lookback (calendar days, Kite caps 60-minute history ~400d)",
-                         60, 380, 300, step=20, key="p28_days60")
-
-c3, c4, c5 = st.columns(3)
-with c3:
-    rsi_period = st.number_input("RSI period", 5, 30, 14, 1, key="p28_rsi_period")
-with c4:
-    entry_mode_label = st.radio("Entry mode", ["Zone-exit (conservative)", "Touch (immediate)"],
-                                key="p28_entry_mode")
-    entry_mode = "zone_exit" if entry_mode_label.startswith("Zone-exit") else "touch"
-with c5:
-    midline_exit = st.checkbox("Exit on RSI midline (50) cross-back", value=True, key="p28_midline")
-
-st.markdown("**Detailed backtest — main config**")
-d1, d2, d3, d4 = st.columns(4)
-with d1:
-    ob = st.number_input("Overbought threshold", 55.0, 90.0, 70.0, 1.0, key="p28_ob")
-with d2:
-    os_ = st.number_input("Oversold threshold", 10.0, 45.0, 30.0, 1.0, key="p28_os")
-with d3:
-    stop_pct = st.number_input("Stop %", 0.2, 10.0, 1.5, 0.1, key="p28_stop")
-with d4:
-    target_pct = st.number_input("Target %", 0.2, 10.0, 2.5, 0.1, key="p28_target")
-
-e1, e2 = st.columns(2)
-with e1:
-    max_bars_30m = st.number_input("30m time-stop (candles held, 12/day)", 4, 240, 60, 4,
-                                   key="p28_maxbars30")
-with e2:
-    max_bars_60m = st.number_input("60m time-stop (candles held, 6/day)", 2, 120, 30, 2,
-                                   key="p28_maxbars60")
-
-compare_configs = st.checkbox("📊 Run side-by-side with alternative config (0.75% stop, 1.5% target)",
-                              value=False, key="p28_compare_alt")
-if compare_configs:
-    st.markdown("**Alternative config (for comparison)**")
-    alt_c1, alt_c2 = st.columns(2)
-    with alt_c1:
-        alt_stop_pct = st.number_input("Alt: Stop %", 0.2, 10.0, 0.75, 0.1, key="p28_alt_stop")
-    with alt_c2:
-        alt_target_pct = st.number_input("Alt: Target %", 0.2, 10.0, 1.5, 0.1, key="p28_alt_target")
-else:
-    alt_stop_pct = None
-    alt_target_pct = None
-
-st.caption(f"30m time-stop ≈ {max_bars_30m/12:.1f} trading days · "
-          f"60m time-stop ≈ {max_bars_60m/6:.1f} trading days — keep these in the 3-6 day "
-          "range the setup is built around, not much longer.")
-
-st.markdown("**Trend filter — require RSI divergence**")
-st.caption(
-    "The failure mode seen in a live run (March 2026): every LONG fade kept getting stopped "
-    "because price kept making fresh lows WITH RSI also making fresh lows in lockstep — a "
-    "genuine sustained decline, not a stalling move. Turning this on only fades once price "
-    "makes a new N-candle extreme that RSI does NOT confirm (classic bullish/bearish "
-    "divergence) — much closer to 'the move is stalling' than 'RSI crossed 70/30,' trend or "
-    "no trend.")
-f1, f2, f3 = st.columns(3)
-with f1:
-    require_divergence = st.checkbox("Require divergence to enter", value=False, key="p28_div")
-with f2:
-    div_lookback = st.number_input("Divergence lookback (candles)", 5, 60, 20, 1,
-                                   key="p28_div_lookback", disabled=not require_divergence)
-with f3:
-    div_min_gap = st.number_input("Min RSI gap (points)", 0.0, 15.0, 2.0, 0.5,
-                                  key="p28_div_gap", disabled=not require_divergence)
-st.caption("⚠️ Tested live: this blocked the March pile-on entirely, but it also blocked most "
-          "of the best month (Feb 2026) — fast V-shaped reversals don't leave RSI time to "
-          "diverge either. Try loosening the gap/lookback, or use the cooldown filter below "
-          "instead — it's a less blunt fix for the same problem.")
-
-st.markdown("**Trend filter — option 3: cooldown between same-direction re-entries**")
-st.caption(
-    "A less blunt alternative to divergence: instead of judging each signal on momentum "
-    "confirmation, this just takes the FIRST fade of a stretch and refuses to re-enter the "
-    "SAME direction again until cooldown_bars has passed — no repeat re-triggers piling on "
-    "while a trend grinds on. The cooldown clears immediately the moment a trade fires in the "
-    "OPPOSITE direction (a real reversal already showed up, so the restriction no longer "
-    "applies). Unlike divergence, this doesn't touch the FIRST trade of any stretch — including "
-    "fast V-reversals — so it should cost less of the good trades.")
-g1, g2, g3 = st.columns(3)
-with g1:
-    require_cooldown = st.checkbox("Require cooldown between same-direction re-entries",
-                                   value=False, key="p28_cooldown")
-with g2:
-    cooldown_bars_30m = st.number_input("30m cooldown (candles, 12/day)", 4, 240, 48, 4,
-                                        key="p28_cooldown30", disabled=not require_cooldown)
-with g3:
-    cooldown_bars_60m = st.number_input("60m cooldown (candles, 6/day)", 2, 120, 24, 2,
-                                        key="p28_cooldown60", disabled=not require_cooldown)
-
-run = st.button("▶ Run backtest", type="primary", key="p28_run")
-if run:
-    st.session_state.p28_ran = True
-    st.session_state.p28_inputs = dict(
-        days_30m=days_30m, days_60m=days_60m, rsi_period=int(rsi_period),
-        entry_mode=entry_mode, midline_exit=midline_exit, ob=float(ob), os_=float(os_),
-        stop_pct=float(stop_pct), target_pct=float(target_pct),
-        max_bars_30m=int(max_bars_30m), max_bars_60m=int(max_bars_60m),
-        require_divergence=require_divergence, div_lookback=int(div_lookback),
-        div_min_gap=float(div_min_gap),
-        require_cooldown=require_cooldown, cooldown_bars_30m=int(cooldown_bars_30m),
-        cooldown_bars_60m=int(cooldown_bars_60m),
-        compare_configs=compare_configs,
-        alt_stop_pct=float(alt_stop_pct) if alt_stop_pct is not None else None,
-        alt_target_pct=float(alt_target_pct) if alt_target_pct is not None else None,
-    )
-
-if not st.session_state.get("p28_ran"):
-    st.info("Set your parameters and click Run. Pulls 30m + 60m Nifty history from Kite and "
-           "walks every RSI OB/OS extreme forward (a few seconds).")
-    st.stop()
-
-_in = st.session_state.p28_inputs
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def _load_30m(days):
-    return _lf.get_nifty_30m(days=days)
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def _load_60m(days):
-    return _lf.get_nifty_1h_phase(days=days)
-
-
-with st.spinner("Fetching 30m + 60m history…"):
-    df_30m = _load_30m(_in["days_30m"])
-    df_60m = _load_60m(_in["days_60m"])
-
-if (df_30m is None or df_30m.empty) and (df_60m is None or df_60m.empty):
-    st.error("Could not load either 30m or 60m Nifty history. Log in via Home → Kite, then retry.")
-    st.stop()
-
-if df_30m is None or df_30m.empty:
-    st.warning(
-        "30m history came back empty — 60m loaded fine below, but the 30m half of every "
-        "section on this page will be blank. `get_nifty_30m()` swallows its own errors and "
-        "returns empty on failure (never crashes), and this page caches THAT result for 30 "
-        "minutes — so a transient failure (or an older cached empty result from before a fix "
-        "was deployed) can look like a permanent one. Click below to force a fresh fetch.")
-    if st.button("🔄 Clear cached 30m/60m fetch & retry", key="p28_clear_cache"):
-        _load_30m.clear()
-        _load_60m.clear()
-        st.rerun()
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Detailed Backtest Results — collapsible section
+# SECTION 2: BACKTEST CONFIGURATION & RESULTS (Collapsible)
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.expander("📊 Detailed Backtest Results (Click to expand)", expanded=st.session_state.get("p28_backtest_expanded", False)):
+with st.expander("🧪 Backtest Configuration & Results (Click to expand)", expanded=st.session_state.get("p28_backtest_expanded", False)):
+    st.caption("Adjust settings below, then click 'Run backtest' to test the fade strategy with your parameters.")
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Inputs
+    # ══════════════════════════════════════════════════════════════════════════════
+    c1, c2 = st.columns(2)
+    with c1:
+        days_30m = st.slider("30m lookback (calendar days, Kite caps 30-minute history ~200d)",
+                             30, 200, 150, step=10, key="p28_days30")
+    with c2:
+        days_60m = st.slider("60m lookback (calendar days, Kite caps 60-minute history ~400d)",
+                             60, 380, 300, step=20, key="p28_days60")
+
+    c3, c4, c5 = st.columns(3)
+    with c3:
+        rsi_period = st.number_input("RSI period", 5, 30, 14, 1, key="p28_rsi_period")
+    with c4:
+        entry_mode_label = st.radio("Entry mode", ["Zone-exit (conservative)", "Touch (immediate)"],
+                                    key="p28_entry_mode")
+        entry_mode = "zone_exit" if entry_mode_label.startswith("Zone-exit") else "touch"
+    with c5:
+        midline_exit = st.checkbox("Exit on RSI midline (50) cross-back", value=True, key="p28_midline")
+
+    st.markdown("**Detailed backtest — main config**")
+    d1, d2, d3, d4 = st.columns(4)
+    with d1:
+        ob = st.number_input("Overbought threshold", 55.0, 90.0, 70.0, 1.0, key="p28_ob")
+    with d2:
+        os_ = st.number_input("Oversold threshold", 10.0, 45.0, 30.0, 1.0, key="p28_os")
+    with d3:
+        stop_pct = st.number_input("Stop %", 0.2, 10.0, 1.5, 0.1, key="p28_stop")
+    with d4:
+        target_pct = st.number_input("Target %", 0.2, 10.0, 2.5, 0.1, key="p28_target")
+
+    e1, e2 = st.columns(2)
+    with e1:
+        max_bars_30m = st.number_input("30m time-stop (candles held, 12/day)", 4, 240, 60, 4,
+                                       key="p28_maxbars30")
+    with e2:
+        max_bars_60m = st.number_input("60m time-stop (candles held, 6/day)", 2, 120, 30, 2,
+                                       key="p28_maxbars60")
+
+    compare_configs = st.checkbox("📊 Run side-by-side with alternative config (0.75% stop, 1.5% target)",
+                                  value=False, key="p28_compare_alt")
+    if compare_configs:
+        st.markdown("**Alternative config (for comparison)**")
+        alt_c1, alt_c2 = st.columns(2)
+        with alt_c1:
+            alt_stop_pct = st.number_input("Alt: Stop %", 0.2, 10.0, 0.75, 0.1, key="p28_alt_stop")
+        with alt_c2:
+            alt_target_pct = st.number_input("Alt: Target %", 0.2, 10.0, 1.5, 0.1, key="p28_alt_target")
+    else:
+        alt_stop_pct = None
+        alt_target_pct = None
+
+    st.caption(f"30m time-stop ≈ {max_bars_30m/12:.1f} trading days · "
+              f"60m time-stop ≈ {max_bars_60m/6:.1f} trading days — keep these in the 3-6 day "
+              "range the setup is built around, not much longer.")
+
+    st.markdown("**Trend filter — require RSI divergence**")
+    st.caption(
+        "The failure mode seen in a live run (March 2026): every LONG fade kept getting stopped "
+        "because price kept making fresh lows WITH RSI also making fresh lows in lockstep — a "
+        "genuine sustained decline, not a stalling move. Turning this on only fades once price "
+        "makes a new N-candle extreme that RSI does NOT confirm (classic bullish/bearish "
+        "divergence) — much closer to 'the move is stalling' than 'RSI crossed 70/30,' trend or "
+        "no trend.")
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        require_divergence = st.checkbox("Require divergence to enter", value=False, key="p28_div")
+    with f2:
+        div_lookback = st.number_input("Divergence lookback (candles)", 5, 60, 20, 1,
+                                       key="p28_div_lookback", disabled=not require_divergence)
+    with f3:
+        div_min_gap = st.number_input("Min RSI gap (points)", 0.0, 15.0, 2.0, 0.5,
+                                      key="p28_div_gap", disabled=not require_divergence)
+    st.caption("⚠️ Tested live: this blocked the March pile-on entirely, but it also blocked most "
+              "of the best month (Feb 2026) — fast V-shaped reversals don't leave RSI time to "
+              "diverge either. Try loosening the gap/lookback, or use the cooldown filter below "
+              "instead — it's a less blunt fix for the same problem.")
+
+    st.markdown("**Trend filter — option 3: cooldown between same-direction re-entries**")
+    st.caption(
+        "A less blunt alternative to divergence: instead of judging each signal on momentum "
+        "confirmation, this just takes the FIRST fade of a stretch and refuses to re-enter the "
+        "SAME direction again until cooldown_bars has passed — no repeat re-triggers piling on "
+        "while a trend grinds on. The cooldown clears immediately the moment a trade fires in the "
+        "OPPOSITE direction (a real reversal already showed up, so the restriction no longer "
+        "applies). Unlike divergence, this doesn't touch the FIRST trade of any stretch — including "
+        "fast V-reversals — so it should cost less of the good trades.")
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        require_cooldown = st.checkbox("Require cooldown between same-direction re-entries",
+                                       value=False, key="p28_cooldown")
+    with g2:
+        cooldown_bars_30m = st.number_input("30m cooldown (candles, 12/day)", 4, 240, 48, 4,
+                                            key="p28_cooldown30", disabled=not require_cooldown)
+    with g3:
+        cooldown_bars_60m = st.number_input("60m cooldown (candles, 6/day)", 2, 120, 24, 2,
+                                            key="p28_cooldown60", disabled=not require_cooldown)
+
+    run = st.button("▶ Run backtest", type="primary", key="p28_run")
+    if run:
+        st.session_state.p28_ran = True
+        st.session_state.p28_inputs = dict(
+            days_30m=days_30m, days_60m=days_60m, rsi_period=int(rsi_period),
+            entry_mode=entry_mode, midline_exit=midline_exit, ob=float(ob), os_=float(os_),
+            stop_pct=float(stop_pct), target_pct=float(target_pct),
+            max_bars_30m=int(max_bars_30m), max_bars_60m=int(max_bars_60m),
+            require_divergence=require_divergence, div_lookback=int(div_lookback),
+            div_min_gap=float(div_min_gap),
+            require_cooldown=require_cooldown, cooldown_bars_30m=int(cooldown_bars_30m),
+            cooldown_bars_60m=int(cooldown_bars_60m),
+            compare_configs=compare_configs,
+            alt_stop_pct=float(alt_stop_pct) if alt_stop_pct is not None else None,
+            alt_target_pct=float(alt_target_pct) if alt_target_pct is not None else None,
+        )
+
+    if not st.session_state.get("p28_ran"):
+        st.info("Set your parameters and click Run. Pulls 30m + 60m Nifty history from Kite and "
+               "walks every RSI OB/OS extreme forward (a few seconds).")
+        st.stop()
+
+    _in = st.session_state.p28_inputs
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _load_30m(days):
+        return _lf.get_nifty_30m(days=days)
+
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _load_60m(days):
+        return _lf.get_nifty_1h_phase(days=days)
+
+
+    with st.spinner("Fetching 30m + 60m history…"):
+        df_30m = _load_30m(_in["days_30m"])
+        df_60m = _load_60m(_in["days_60m"])
+
+    if (df_30m is None or df_30m.empty) and (df_60m is None or df_60m.empty):
+        st.error("Could not load either 30m or 60m Nifty history. Log in via Home → Kite, then retry.")
+        st.stop()
+
+    if df_30m is None or df_30m.empty:
+        st.warning(
+            "30m history came back empty — 60m loaded fine below, but the 30m half of every "
+            "section on this page will be blank. `get_nifty_30m()` swallows its own errors and "
+            "returns empty on failure (never crashes), and this page caches THAT result for 30 "
+            "minutes — so a transient failure (or an older cached empty result from before a fix "
+            "was deployed) can look like a permanent one. Click below to force a fresh fetch.")
+        if st.button("🔄 Clear cached 30m/60m fetch & retry", key="p28_clear_cache"):
+            _load_30m.clear()
+            _load_60m.clear()
+            st.rerun()
+
     st.divider()
     st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
                 f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
