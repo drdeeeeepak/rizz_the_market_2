@@ -215,22 +215,26 @@ else:
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
         def _rsi_css(val, is_declining=False):
             """
-            Text color: RED if declining, default if rising.
-            Background: RED if overbought (>=70), GREEN if oversold (<=30), GRAY if neutral.
+            Text color convention from page 20: RED if falling/declining, dark text if rising.
+            Background (opposite of page 20 for fade strategy): RED for overbought, GREEN for oversold, GRAY for neutral.
             """
             try:
                 rsi = float(val)
-                # Determine text color: red if declining, white if rising
-                text_color = "#dc2626" if is_declining else "#ffffff"  # Red text if declining, white if rising
-                text_weight = "800" if is_declining else "600"
 
-                # Determine background based on RSI zone
+                # Determine background based on RSI zone (opposite of page 20)
                 if rsi >= 70:
-                    bg_color = "#ef4444"  # RED background for overbought
+                    bg_color = "#fca5a5"  # Red/pink background for overbought
+                    text_color_rise = "#7f1d1d"  # Dark red text when rising
                 elif rsi <= 30:
-                    bg_color = "#22c55e"  # GREEN background for oversold
+                    bg_color = "#86efac"  # Green background for oversold
+                    text_color_rise = "#064e3b"  # Dark green text when rising
                 else:
-                    bg_color = "#9ca3af"  # GRAY background for neutral
+                    bg_color = "#e2e8f0"  # Gray background for neutral
+                    text_color_rise = "#334155"  # Dark slate text when rising
+
+                # Text color: RED if falling (like page 20), otherwise zone-appropriate color
+                text_color = "#dc2626" if is_declining else text_color_rise
+                text_weight = "800" if is_declining else "600"
 
                 return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
             except:
