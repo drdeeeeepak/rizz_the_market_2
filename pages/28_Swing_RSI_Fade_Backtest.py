@@ -316,13 +316,16 @@ else:
 
                     shown_60m_hours = set()  # Track which hours we've already shown 60m data for
 
-                    for i, (idx_30m, row_30m) in enumerate(day_30m.iterrows()):
+                    # Iterate through 30m candles in REVERSE order (newest first)
+                    day_30m_reversed = day_30m.iloc[::-1]
+                    for idx_in_reversed, (idx_30m, row_30m) in enumerate(day_30m_reversed.iterrows()):
                         rsi_30m = row_30m['rsi']
                         if pd.isna(rsi_30m):
                             continue
 
                         zone_dot_30m, zone_label_30m = _rsi_zone(rsi_30m)
-                        prev_rsi_30m = day_30m['rsi'].iloc[i-1] if i > 0 else rsi_30m
+                        # Get previous candle (which is next in reversed iteration)
+                        prev_rsi_30m = day_30m_reversed['rsi'].iloc[idx_in_reversed+1] if idx_in_reversed+1 < len(day_30m_reversed) else rsi_30m
                         trend_30m = _trend_arrow(prev_rsi_30m, rsi_30m)
                         div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
 
