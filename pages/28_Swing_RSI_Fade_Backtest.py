@@ -190,14 +190,20 @@ else:
     st.subheader("📋 Historical RSI Status (Last 5 Trading Days)")
     st.caption("7 × 60m candles + 13 × 30m candles per day | Signals show when Bull Put/Bear Call/Roll conditions were met")
 
-    @st.cache_data(ttl=600, show_spinner=False)
+    # Always-visible refresh button
+    if st.button("🔄 Refresh Historical Data (Clear Cache)", key="p28_refresh_hist"):
+        _fetch_hist_60m.clear()
+        _fetch_hist_30m.clear()
+        st.rerun()
+
+    @st.cache_data(ttl=120, show_spinner=False)  # Reduced to 2 min for fresher data during market hours
     def _fetch_hist_60m():
         try:
             return _lf.get_nifty_1h_phase(days=6)
         except Exception:
             return None
 
-    @st.cache_data(ttl=600, show_spinner=False)
+    @st.cache_data(ttl=120, show_spinner=False)  # Reduced to 2 min for fresher data during market hours
     def _fetch_hist_30m():
         try:
             return _lf.get_nifty_30m(days=6)
