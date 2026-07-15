@@ -199,14 +199,16 @@ else:
     @st.cache_data(ttl=120, show_spinner=False)  # Reduced to 2 min for fresher data during market hours
     def _fetch_hist_60m():
         try:
-            return _lf.get_nifty_1h_phase(days=6)
+            # Fetch 90 days for proper RSI(14) calculation (Kite uses ~100+ day lookback for stable RSI)
+            return _lf.get_nifty_1h_phase(days=90)
         except Exception:
             return None
 
     @st.cache_data(ttl=120, show_spinner=False)  # Reduced to 2 min for fresher data during market hours
     def _fetch_hist_30m():
         try:
-            return _lf.get_nifty_30m(days=6)
+            # Fetch 60 days for proper RSI(14) calculation (capped at 200-day Kite limit)
+            return _lf.get_nifty_30m(days=60)
         except Exception:
             return None
 
@@ -663,7 +665,7 @@ if df_30m is None or df_30m.empty:
 # Detailed backtest — main + optional alternative config
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=False):
+with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=False, key="p28_backtest_expander"):
     st.divider()
     st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
                 f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
