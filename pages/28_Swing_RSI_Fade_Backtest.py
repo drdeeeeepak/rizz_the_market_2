@@ -386,23 +386,43 @@ else:
                 """Apply trading-signal colors to RSI and Divergence columns"""
                 styler = df.style
 
-                # Color RSI cells (trading zones)
-                styler = styler.map(_rsi_css, subset=['60m_RSI', '30m_RSI'])
+                # Color RSI cells (trading zones) using row-wise apply to avoid format conflict
+                def _rsi_row(row):
+                    styles = [''] * len(row)
+                    for i, col in enumerate(row.index):
+                        if col in ['60m_RSI', '30m_RSI']:
+                            styles[i] = _rsi_css(row[col])
+                        else:
+                            styles[i] = ''
+                    return styles
+
+                styler = styler.apply(_rsi_row, axis=1)
 
                 # Color divergence cells (bullish/bearish signals)
-                styler = styler.map(_div_css, subset=['60m_Div', '30m_Div'])
+                def _div_row(row):
+                    styles = [''] * len(row)
+                    for i, col in enumerate(row.index):
+                        if col in ['60m_Div', '30m_Div']:
+                            styles[i] = _div_css(row[col])
+                        else:
+                            styles[i] = ''
+                    return styles
+
+                styler = styler.apply(_div_row, axis=1)
 
                 # Color signal column (LONG/SHORT)
-                styler = styler.map(_signal_css, subset=['Signal'])
+                def _signal_row(row):
+                    styles = [''] * len(row)
+                    for i, col in enumerate(row.index):
+                        if col == 'Signal':
+                            styles[i] = _signal_css(row[col])
+                        else:
+                            styles[i] = ''
+                    return styles
 
-                # Style header rows (date headers)
-                def _header_css(val):
-                    if '📅' in str(val):
-                        return "background-color:#e5e7eb;font-weight:900;font-size:11pt;"
-                    return ""
-                styler = styler.map(_header_css, subset=['Time'])
+                styler = styler.apply(_signal_row, axis=1)
 
-                return styler.format(escape=False)
+                return styler
 
             styled_table = _style_rsi_table(hist_table)
             st.dataframe(styled_table, use_container_width=True, height=600)
