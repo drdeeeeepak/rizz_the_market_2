@@ -213,6 +213,115 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
+        def _render_colored_rsi_table(df):
+            """Render table as HTML with proper cell coloring for RSI zones and divergence"""
+            html = '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+
+            for idx, row in df.iterrows():
+                time_val = str(row.get('Time', ''))
+                is_header = '📅' in time_val
+
+                if is_header:
+                    html += f'<tr style="background-color:#f0f0f0;"><td colspan="8" style="padding:8px;font-weight:bold;">{time_val}</td></tr>'
+                    continue
+
+                html += '<tr>'
+
+                # Time column
+                html += f'<td style="padding:6px;border:1px solid #ddd;">{time_val}</td>'
+
+                # 60m RSI
+                rsi_60m = str(row.get('60m_RSI', ''))
+                if rsi_60m and rsi_60m != '':
+                    try:
+                        rsi_val = float(rsi_60m)
+                        if rsi_val >= 75:
+                            bg = '#be123c'  # Dark red - extreme overbought
+                        elif rsi_val >= 70:
+                            bg = '#ef4444'  # Red - overbought
+                        elif rsi_val <= 22:
+                            bg = '#0d47a1'  # Dark blue - extreme oversold
+                        elif rsi_val <= 30:
+                            bg = '#1e40af'  # Blue - oversold
+                        else:
+                            bg = '#10b981'  # Green - neutral
+                        html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};color:white;font-weight:bold;text-align:center;">{rsi_60m}</td>'
+                    except:
+                        html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+                else:
+                    html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+
+                # 60m Divergence
+                div_60m = str(row.get('60m_Div', ''))
+                if div_60m and div_60m != '':
+                    if 'Bull' in div_60m:
+                        bg = '#10b981'  # Green - bullish divergence (LONG setup)
+                    elif 'Bear' in div_60m:
+                        bg = '#ef4444'  # Red - bearish divergence (SHORT setup)
+                    else:
+                        bg = '#f3f4f6'
+                    html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};color:white;font-weight:bold;text-align:center;">{div_60m}</td>'
+                else:
+                    html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+
+                # 60m Trend
+                trend_60m = str(row.get('60m_Trend', ''))
+                html += f'<td style="padding:6px;border:1px solid #ddd;text-align:center;">{trend_60m}</td>'
+
+                # 30m RSI
+                rsi_30m = str(row.get('30m_RSI', ''))
+                if rsi_30m and rsi_30m != '':
+                    try:
+                        rsi_val = float(rsi_30m)
+                        if rsi_val >= 75:
+                            bg = '#be123c'  # Dark red - extreme overbought
+                        elif rsi_val >= 70:
+                            bg = '#ef4444'  # Red - overbought
+                        elif rsi_val <= 22:
+                            bg = '#0d47a1'  # Dark blue - extreme oversold
+                        elif rsi_val <= 30:
+                            bg = '#1e40af'  # Blue - oversold
+                        else:
+                            bg = '#10b981'  # Green - neutral
+                        html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};color:white;font-weight:bold;text-align:center;">{rsi_30m}</td>'
+                    except:
+                        html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+                else:
+                    html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+
+                # 30m Divergence
+                div_30m = str(row.get('30m_Div', ''))
+                if div_30m and div_30m != '':
+                    if 'Bull' in div_30m:
+                        bg = '#10b981'  # Green - bullish divergence (LONG setup)
+                    elif 'Bear' in div_30m:
+                        bg = '#ef4444'  # Red - bearish divergence (SHORT setup)
+                    else:
+                        bg = '#f3f4f6'
+                    html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};color:white;font-weight:bold;text-align:center;">{div_30m}</td>'
+                else:
+                    html += f'<td style="padding:6px;border:1px solid #ddd;"></td>'
+
+                # 30m Trend
+                trend_30m = str(row.get('30m_Trend', ''))
+                html += f'<td style="padding:6px;border:1px solid #ddd;text-align:center;">{trend_30m}</td>'
+
+                # Signal
+                signal = str(row.get('Signal', ''))
+                if '🟢 LONG' in signal:
+                    bg = '#d1fae5'  # Light green background
+                    html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};font-weight:bold;color:#065f46;">{signal}</td>'
+                elif '🔴 SHORT' in signal:
+                    bg = '#fee2e2'  # Light red background
+                    html += f'<td style="padding:6px;border:1px solid #ddd;background-color:{bg};font-weight:bold;color:#7f1d1d;">{signal}</td>'
+                else:
+                    html += f'<td style="padding:6px;border:1px solid #ddd;text-align:center;">{signal}</td>'
+
+                html += '</tr>'
+
+            html += '</table>'
+            return html
+
         def _detect_divergence(df, lookback=20, min_gap=2.0):
             """Detect bullish/bearish divergence: price extreme not confirmed by RSI"""
             if df is None or df.empty or 'rsi' not in df.columns:
@@ -346,15 +455,38 @@ else:
         hist_table = _build_hist_table(df_hist_60m, df_hist_30m)
 
         if not hist_table.empty:
-            # Display table with formatting guide
-            st.caption("**Color guide:** RSI — Red (75+/Extreme OB), Orange (70+/OB), Green (30-70/Neutral), Blue (≤30/OS), Dark Blue (≤22/Extreme OS) · Divergence — 🟢 ▲ Bullish div (LONG), 🔴 ▼ Bearish div (SHORT)")
+            # Reverse rows to show latest first (excluding date headers)
+            rows_list = hist_table.to_dict('records')
+            header_rows = []
+            data_rows = []
 
-            st.dataframe(
-                hist_table,
-                use_container_width=True,
-                hide_index=True,
-                height=600
-            )
+            for row in rows_list:
+                if '📅' in str(row.get('Time', '')):
+                    header_rows.append(row)
+                else:
+                    data_rows.append(row)
+
+            # Reverse data rows within each date group
+            if header_rows:
+                final_rows = []
+                current_date_idx = 0
+                for i, row in enumerate(header_rows):
+                    final_rows.append(row)
+                    if i < len(header_rows) - 1:
+                        next_date_idx = header_rows[i+1]
+                        end_idx = next((j for j, dr in enumerate(data_rows) if j > current_date_idx), len(data_rows))
+                    else:
+                        end_idx = len(data_rows)
+
+                    date_candles = data_rows[current_date_idx:end_idx]
+                    final_rows.extend(reversed(date_candles))
+                    current_date_idx = end_idx
+
+                hist_table = pd.DataFrame(final_rows)
+
+            # Render as HTML with proper cell coloring
+            html_table = _render_colored_rsi_table(hist_table)
+            st.markdown(html_table, unsafe_allow_html=True)
 
             # Download button
             csv_data = hist_table.to_csv(index=False)
