@@ -533,7 +533,6 @@ if not st.session_state.get("p28_ran"):
 
 _in = st.session_state.p28_inputs
 
-
 @st.cache_data(ttl=1800, show_spinner=False)
 def _load_30m(days):
     return _lf.get_nifty_30m(days=days)
@@ -567,132 +566,134 @@ if df_30m is None or df_30m.empty:
 # ══════════════════════════════════════════════════════════════════════════════
 # Detailed backtest — main + optional alternative config
 # ══════════════════════════════════════════════════════════════════════════════
-st.divider()
-st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
-            f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
 
-def _run_config(config_name, ob, os_, stop, target, max_bars_30m, max_bars_60m, cooldown_30m, cooldown_60m):
-    """Run backtest for a single config across both timeframes; returns dict of results."""
-    results = {}
-    for label, df, max_bars, cooldown_bars in [
-        ("30-minute", df_30m, max_bars_30m, cooldown_30m),
-        ("60-minute (hourly)", df_60m, max_bars_60m, cooldown_60m),
-    ]:
-        if df is None or df.empty:
-            results[label] = (None, None, None)
-            continue
-        trades = rfb.simulate_fade_trades(
-            df, rsi_period=_in["rsi_period"], ob=ob, os_=os_,
-            entry_mode=_in["entry_mode"], max_bars=max_bars, stop_pct=stop,
-            target_pct=target, midline_exit=_in["midline_exit"],
-            require_divergence=_in.get("require_divergence", False),
-            div_lookback=_in.get("div_lookback", 20), div_min_gap=_in.get("div_min_gap", 2.0),
-            require_cooldown=_in.get("require_cooldown", False), cooldown_bars=cooldown_bars)
-        stats = rfb.trade_stats(trades)
-        results[label] = (trades, stats, None if trades.empty else rfb.equity_curve(trades))
-    return results
+with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=False):
+    st.divider()
+    st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
+                f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
 
-# Run main config
-main_results = _run_config(
-    "Main", _in["ob"], _in["os_"], _in["stop_pct"], _in["target_pct"],
-    _in["max_bars_30m"], _in["max_bars_60m"],
-    _in.get("cooldown_bars_30m", 48), _in.get("cooldown_bars_60m", 24))
+    def _run_config(config_name, ob, os_, stop, target, max_bars_30m, max_bars_60m, cooldown_30m, cooldown_60m):
+        """Run backtest for a single config across both timeframes; returns dict of results."""
+        results = {}
+        for label, df, max_bars, cooldown_bars in [
+            ("30-minute", df_30m, max_bars_30m, cooldown_30m),
+            ("60-minute (hourly)", df_60m, max_bars_60m, cooldown_60m),
+        ]:
+            if df is None or df.empty:
+                results[label] = (None, None, None)
+                continue
+            trades = rfb.simulate_fade_trades(
+                df, rsi_period=_in["rsi_period"], ob=ob, os_=os_,
+                entry_mode=_in["entry_mode"], max_bars=max_bars, stop_pct=stop,
+                target_pct=target, midline_exit=_in["midline_exit"],
+                require_divergence=_in.get("require_divergence", False),
+                div_lookback=_in.get("div_lookback", 20), div_min_gap=_in.get("div_min_gap", 2.0),
+                require_cooldown=_in.get("require_cooldown", False), cooldown_bars=cooldown_bars)
+            stats = rfb.trade_stats(trades)
+            results[label] = (trades, stats, None if trades.empty else rfb.equity_curve(trades))
+        return results
 
-# Run alt config if enabled
-alt_results = None
-if _in.get("compare_configs"):
-    alt_results = _run_config(
-        "Alternative", _in["ob"], _in["os_"], _in["alt_stop_pct"], _in["alt_target_pct"],
+    # Run main config
+    main_results = _run_config(
+        "Main", _in["ob"], _in["os_"], _in["stop_pct"], _in["target_pct"],
         _in["max_bars_30m"], _in["max_bars_60m"],
         _in.get("cooldown_bars_30m", 48), _in.get("cooldown_bars_60m", 24))
 
-# Display results
-configs_to_show = [
-    ("Main", _in["stop_pct"], _in["target_pct"], main_results),
-]
-if alt_results:
-    configs_to_show.append(("Alternative (0.75% / 1.5%)", _in["alt_stop_pct"], _in["alt_target_pct"], alt_results))
+    # Run alt config if enabled
+    alt_results = None
+    if _in.get("compare_configs"):
+        alt_results = _run_config(
+            "Alternative", _in["ob"], _in["os_"], _in["alt_stop_pct"], _in["alt_target_pct"],
+            _in["max_bars_30m"], _in["max_bars_60m"],
+            _in.get("cooldown_bars_30m", 48), _in.get("cooldown_bars_60m", 24))
 
-for config_label, stop, target, results in configs_to_show:
-    st.markdown(f"### {config_label} — {stop:.2f}% stop / {target:.2f}% target")
-    detail_cols = st.columns(2)
+    # Display results
+    configs_to_show = [
+        ("Main", _in["stop_pct"], _in["target_pct"], main_results),
+    ]
+    if alt_results:
+        configs_to_show.append(("Alternative (0.75% / 1.5%)", _in["alt_stop_pct"], _in["alt_target_pct"], alt_results))
 
-    for col, label in zip(detail_cols, ["30-minute", "60-minute (hourly)"]):
-        with col:
-            st.markdown(f"**{label}**")
-            trades, stats, eq = results[label]
+    for config_label, stop, target, results in configs_to_show:
+        st.markdown(f"### {config_label} — {stop:.2f}% stop / {target:.2f}% target")
+        detail_cols = st.columns(2)
 
-            if trades is None or trades.empty:
-                st.caption("No data or no trades triggered.")
-                continue
+        for col, label in zip(detail_cols, ["30-minute", "60-minute (hourly)"]):
+            with col:
+                st.markdown(f"**{label}**")
+                trades, stats, eq = results[label]
 
-            # Show summary metrics
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Trades", stats["n_trades"])
-            m2.metric("Win rate", f"{stats['win_rate']:.1f}%" if pd.notna(stats["win_rate"]) else "—")
-            m3.metric("Expectancy", f"{stats['expectancy_pts']:.1f} pts" if pd.notna(stats["expectancy_pts"]) else "—")
-            m4, m5, m6 = st.columns(3)
-            pf = stats["profit_factor"]
-            m4.metric("Profit factor", f"{pf:.2f}" if pd.notna(pf) and pf not in (float("inf"),) else ("∞" if pf == float("inf") else "—"))
-            m5.metric("Total P&L", f"{stats['total_pnl_pts']:.1f} pts")
-            m6.metric("Max drawdown", f"{stats['max_drawdown_pts']:.1f} pts")
+                if trades is None or trades.empty:
+                    st.caption("No data or no trades triggered.")
+                    continue
 
-            # Equity curve
-            if eq is not None and not eq.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=list(range(len(eq))), y=eq["cum_pnl_pts"],
-                                         mode="lines", line=dict(color="#2563eb", width=2),
-                                         name="Cumulative P&L (pts)"))
-                fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10),
-                                  yaxis_title="pts", xaxis_title="trade #")
-                st.plotly_chart(fig, use_container_width=True, key=f"p28_eq_{config_label}_{label}")
+                # Show summary metrics
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Trades", stats["n_trades"])
+                m2.metric("Win rate", f"{stats['win_rate']:.1f}%" if pd.notna(stats["win_rate"]) else "—")
+                m3.metric("Expectancy", f"{stats['expectancy_pts']:.1f} pts" if pd.notna(stats["expectancy_pts"]) else "—")
+                m4, m5, m6 = st.columns(3)
+                pf = stats["profit_factor"]
+                m4.metric("Profit factor", f"{pf:.2f}" if pd.notna(pf) and pf not in (float("inf"),) else ("∞" if pf == float("inf") else "—"))
+                m5.metric("Total P&L", f"{stats['total_pnl_pts']:.1f} pts")
+                m6.metric("Max drawdown", f"{stats['max_drawdown_pts']:.1f} pts")
 
-            # Trade log in collapsible expander
-            with st.expander(f"📋 Trade log ({len(trades)} trades)", expanded=False):
-                st.dataframe(trades, use_container_width=True, hide_index=True, height=320)
-                st.download_button(f"⬇ Download {label} trade log CSV",
-                                   trades.to_csv(index=False).encode("utf-8"),
-                                   file_name=f"rsi_fade_trades_{label.split()[0]}.csv", mime="text/csv",
-                                   key=f"p28_dl_{config_label}_{label}")
+                # Equity curve
+                if eq is not None and not eq.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=list(range(len(eq))), y=eq["cum_pnl_pts"],
+                                             mode="lines", line=dict(color="#2563eb", width=2),
+                                             name="Cumulative P&L (pts)"))
+                    fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10),
+                                      yaxis_title="pts", xaxis_title="trade #")
+                    st.plotly_chart(fig, use_container_width=True, key=f"p28_eq_{config_label}_{label}")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Threshold scan + timeframe comparison — the "which one's best" answer
-# ══════════════════════════════════════════════════════════════════════════════
-st.divider()
-st.subheader("Threshold scan — 30m vs hourly, across OB/OS pairs")
-st.caption("Runs OB/OS pairs 65/35, 70/30, 75/25, 80/20 on both timeframes with the same entry "
-          "mode / exit rule / stop / target above, sorted by expectancy (pts per trade).")
+                # Trade log in collapsible expander
+                with st.expander(f"📋 Trade log ({len(trades)} trades)", expanded=False):
+                    st.dataframe(trades, use_container_width=True, hide_index=True, height=320)
+                    st.download_button(f"⬇ Download {label} trade log CSV",
+                                       trades.to_csv(index=False).encode("utf-8"),
+                                       file_name=f"rsi_fade_trades_{label.split()[0]}.csv", mime="text/csv",
+                                       key=f"p28_dl_{config_label}_{label}")
 
-dfs = {"30-minute": df_30m, "60-minute (hourly)": df_60m}
-max_bars_map = {"30-minute": _in["max_bars_30m"], "60-minute (hourly)": _in["max_bars_60m"]}
-cooldown_bars_map = {"30-minute": _in.get("cooldown_bars_30m", 48),
-                     "60-minute (hourly)": _in.get("cooldown_bars_60m", 24)}
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Threshold scan + timeframe comparison — the "which one's best" answer
+    # ══════════════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("Threshold scan — 30m vs hourly, across OB/OS pairs")
+    st.caption("Runs OB/OS pairs 65/35, 70/30, 75/25, 80/20 on both timeframes with the same entry "
+              "mode / exit rule / stop / target above, sorted by expectancy (pts per trade).")
 
-scan = rfb.compare_timeframes(dfs, rsi_period=_in["rsi_period"], entry_mode=_in["entry_mode"],
-                              max_bars_map=max_bars_map, stop_pct=_in["stop_pct"],
-                              target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
-                              require_divergence=_in.get("require_divergence", False),
-                              div_lookback=_in.get("div_lookback", 20),
-                              div_min_gap=_in.get("div_min_gap", 2.0),
-                              require_cooldown=_in.get("require_cooldown", False),
-                              cooldown_bars_map=cooldown_bars_map)
+    dfs = {"30-minute": df_30m, "60-minute (hourly)": df_60m}
+    max_bars_map = {"30-minute": _in["max_bars_30m"], "60-minute (hourly)": _in["max_bars_60m"]}
+    cooldown_bars_map = {"30-minute": _in.get("cooldown_bars_30m", 48),
+                         "60-minute (hourly)": _in.get("cooldown_bars_60m", 24)}
 
-if scan.empty:
-    st.caption("Not enough data loaded to run the scan.")
-else:
-    # Show top result by default
-    top = scan[scan["n_trades"] >= 10]
-    if not top.empty:
-        best = top.iloc[0]
-        st.success(f"**Top pick** (n_trades ≥ 10): {best['timeframe']}, OB {best['ob']:.0f} / OS {best['os']:.0f} — "
-                  f"{best['expectancy_pts']:.1f} pts/trade, {best['win_rate']:.1f}% win rate, "
-                  f"{int(best['n_trades'])} trades, max DD {best['max_drawdown_pts']:.1f} pts")
+    scan = rfb.compare_timeframes(dfs, rsi_period=_in["rsi_period"], entry_mode=_in["entry_mode"],
+                                  max_bars_map=max_bars_map, stop_pct=_in["stop_pct"],
+                                  target_pct=_in["target_pct"], midline_exit=_in["midline_exit"],
+                                  require_divergence=_in.get("require_divergence", False),
+                                  div_lookback=_in.get("div_lookback", 20),
+                                  div_min_gap=_in.get("div_min_gap", 2.0),
+                                  require_cooldown=_in.get("require_cooldown", False),
+                                  cooldown_bars_map=cooldown_bars_map)
+
+    if scan.empty:
+        st.caption("Not enough data loaded to run the scan.")
     else:
-        st.warning("No timeframe/threshold combo cleared 10 trades in this lookback — extend the "
-                  "lookback sliders above before trusting results.")
+        # Show top result by default
+        top = scan[scan["n_trades"] >= 10]
+        if not top.empty:
+            best = top.iloc[0]
+            st.success(f"**Top pick** (n_trades ≥ 10): {best['timeframe']}, OB {best['ob']:.0f} / OS {best['os']:.0f} — "
+                      f"{best['expectancy_pts']:.1f} pts/trade, {best['win_rate']:.1f}% win rate, "
+                      f"{int(best['n_trades'])} trades, max DD {best['max_drawdown_pts']:.1f} pts")
+        else:
+            st.warning("No timeframe/threshold combo cleared 10 trades in this lookback — extend the "
+                      "lookback sliders above before trusting results.")
 
-    # Full scan results in expander
-    with st.expander("📊 View full threshold scan table", expanded=False):
-        st.dataframe(scan, use_container_width=True, hide_index=True)
-        st.download_button("⬇ Download full scan CSV", scan.to_csv(index=False).encode("utf-8"),
-                           file_name="rsi_fade_threshold_scan.csv", mime="text/csv", key="p28_dl_scan")
+        # Full scan results in expander
+        with st.expander("📊 View full threshold scan table", expanded=False):
+            st.dataframe(scan, use_container_width=True, hide_index=True)
+            st.download_button("⬇ Download full scan CSV", scan.to_csv(index=False).encode("utf-8"),
+                               file_name="rsi_fade_threshold_scan.csv", mime="text/csv", key="p28_dl_scan")
