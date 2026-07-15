@@ -83,6 +83,27 @@ def get_nifty_spot() -> float:
 
 
 @st.cache_data(ttl=TTL_PRICE, show_spinner=False)
+def get_nifty_futures() -> float:
+    """Near-month NIFTY FUTURES live LTP for premium/discount calculation. Returns 0.0 on failure."""
+    from data.kite_client import get_kite, get_kite_action
+    kite = get_kite_action() if not _HAS_ST else get_kite()
+    try:
+        tok = get_nifty_fut_token()
+        if not tok:
+            return 0.0
+        quote = kite.quote([tok])
+        if tok in quote:
+            return float(quote[tok].get("last_price", 0) or 0)
+        # Fallback: try string key
+        for key in list(quote.keys())[:1]:
+            return float(quote[key].get("last_price", 0) or 0)
+        log.warning("Futures quote key not found. Keys: %s", list(quote.keys())[:5])
+        return 0.0
+    except Exception as e:
+        log.error("Futures fetch failed: %s", e); return 0.0
+
+
+@st.cache_data(ttl=TTL_PRICE, show_spinner=False)
 def get_nifty_day_ohlc() -> tuple:
     """Returns (day_high, day_low) for Nifty spot from Kite's intraday OHLC quote.
     Both 0.0 on failure."""
