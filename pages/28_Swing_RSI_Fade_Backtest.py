@@ -310,9 +310,11 @@ else:
             if not df_30m.empty and not isinstance(df_30m.index, pd.DatetimeIndex):
                 df_30m.index = pd.to_datetime(df_30m.index)
 
-            # Add divergence detection
-            div_60m = _detect_divergence(df_60m) if not df_60m.empty else pd.Series()
-            div_30m = _detect_divergence(df_30m) if not df_30m.empty else pd.Series()
+            # Add divergence detection with custom parameters for OB/OS 70/30 signals
+            # 60-minute: lookback=15 candles, min_gap=1.0 point
+            # 30-minute: lookback=20 candles, min_gap=1.0 point
+            div_60m = _detect_divergence(df_60m, lookback=15, min_gap=1.0) if not df_60m.empty else pd.Series()
+            div_30m = _detect_divergence(df_30m, lookback=20, min_gap=1.0) if not df_30m.empty else pd.Series()
 
             # Get last 5 trading days
             if not df_30m.empty:
@@ -380,15 +382,28 @@ else:
                                     div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
                                     shown_60m_hours.add(hour_30m)
 
-                        # Determine 30m signal with entry direction
+                        # Determine 30m signal: OB/OS 70/30 + divergence requirement
                         signal = ""
                         time_str = idx_30m.strftime('%H:%M')
-                        if rsi_30m < 25 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 30:
+
+                        # Get divergence status for this candle
+                        div_30m_current = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
+
+                        # 🟢 LONG: RSI enters oversold (<30) + bullish divergence detected
+                        if (rsi_30m < 30 and prev_rsi_30m >= 30 and
+                            idx_in_reversed + 1 < len(day_30m_reversed) and "Bull" in div_30m_current):
                             signal = f"🟢 LONG {time_str}"
-                        elif rsi_30m > 75 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m < 70:
+
+                        # 🔴 SHORT: RSI enters overbought (>70) + bearish divergence detected
+                        elif (rsi_30m > 70 and prev_rsi_30m <= 70 and
+                              idx_in_reversed + 1 < len(day_30m_reversed) and "Bear" in div_30m_current):
                             signal = f"🔴 SHORT {time_str}"
+
+                        # ↓ ROLL DOWN: RSI < 22 (extreme oversold, recovery starting) — no divergence required
                         elif rsi_30m < 22 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 25:
                             signal = f"↓ ROLL DOWN {time_str}"
+
+                        # ↑ ROLL UP: RSI > 78 (extreme overbought, correction starting) — no divergence required
                         elif rsi_30m > 78 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m < 75:
                             signal = f"↑ ROLL UP {time_str}"
 
