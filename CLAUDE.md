@@ -114,3 +114,25 @@ _KIND_BG = {
 - Start fresh session, paste only the relevant section of pg02 (read just the lines you need)
 - Use `/clear` after each completed sub-task
 - Reference this file for context instead of re-explaining the architecture
+
+## Lessons Learned — Do Not Repeat
+
+**See full audit:** `docs/AUDIT_Page28_Backtest_Collapse_Failure.md`
+
+### Pattern: Structural/UI Changes (expander, container, scope changes)
+When moving code into/out of containers (expanders, columns, etc.):
+
+❌ **Don't:**
+- Try to fix symptoms (e.g., "session state") without understanding root cause
+- Make multiple small edits without verifying structure after each
+- Push without reading the code back to verify indentation
+
+✓ **Do:**
+1. Ask clarifying questions upfront ("Should X and Y collapse together?")
+2. Read file and map what's inside vs outside current structure
+3. Identify exact line numbers for code to move
+4. Make ONE comprehensive edit with proper indentation
+5. Read back affected section to verify structure is correct
+6. Only commit after verification
+
+**Key lesson:** When indenting code into containers, a single `Read` call catches 90% of mistakes. Use it.
