@@ -213,6 +213,29 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
+        def _detect_divergence(df, lookback=20, min_gap=2.0):
+            """Detect bullish/bearish divergence: price extreme not confirmed by RSI"""
+            if df is None or df.empty or 'rsi' not in df.columns:
+                return pd.Series("", index=df.index if df is not None and not df.empty else pd.Index([]))
+
+            d = df.copy()
+            rsi = d['rsi'].fillna(0)
+            low = d['low'].fillna(0)
+            high = d['high'].fillna(0)
+
+            prior_low_price = d['low'].shift(1).rolling(lookback).min()
+            prior_low_rsi = rsi.shift(1).rolling(lookback).min()
+            prior_high_price = d['high'].shift(1).rolling(lookback).max()
+            prior_high_rsi = rsi.shift(1).rolling(lookback).max()
+
+            bullish_div = (d['low'] <= prior_low_price) & (rsi > prior_low_rsi + min_gap)
+            bearish_div = (d['high'] >= prior_high_price) & (rsi < prior_high_rsi - min_gap)
+
+            div_signal = pd.Series("", index=d.index, dtype=str)
+            div_signal[bullish_div] = "▲ Bull"
+            div_signal[bearish_div] = "▼ Bear"
+            return div_signal
+
         def _build_hist_table(df_60m, df_30m):
             """Build flat historical RSI table: 30m rows with 60m data in cols 2-4"""
             if df_60m is None or df_60m.empty:
@@ -228,6 +251,10 @@ else:
             if not df_30m.empty and not isinstance(df_30m.index, pd.DatetimeIndex):
                 df_30m.index = pd.to_datetime(df_30m.index)
 
+            # Add divergence detection
+            div_60m = _detect_divergence(df_60m) if not df_60m.empty else pd.Series()
+            div_30m = _detect_divergence(df_30m) if not df_30m.empty else pd.Series()
+
             # Get last 5 trading days
             if not df_30m.empty:
                 dates_30m = df_30m.index.date
@@ -241,14 +268,16 @@ else:
             for date in sorted(unique_dates, reverse=True):
                 rows.append({
                     'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
-                    '60m_RSI': '', '60m_Zone': '', '60m_Trend': '',
-                    '30m_RSI': '', '30m_Zone': '', '30m_Trend': '', 'Signal': ''
+                    '60m_RSI': '', '60m_Div': '', '60m_Trend': '',
+                    '30m_RSI': '', '30m_Div': '', '30m_Trend': '', 'Signal': ''
                 })
 
                 # Iterate through all 30m candles for this date
                 if not df_30m.empty:
                     day_30m = df_30m[df_30m.index.date == date]
                     day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
+                    day_div_30m = div_30m[div_30m.index.date == date] if not div_30m.empty else pd.Series()
+                    day_div_60m = div_60m[div_60m.index.date == date] if not div_60m.empty else pd.Series()
 
                     shown_60m_hours = set()  # Track which hours we've already shown 60m data for
 
@@ -260,13 +289,14 @@ else:
                         zone_dot_30m, zone_label_30m = _rsi_zone(rsi_30m)
                         prev_rsi_30m = day_30m['rsi'].iloc[i-1] if i > 0 else rsi_30m
                         trend_30m = _trend_arrow(prev_rsi_30m, rsi_30m)
+                        div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
 
                         # Find corresponding 60m candle (same hour as 30m candle)
                         hour_30m = idx_30m.hour
                         minute_30m = idx_30m.minute
 
                         rsi_60m_val = ""
-                        zone_60m_str = ""
+                        div_60m_str = ""
                         trend_60m_str = ""
 
                         # Only show 60m data on the first 30m candle of each hour
@@ -285,27 +315,28 @@ else:
                                     prev_rsi_60m = day_60m['rsi'].iloc[idx_60m_prev[0]-1] if idx_60m_prev[0] > 0 else rsi_60m
                                     trend_60m_str = _trend_arrow(prev_rsi_60m, rsi_60m)
                                     rsi_60m_val = f"{rsi_60m:.1f}"
-                                    zone_60m_str = f"{zone_dot_60m} {zone_label_60m}"
+                                    div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
                                     shown_60m_hours.add(hour_30m)
 
-                        # Determine 30m signal
+                        # Determine 30m signal with entry direction
                         signal = ""
+                        time_str = idx_30m.strftime('%H:%M')
                         if rsi_30m < 25 and i > 0 and day_30m['rsi'].iloc[i-1] > 30:
-                            signal = "✅ BULL PUT"
+                            signal = f"🟢 LONG {time_str}"
                         elif rsi_30m > 75 and i > 0 and day_30m['rsi'].iloc[i-1] < 70:
-                            signal = "✅ BEAR CALL"
-                        elif rsi_30m < 22:
-                            signal = "🔴 ROLL DOWN"
-                        elif rsi_30m > 78:
-                            signal = "🔴 ROLL UP"
+                            signal = f"🔴 SHORT {time_str}"
+                        elif rsi_30m < 22 and i > 0 and day_30m['rsi'].iloc[i-1] > 25:
+                            signal = f"↓ ROLL DOWN {time_str}"
+                        elif rsi_30m > 78 and i > 0 and day_30m['rsi'].iloc[i-1] < 75:
+                            signal = f"↑ ROLL UP {time_str}"
 
                         rows.append({
-                            'Time': idx_30m.strftime('%H:%M'),
+                            'Time': time_str,
                             '60m_RSI': rsi_60m_val,
-                            '60m_Zone': zone_60m_str,
+                            '60m_Div': div_60m_str,
                             '60m_Trend': trend_60m_str,
                             '30m_RSI': f"{rsi_30m:.1f}",
-                            '30m_Zone': f"{zone_dot_30m} {zone_label_30m}",
+                            '30m_Div': div_30m_str,
                             '30m_Trend': trend_30m,
                             'Signal': signal
                         })
@@ -315,7 +346,9 @@ else:
         hist_table = _build_hist_table(df_hist_60m, df_hist_30m)
 
         if not hist_table.empty:
-            # Display table
+            # Display table with formatting guide
+            st.caption("**Color guide:** RSI — Red (75+/Extreme OB), Orange (70+/OB), Green (30-70/Neutral), Blue (≤30/OS), Dark Blue (≤22/Extreme OS) · Divergence — 🟢 ▲ Bullish div (LONG), 🔴 ▼ Bearish div (SHORT)")
+
             st.dataframe(
                 hist_table,
                 use_container_width=True,
