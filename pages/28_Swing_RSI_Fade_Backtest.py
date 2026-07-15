@@ -70,8 +70,9 @@ def _fetch_live_30m(days=6):
         return None
 
 with st.spinner("Fetching live RSI data…"):
-    df_live_60m = _fetch_live_60m(6)
-    df_live_30m = _fetch_live_30m(6)
+    # Use same lookback as historical table for consistent RSI calculation
+    df_live_60m = _fetch_live_60m(90)
+    df_live_30m = _fetch_live_30m(60)
 
 if (df_live_60m is None or df_live_60m.empty) and (df_live_30m is None or df_live_30m.empty):
     st.warning("Could not fetch live RSI data. Log in via Home page.")
@@ -377,13 +378,13 @@ else:
                         # Determine 30m signal with entry direction
                         signal = ""
                         time_str = idx_30m.strftime('%H:%M')
-                        if rsi_30m < 25 and i > 0 and day_30m['rsi'].iloc[i-1] > 30:
+                        if rsi_30m < 25 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 30:
                             signal = f"🟢 LONG {time_str}"
-                        elif rsi_30m > 75 and i > 0 and day_30m['rsi'].iloc[i-1] < 70:
+                        elif rsi_30m > 75 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m < 70:
                             signal = f"🔴 SHORT {time_str}"
-                        elif rsi_30m < 22 and i > 0 and day_30m['rsi'].iloc[i-1] > 25:
+                        elif rsi_30m < 22 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 25:
                             signal = f"↓ ROLL DOWN {time_str}"
-                        elif rsi_30m > 78 and i > 0 and day_30m['rsi'].iloc[i-1] < 75:
+                        elif rsi_30m > 78 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m < 75:
                             signal = f"↑ ROLL UP {time_str}"
 
                         rows.append({
@@ -665,7 +666,11 @@ if df_30m is None or df_30m.empty:
 # Detailed backtest — main + optional alternative config
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=False, key="p28_backtest_expander"):
+# Initialize expander state to collapsed
+if "p28_backtest_expanded" not in st.session_state:
+    st.session_state.p28_backtest_expanded = False
+
+with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=st.session_state.p28_backtest_expanded):
     st.divider()
     st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
                 f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
