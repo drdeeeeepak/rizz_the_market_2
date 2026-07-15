@@ -22,6 +22,11 @@ except Exception:
     pass
 
 st.set_page_config(page_title="P28 · Swing RSI Fade Backtest", layout="wide")
+
+# Initialize backtest expander state at page top (before any rendering)
+if "p28_backtest_expanded" not in st.session_state:
+    st.session_state.p28_backtest_expanded = False
+
 st.title("Page 28 — Swing RSI Fade Backtest")
 st.caption("Fade hourly / 30-minute RSI overbought & oversold extremes as a swing entry "
           "for the 3-6 day one-sided-move-then-reverse pattern.")
@@ -510,6 +515,14 @@ else:
             st.plotly_chart(fig_30m, use_container_width=True, key="chart_30m_rsi")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 2: BACKTEST CONFIGURATION & RESULTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.subheader("🧪 Backtest Configuration & Results")
+st.caption("Adjust settings below, then click 'Run backtest' to test the fade strategy with your parameters.")
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Inputs
 # ══════════════════════════════════════════════════════════════════════════════
 c1, c2 = st.columns(2)
@@ -662,15 +675,13 @@ if df_30m is None or df_30m.empty:
         _load_60m.clear()
         st.rerun()
 
+st.divider()
+
 # ══════════════════════════════════════════════════════════════════════════════
-# Detailed backtest — main + optional alternative config
+# Detailed Backtest Results — collapsible section
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Initialize expander state to collapsed
-if "p28_backtest_expanded" not in st.session_state:
-    st.session_state.p28_backtest_expanded = False
-
-with st.expander("📊 Detailed Backtest Results (collapse when not needed)", expanded=st.session_state.p28_backtest_expanded):
+with st.expander("📊 Detailed Backtest Results (Click to expand)", expanded=st.session_state.get("p28_backtest_expanded", False)):
     st.divider()
     st.subheader(f"Detailed backtest — RSI({_in['rsi_period']}), OB {_in['ob']:.0f} / OS {_in['os_']:.0f}, "
                 f"{'Zone-exit' if _in['entry_mode']=='zone_exit' else 'Touch'} entry")
