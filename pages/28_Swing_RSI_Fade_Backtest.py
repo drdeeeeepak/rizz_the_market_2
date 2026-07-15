@@ -214,26 +214,25 @@ else:
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
         def _rsi_css(val, is_declining=False):
-            """Color RSI cells: Red if declining, Blue if oversold rising, Green if rising/neutral"""
+            """
+            Text color: RED if declining, default if rising.
+            Background: RED if overbought (>=70), GREEN if oversold (<=30), GRAY if neutral.
+            """
             try:
                 rsi = float(val)
-                # If RSI is declining, show red (regardless of absolute level)
-                if is_declining:
-                    if rsi >= 70:
-                        return "background-color:#be123c;color:#ffffff;font-weight:800;"  # Dark red - declining from overbought
-                    else:
-                        return "background-color:#ef4444;color:#ffffff;font-weight:700;"  # Light red - declining
-                # If rising or stationary, use zone colors
-                if rsi >= 75:
-                    return "background-color:#059669;color:#ffffff;font-weight:800;"  # Dark green - rising at extreme OB
-                elif rsi >= 70:
-                    return "background-color:#10b981;color:#ffffff;font-weight:700;"  # Green - rising overbought
-                elif rsi <= 22:
-                    return "background-color:#0d47a1;color:#ffffff;font-weight:800;"  # Dark blue - extreme OS
+                # Determine text color: red if declining, white if rising
+                text_color = "#dc2626" if is_declining else "#ffffff"  # Red text if declining, white if rising
+                text_weight = "800" if is_declining else "600"
+
+                # Determine background based on RSI zone
+                if rsi >= 70:
+                    bg_color = "#ef4444"  # RED background for overbought
                 elif rsi <= 30:
-                    return "background-color:#1e40af;color:#ffffff;font-weight:700;"  # Blue - oversold
+                    bg_color = "#22c55e"  # GREEN background for oversold
                 else:
-                    return "background-color:#94a3b8;color:#ffffff;font-weight:600;"  # Gray - neutral
+                    bg_color = "#9ca3af"  # GRAY background for neutral
+
+                return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
             except:
                 return ""
 
