@@ -56,22 +56,22 @@ st.subheader("📊 Live RSI Dashboard — Spread Entry/Roll Signals")
 st.caption("Real-time 60-minute & 30-minute RSI for Bull Put / Bear Call entry and position management")
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _fetch_live_60m(days=2):
+def _fetch_live_60m(days=6):
     try:
         return _lf.get_nifty_1h_phase(days=days)
     except Exception:
         return None
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _fetch_live_30m(days=2):
+@st.cache_data(ttl=120, show_spinner=False)
+def _fetch_live_30m(days=6):
     try:
         return _lf.get_nifty_30m(days=days)
     except Exception:
         return None
 
 with st.spinner("Fetching live RSI data…"):
-    df_live_60m = _fetch_live_60m(1)
-    df_live_30m = _fetch_live_30m(1)
+    df_live_60m = _fetch_live_60m(6)
+    df_live_30m = _fetch_live_30m(6)
 
 if (df_live_60m is None or df_live_60m.empty) and (df_live_30m is None or df_live_30m.empty):
     st.warning("Could not fetch live RSI data. Log in via Home page.")
@@ -238,7 +238,7 @@ else:
             else:
                 return pd.DataFrame()
 
-            for date in sorted(unique_dates):
+            for date in sorted(unique_dates, reverse=True):
                 rows.append({
                     'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
                     '60m_RSI': '', '60m_Zone': '', '60m_Trend': '',
@@ -249,6 +249,8 @@ else:
                 if not df_30m.empty:
                     day_30m = df_30m[df_30m.index.date == date]
                     day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
+
+                    shown_60m_hours = set()  # Track which hours we've already shown 60m data for
 
                     for i, (idx_30m, row_30m) in enumerate(day_30m.iterrows()):
                         rsi_30m = row_30m['rsi']
@@ -267,7 +269,8 @@ else:
                         zone_60m_str = ""
                         trend_60m_str = ""
 
-                        if not day_60m.empty:
+                        # Only show 60m data on the first 30m candle of each hour
+                        if hour_30m not in shown_60m_hours and not day_60m.empty:
                             # Get 60m candle that covers this 30m time
                             covering_60m = day_60m[
                                 ((day_60m.index.hour == hour_30m) & (day_60m.index.minute <= minute_30m)) |
@@ -283,6 +286,7 @@ else:
                                     trend_60m_str = _trend_arrow(prev_rsi_60m, rsi_60m)
                                     rsi_60m_val = f"{rsi_60m:.1f}"
                                     zone_60m_str = f"{zone_dot_60m} {zone_label_60m}"
+                                    shown_60m_hours.add(hour_30m)
 
                         # Determine 30m signal
                         signal = ""
