@@ -112,6 +112,24 @@ MOMENTUM_COMBOS = {
         thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
         transitioning_score="weak", atr_scale=True, accel_weight=0.1
     ),
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # NEW BATCH: Testing EMA period variants & stronger acceleration
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    "13_UltraTight": MomentumVariant(
+        name="13_Ultra-Tight (±10/±3)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=10, thresh_moderate_up=3, thresh_moderate_dn=-3, thresh_strong_dn=-10,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "14_UltraTight_WeakTrans": MomentumVariant(
+        name="14_Ultra-Tight + Weak Trans (±10/±3, TRANS=weak)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=10, thresh_moderate_up=3, thresh_moderate_dn=-3, thresh_strong_dn=-10,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.0
+    ),
+    "15_Aggressive_Accel": MomentumVariant(
+        name="15_Aggressive Accel (±12/±4, +20% accel, weak TRANS)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.2
+    ),
 }
 
 
