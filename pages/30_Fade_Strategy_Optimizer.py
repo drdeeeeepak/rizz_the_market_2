@@ -120,6 +120,24 @@ FADE_COMBOS = {
         thresh_strong_up=20, thresh_moderate_up=7, thresh_moderate_dn=-7, thresh_strong_dn=-20,
         transitioning_score="weak", atr_scale=True, accel_weight=0.1
     ),
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # NEW BATCH: Testing asymmetric thresholds & extreme loose/tight variants
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    "16_ExtremeLoose": FadeConfig(
+        name="16_Extreme Loose (±25/±9, 0.5/0.5)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=25, thresh_moderate_up=9, thresh_moderate_dn=-9, thresh_strong_dn=-25,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "17_Asymmetric_UpTight": FadeConfig(
+        name="17_Asymmetric UpTight (±15 up / ±20 down, 0.5/0.5)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-20, thresh_strong_dn=-20,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "18_Asymmetric_DownTight": FadeConfig(
+        name="18_Asymmetric DownTight (±20 up / ±8 down, 0.5/0.5)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=20, thresh_moderate_up=7, thresh_moderate_dn=-8, thresh_strong_dn=-8,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
 }
 
 
