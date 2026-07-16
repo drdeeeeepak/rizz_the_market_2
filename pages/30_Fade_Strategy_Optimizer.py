@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from analytics.ema import EMAEngine
 from analytics import signal_lab as sl
 from analytics.signal_adapters_fade import adapt_ema_momentum_fade
-from page_utils import show_page_header
 from ui.components import section_header
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -113,7 +112,8 @@ def compute_momentum_signal(daily: pd.DataFrame, config: FadeConfig) -> pd.Serie
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_page_header("Fade Strategy Optimizer", "xp7rd2", """
+st.title("Fade Strategy Optimizer 📉")
+st.markdown("""
 Mean-reversion complement to momentum. Fade extreme EMA momentum for snap-back trades.
 Compare: momentum (trend-following) vs fade (mean-reversion) — which regime is active?
 """)

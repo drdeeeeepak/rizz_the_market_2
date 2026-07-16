@@ -16,7 +16,6 @@ from typing import Optional
 
 from analytics.ema import EMAEngine
 from analytics import signal_lab as sl
-from page_utils import show_page_header
 from ui.components import section_header
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -123,7 +122,8 @@ def compute_variant(daily: pd.DataFrame, variant: MomentumVariant) -> pd.Series:
 # PAGE UI
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_page_header("EMA Momentum Optimizer", "xp7rd2", """
+st.title("EMA Momentum Optimizer 🎯")
+st.markdown("""
 Test different EMA momentum configurations (weighting, thresholds, transitioning handling, acceleration)
 against forward price outcomes. Current config: 51.5% hit rate, -0.088% expectancy (slightly negative).
 """)
