@@ -1,16 +1,20 @@
 """
-Pages 29: EMA Momentum Optimization — threshold & weighting scans
-Answers:
-1. Is 0.6/0.4 weighting optimal? Test variants.
-2. Are ±15/±5 thresholds actually best? Scan thresholds.
-3. Should TRANSITIONING be 0.0 or weak signal?
-4. Add acceleration (slope of slope)?
-5. Pure slope vs ATR-scaled?
+Pages 29: EMA Momentum Optimization — Batch Testing of Parameter Combinations
+
+Workflow:
+1. Select 5 pre-defined combinations from dropdown
+2. Click "Run Batch Backtest"
+3. Code tests all 5, generates results CSV
+4. Download CSV
+5. Repeat until all 12 combos tested
+6. Share CSVs back for comparison analysis
 """
 
 import streamlit as st
 import numpy as np
 import pandas as pd
+import csv
+import io
 from dataclasses import dataclass
 from typing import Optional
 
@@ -41,6 +45,74 @@ class MomentumVariant:
         if total != 1.0:
             self.w_ema3 /= total
             self.w_ema8 /= total
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRE-DEFINED COMBINATIONS FOR BATCH TESTING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+MOMENTUM_COMBOS = {
+    "01_Baseline": MomentumVariant(
+        name="01_Baseline (Current Prod)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "02_Tight_v1": MomentumVariant(
+        name="02_Tight v1 (±12/±4)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "03_Tight_v2": MomentumVariant(
+        name="03_Tight v2 (±13/±4)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=13, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-13,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "04_Tight_Equal": MomentumVariant(
+        name="04_Tight + Equal (0.5/0.5, ±12/±4)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "05_Tight_WeakTrans": MomentumVariant(
+        name="05_Tight + Weak Trans (±12/±4, TRANS=weak)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.0
+    ),
+    "06_Tight_Accel": MomentumVariant(
+        name="06_Tight + Accel (±12/±4, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.1
+    ),
+    "07_Moderate": MomentumVariant(
+        name="07_Moderate (±14/±5)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=14, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-14,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "08_EqualWeight": MomentumVariant(
+        name="08_Equal Weight (0.5/0.5, ±15/±5)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "09_WeakTrans": MomentumVariant(
+        name="09_Weak Trans Only (±15/±5, TRANS=weak)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.0
+    ),
+    "10_Loose": MomentumVariant(
+        name="10_Loose (±18/±6)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "11_Loose_Accel": MomentumVariant(
+        name="11_Loose + Accel (±18/±6, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.1
+    ),
+    "12_AllOptimized": MomentumVariant(
+        name="12_All Optimized (±12/±4, 0.6/0.4, weak, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.1
+    ),
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -184,74 +256,81 @@ with tab_analysis:
     """)
 
 with tab_scanner:
-    section_header("Manual Threshold Scanner")
+    section_header("Batch Backtest: Select 5 Combinations")
 
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown("""
+    **How it works:**
+    1. Select 5 combinations from the list below
+    2. Click "Run Batch Backtest"
+    3. Code tests all 5 on 400 days of data
+    4. Download CSV with results
+    5. Repeat batches until all 12 combinations tested
+    """)
 
-    with col1:
-        w_ema3 = st.slider("EMA3 Weight", 0.3, 0.8, 0.6, step=0.05)
-        w_ema8 = 1.0 - w_ema3
-        st.caption(f"EMA8: {w_ema8:.2f}")
+    # Multi-select for combos
+    combo_names = list(MOMENTUM_COMBOS.keys())
+    combo_labels = [MOMENTUM_COMBOS[k].name for k in combo_names]
+    selected_combos = st.multiselect(
+        "Select combinations to test (max 5 at a time):",
+        options=combo_names,
+        format_func=lambda x: MOMENTUM_COMBOS[x].name,
+        max_selections=5,
+        help="Pick 5 combos, run backtest, download CSV. Repeat for remaining combos."
+    )
 
-    with col2:
-        thresh_strong_up = st.slider("STRONG_UP threshold", 8.0, 25.0, 15.0, step=1.0)
-        thresh_strong_dn = -thresh_strong_up
+    if st.button("🚀 Run Batch Backtest", type="primary"):
+        if not selected_combos:
+            st.error("Please select at least 1 combination")
+        else:
+            with st.spinner(f"Backtesting {len(selected_combos)} combinations..."):
+                try:
+                    from data.live_fetcher import get_nifty_daily
+                    daily = get_nifty_daily(days=400)
 
-    with col3:
-        thresh_moderate_up = st.slider("MODERATE_UP threshold", 1.0, 10.0, 5.0, step=0.5)
-        thresh_moderate_dn = -thresh_moderate_up
+                    if daily.empty:
+                        st.error("Could not fetch daily data")
+                    else:
+                        results_list = []
 
-    with col4:
-        trans_mode = st.selectbox("TRANSITIONING", ["0.0 (no opinion)", "weak (±0.25)", "strong (±0.5)"])
-        trans_val = {"0.0 (no opinion)": 0.0, "weak (±0.25)": "weak", "strong (±0.5)": "strong"}[trans_mode]
+                        for combo_key in selected_combos:
+                            variant = MOMENTUM_COMBOS[combo_key]
+                            sig = compute_variant(daily, variant)
+                            result = sl.evaluate_signal(daily, sig, name=variant.name, horizons=(5, 10))
 
-    accel = st.checkbox("Add acceleration component (10%)?", value=False)
-    atr_scaled = st.checkbox("ATR-scale slopes?", value=True)
+                            results_list.append({
+                                "Combo": variant.name,
+                                "Hit_Rate_%": f"{result['hit_rate']:.1f}" if result['hit_rate'] else "NaN",
+                                "Expectancy_%": f"{result['expectancy']:.4f}" if result['expectancy'] else "NaN",
+                                "Spearman_rho": f"{result['spearman']:.4f}" if result['spearman'] else "NaN",
+                                "n_active": result['n_active'],
+                                "n_total": result['n'],
+                            })
 
-    if st.button("Test This Configuration", type="primary"):
-        with st.spinner("Computing signal and evaluating..."):
-            try:
-                # Get daily data
-                from data.live_fetcher import get_nifty_daily
-                daily = get_nifty_daily(days=400)
-                if daily.empty:
-                    st.error("Could not fetch daily data")
-                else:
-                    variant = MomentumVariant(
-                        name="Custom Variant",
-                        w_ema3=w_ema3,
-                        w_ema8=w_ema8,
-                        thresh_strong_up=thresh_strong_up,
-                        thresh_moderate_up=thresh_moderate_up,
-                        thresh_moderate_dn=thresh_moderate_dn,
-                        thresh_strong_dn=thresh_strong_dn,
-                        transitioning_score=trans_val,
-                        atr_scale=atr_scaled,
-                        accel_weight=0.1 if accel else 0.0,
-                    )
+                        results_df = pd.DataFrame(results_list)
+                        st.success(f"✓ Backtest complete for {len(selected_combos)} combos")
 
-                    sig = compute_variant(daily, variant)
-                    result = sl.evaluate_signal(daily, sig, name=variant.name, horizons=(5, 10))
+                        # Display results table
+                        st.subheader("Results")
+                        st.dataframe(results_df, use_container_width=True)
 
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Hit Rate %", f"{result['hit_rate']:.1f}%",
-                                delta=f"{result['hit_rate'] - 51.5:+.1f}pp" if result['hit_rate'] else None)
-                    with col2:
-                        st.metric("Expectancy %", f"{result['expectancy']:+.3f}%",
-                                delta=f"{result['expectancy'] - (-0.088):+.3f}pp" if result['expectancy'] else None)
-                    with col3:
-                        st.metric("Spearman ρ", f"{result['spearman']:+.3f}" if result['spearman'] else "NaN")
-                    with col4:
-                        st.metric("n_active", result['n_active'], f"of {result['n']}")
+                        # CSV download
+                        csv_buffer = io.StringIO()
+                        results_df.to_csv(csv_buffer, index=False)
+                        csv_data = csv_buffer.getvalue()
 
-                    # Bucket analysis
-                    if not result['bucket'].empty:
-                        st.subheader("Quantile Bucket Analysis")
-                        st.dataframe(result['bucket'].round(3), use_container_width=True)
+                        st.download_button(
+                            label="📥 Download Results CSV",
+                            data=csv_data,
+                            file_name=f"momentum_backtest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+                        st.info("💡 **Next steps:** Download CSV, save it. Repeat with next batch of combos. Once all done, share all CSVs back.")
+
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    import traceback
+                    st.write(traceback.format_exc())
 
 with tab_explain:
     section_header("Why These Questions Matter")

@@ -1,19 +1,17 @@
 """
-Pages 30: Fade Strategy Optimizer — mean-reversion complement to momentum
+Pages 30: Fade Strategy Optimizer — Batch Testing of Mean-Reversion Combos
 
 FADE THESIS: Extreme EMA momentum (overbought/oversold) reverts.
   STRONG_UP momentum (15+ %ATR/day) → expect snap-down → FADE = SHORT (-1.0)
   STRONG_DOWN momentum (-15 %ATR/day) → expect snap-up → FADE = LONG (+1.0)
 
-Compare fade performance vs momentum:
-- Momentum: trend-following (works in trends, whipsawed in consolidation)
-- Fade: mean-reversion (works in range-bound, hurt in strong trends)
-- Combo: diversify approach, hedge each other
+Workflow: Select 5 fade combinations, batch test, download CSV results.
 """
 
 import streamlit as st
 import numpy as np
 import pandas as pd
+import io
 from dataclasses import dataclass
 
 from analytics.ema import EMAEngine
@@ -55,6 +53,74 @@ class FadeConfig:
             "atr_scale": self.atr_scale,
             "accel_weight": self.accel_weight,
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRE-DEFINED FADE COMBINATIONS FOR BATCH TESTING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FADE_COMBOS = {
+    "01_Baseline": FadeConfig(
+        name="01_Baseline Fade (±15/±5, 0.6/0.4)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "02_Tight_v1": FadeConfig(
+        name="02_Tight Fade v1 (±18/±6)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "03_Tight_v2": FadeConfig(
+        name="03_Tight Fade v2 (±20/±7)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=20, thresh_moderate_up=7, thresh_moderate_dn=-7, thresh_strong_dn=-20,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "04_Tight_Equal": FadeConfig(
+        name="04_Tight + Equal (0.5/0.5, ±18/±6)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "05_Tight_WeakTrans": FadeConfig(
+        name="05_Tight + Weak Trans (±18/±6, TRANS=weak)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.0
+    ),
+    "06_Tight_Accel": FadeConfig(
+        name="06_Tight + Accel (±18/±6, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=18, thresh_moderate_up=6, thresh_moderate_dn=-6, thresh_strong_dn=-18,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.1
+    ),
+    "07_Medium": FadeConfig(
+        name="07_Medium (±16/±5)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=16, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-16,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "08_EqualWeight": FadeConfig(
+        name="08_Equal Weight (0.5/0.5, ±15/±5)", w_ema3=0.5, w_ema8=0.5,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "09_WeakTrans": FadeConfig(
+        name="09_Weak Trans Only (±15/±5, TRANS=weak)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=15, thresh_moderate_up=5, thresh_moderate_dn=-5, thresh_strong_dn=-15,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.0
+    ),
+    "10_Loose": FadeConfig(
+        name="10_Loose (±12/±4, reverse tight)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.0
+    ),
+    "11_Loose_Accel": FadeConfig(
+        name="11_Loose + Accel (±12/±4, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=12, thresh_moderate_up=4, thresh_moderate_dn=-4, thresh_strong_dn=-12,
+        transitioning_score=0.0, atr_scale=True, accel_weight=0.1
+    ),
+    "12_AllOptimized": FadeConfig(
+        name="12_All Optimized (±20/±7, weak trans, +10% accel)", w_ema3=0.6, w_ema8=0.4,
+        thresh_strong_up=20, thresh_moderate_up=7, thresh_moderate_dn=-7, thresh_strong_dn=-20,
+        transitioning_score="weak", atr_scale=True, accel_weight=0.1
+    ),
+}
 
 
 def compute_fade_signal(daily: pd.DataFrame, config: FadeConfig) -> pd.Series:
@@ -232,71 +298,85 @@ with tab_compare:
                 st.error(f"Error: {e}")
 
 with tab_fade_config:
-    section_header("Fade Configuration Tuner")
+    section_header("Batch Backtest: Select 5 Fade Combinations")
 
-    st.markdown("**Adjust fade thresholds** — same interface as momentum, will be sign-flipped in strategy.")
+    st.markdown("""
+    **How it works:**
+    1. Select 5 fade combinations from the list
+    2. Click "Run Batch Backtest"
+    3. Code tests all 5 on 400 days of data
+    4. Download CSV with results
+    5. Repeat batches until all 12 combinations tested
 
-    col1, col2, col3, col4 = st.columns(4)
+    **Note**: Fade thresholds are typically LOOSER than momentum (to only fade biggest extremes).
+    """)
 
-    with col1:
-        w_ema3 = st.slider("EMA3 Weight (Fade)", 0.3, 0.8, 0.6, step=0.05, key="fade_w3")
-        w_ema8 = 1.0 - w_ema3
-        st.caption(f"EMA8: {w_ema8:.2f}")
+    # Multi-select for combos
+    combo_names = list(FADE_COMBOS.keys())
+    combo_labels = [FADE_COMBOS[k].name for k in combo_names]
+    selected_combos = st.multiselect(
+        "Select fade combinations to test (max 5 at a time):",
+        options=combo_names,
+        format_func=lambda x: FADE_COMBOS[x].name,
+        max_selections=5,
+        key="fade_combo_select",
+        help="Pick 5 combos, run backtest, download CSV. Repeat for remaining combos."
+    )
 
-    with col2:
-        thresh_strong_up = st.slider("STRONG threshold (Fade)", 8.0, 25.0, 15.0, step=1.0, key="fade_strong")
-        thresh_strong_dn = -thresh_strong_up
+    if st.button("🚀 Run Batch Backtest (Fade)", type="primary", key="run_fade_batch"):
+        if not selected_combos:
+            st.error("Please select at least 1 fade combination")
+        else:
+            with st.spinner(f"Backtesting {len(selected_combos)} fade combinations..."):
+                try:
+                    from data.live_fetcher import get_nifty_daily
+                    daily = get_nifty_daily(days=400)
 
-    with col3:
-        thresh_moderate_up = st.slider("MODERATE threshold (Fade)", 1.0, 10.0, 5.0, step=0.5, key="fade_moderate")
-        thresh_moderate_dn = -thresh_moderate_up
+                    if daily.empty:
+                        st.error("Could not fetch daily data")
+                    else:
+                        results_list = []
 
-    with col4:
-        trans_mode = st.selectbox("TRANSITIONING (Fade)", ["0.0 (no opinion)", "weak (±0.25)", "strong (±0.5)"], key="fade_trans")
-        trans_val = {"0.0 (no opinion)": 0.0, "weak (±0.25)": "weak", "strong (±0.5)": "strong"}[trans_mode]
+                        for combo_key in selected_combos:
+                            config = FADE_COMBOS[combo_key]
+                            sig = compute_fade_signal(daily, config)
+                            result = sl.evaluate_signal(daily, sig, name=config.name, horizons=(5, 10))
 
-    accel = st.checkbox("Add acceleration (10%)?", value=False, key="fade_accel")
-    atr_scaled = st.checkbox("ATR-scale slopes?", value=True, key="fade_atr")
+                            results_list.append({
+                                "Combo": config.name,
+                                "Hit_Rate_%": f"{result['hit_rate']:.1f}" if result['hit_rate'] else "NaN",
+                                "Expectancy_%": f"{result['expectancy']:.4f}" if result['expectancy'] else "NaN",
+                                "Spearman_rho": f"{result['spearman']:.4f}" if result['spearman'] else "NaN",
+                                "n_active": result['n_active'],
+                                "n_total": result['n'],
+                            })
 
-    if st.button("Test This Fade Config", type="primary", key="test_fade"):
-        with st.spinner("Computing fade signal..."):
-            try:
-                from data.live_fetcher import get_nifty_daily
-                daily = get_nifty_daily(days=400)
-                if daily.empty:
-                    st.error("Could not fetch data")
-                else:
-                    config = FadeConfig(
-                        name="Custom Fade",
-                        w_ema3=w_ema3, w_ema8=w_ema8,
-                        thresh_strong_up=thresh_strong_up,
-                        thresh_moderate_up=thresh_moderate_up,
-                        thresh_moderate_dn=thresh_moderate_dn,
-                        thresh_strong_dn=thresh_strong_dn,
-                        transitioning_score=trans_val,
-                        atr_scale=atr_scaled,
-                        accel_weight=0.1 if accel else 0.0,
-                    )
+                        results_df = pd.DataFrame(results_list)
+                        st.success(f"✓ Backtest complete for {len(selected_combos)} fade combos")
 
-                    sig = compute_fade_signal(daily, config)
-                    result = sl.evaluate_signal(daily, sig, name="Fade", horizons=(5, 10))
+                        # Display results table
+                        st.subheader("Results")
+                        st.dataframe(results_df, use_container_width=True)
 
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Hit Rate %", f"{result['hit_rate']:.1f}%")
-                    with col2:
-                        st.metric("Expectancy %", f"{result['expectancy']:+.3f}%")
-                    with col3:
-                        st.metric("Spearman ρ", f"{result['spearman']:+.3f}" if result['spearman'] else "NaN")
-                    with col4:
-                        st.metric("n_active", result['n_active'], f"of {result['n']}")
+                        # CSV download
+                        csv_buffer = io.StringIO()
+                        results_df.to_csv(csv_buffer, index=False)
+                        csv_data = csv_buffer.getvalue()
 
-                    if not result['bucket'].empty:
-                        st.subheader("Bucket Analysis")
-                        st.dataframe(result['bucket'].round(3), use_container_width=True)
+                        st.download_button(
+                            label="📥 Download Results CSV",
+                            data=csv_data,
+                            file_name=f"fade_backtest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key="fade_csv_download"
+                        )
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+                        st.info("💡 **Next steps:** Download CSV, save it. Repeat with next batch of combos. Once all done, share all CSVs back.")
+
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    import traceback
+                    st.write(traceback.format_exc())
 
 with tab_combo:
     section_header("Combo: Momentum + Fade (Ensemble)")
