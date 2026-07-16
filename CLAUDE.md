@@ -6,10 +6,27 @@
 - Main page: `pages/02_Nifty_EMA_Ribbon.py` — EMA Hold Monitor (most worked-on page)
 - EOD automation: `scripts/eod_compute.py` via GitHub Actions at 3:35 PM IST Mon–Fri
 
-## Branch
-- Develop on whatever feature branch the session is assigned — but ALWAYS also push every
-  commit to `main` (fast-forward when possible), without waiting to be asked. Don't leave
-  work sitting only on the feature branch.
+## ⚠️ CRITICAL: Git Workflow
+
+**Every single commit must be pushed to BOTH the feature branch AND main.**
+
+```bash
+# After committing on feature branch:
+git commit -m "your message"
+git push -u origin <feature-branch>    # Push to feature branch
+
+# Then also push to main (fast-forward):
+git checkout main
+git merge <feature-branch>
+git push origin main
+
+# Return to feature branch:
+git checkout <feature-branch>
+```
+
+**Rule**: Never leave work sitting only on the feature branch. Both branches always stay in sync.
+
+**Why**: Ensures code is immediately visible in the live app, and prevents work from being lost if the feature branch gets stale.
 
 ## Key files
 | File | Purpose |
