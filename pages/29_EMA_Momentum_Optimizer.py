@@ -269,13 +269,12 @@ with tab_scanner:
 
     # Multi-select for combos
     combo_names = list(MOMENTUM_COMBOS.keys())
-    combo_labels = [MOMENTUM_COMBOS[k].name for k in combo_names]
+    st.info(f"📊 {len(combo_names)} combinations available")
     selected_combos = st.multiselect(
-        "Select combinations to test (max 5 at a time):",
+        "Select combinations to test:",
         options=combo_names,
         format_func=lambda x: MOMENTUM_COMBOS[x].name,
-        max_selections=5,
-        help="Pick 5 combos, run backtest, download CSV. Repeat for remaining combos."
+        help="Pick combos to run backtest on. Suggested: 5-6 per batch for ~5-7 min runtime"
     )
 
     if st.button("🚀 Run Batch Backtest", type="primary"):
