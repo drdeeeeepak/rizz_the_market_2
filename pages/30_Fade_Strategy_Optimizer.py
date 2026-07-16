@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from analytics.ema import EMAEngine
 from analytics import signal_lab as sl
 from analytics.signal_adapters_fade import adapt_ema_momentum_fade
-from page_utils import format_number
-from ui.shared import show_page_header, section_header
+from page_utils import show_page_header
+from ui.components import section_header
 
 # ═══════════════════════════════════════════════════════════════════════════════
 

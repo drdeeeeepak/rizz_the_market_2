@@ -16,8 +16,8 @@ from typing import Optional
 
 from analytics.ema import EMAEngine
 from analytics import signal_lab as sl
-from page_utils import format_number, load_signals
-from ui.shared import show_page_header, section_header
+from page_utils import show_page_header
+from ui.components import section_header
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIG & STATE
