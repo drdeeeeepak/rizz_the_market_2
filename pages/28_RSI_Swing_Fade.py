@@ -499,17 +499,19 @@ else:
     else:
         st.info("Historical RSI data loading… (requires 5+ days of data)")
 
-    # Mini RSI trend charts
+    # Mini RSI trend charts (last 5 trading days)
     st.divider()
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
         if df_live_60m_rsi is not None and len(df_live_60m_rsi) > 1:
-            st.subheader("60m RSI Trend (last 4 hours)")
+            st.subheader("60m RSI Trend (last 5 trading days)")
+            # 60m: 5 trading days = ~40 candles (8 hours/day × 5 days)
+            chart_data_60m = df_live_60m_rsi.tail(40).reset_index(drop=True)
             fig_60m = go.Figure()
             fig_60m.add_trace(go.Scatter(
-                x=list(range(len(df_live_60m_rsi))),
-                y=df_live_60m_rsi["rsi"],
+                x=list(range(len(chart_data_60m))),
+                y=chart_data_60m["rsi"],
                 mode="lines+markers",
                 line=dict(color="#3b82f6", width=2),
                 name="RSI(14)"
@@ -523,11 +525,13 @@ else:
 
     with chart_col2:
         if df_live_30m_rsi is not None and len(df_live_30m_rsi) > 1:
-            st.subheader("30m RSI Trend (last 2 hours)")
+            st.subheader("30m RSI Trend (last 5 trading days)")
+            # 30m: 5 trading days = ~80 candles (16 periods/day × 5 days)
+            chart_data_30m = df_live_30m_rsi.tail(80).reset_index(drop=True)
             fig_30m = go.Figure()
             fig_30m.add_trace(go.Scatter(
-                x=list(range(len(df_live_30m_rsi))),
-                y=df_live_30m_rsi["rsi"],
+                x=list(range(len(chart_data_30m))),
+                y=chart_data_30m["rsi"],
                 mode="lines+markers",
                 line=dict(color="#f59e0b", width=2),
                 name="RSI(14)"
