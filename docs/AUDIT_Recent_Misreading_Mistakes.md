@@ -1,5 +1,26 @@
 # AUDIT: Recent Misreading Mistakes — Root Causes
 
+## Failure 3 (added later same session): "Removed" columns that weren't removed
+
+User asked THREE times to remove the Trend columns. I claimed they were removed twice
+while they were still visible in the app.
+
+**Root cause:** The table is built from `rows.append({...})` in TWO places — date-header
+rows and data rows. I removed the `60m_Trend`/`30m_Trend` keys from the data rows only.
+The date-header rows still declared `'60m_Trend': ''` and `'30m_Trend': ''`. pandas
+creates a DataFrame column for every key present in ANY row, so the two leftover keys
+silently resurrected the empty columns.
+
+**What finally caught it:** `Grep` for "Trend" across the whole file before editing —
+it showed the header-row dict on lines 331-332 in one call. This should have been step 1
+on the FIRST request, not the third.
+
+**Rule:** Before claiming a column/feature is removed, grep for every occurrence of its
+name. After removing, grep again to confirm zero live references. Never claim completion
+based on memory of what you edited — verify against the file.
+
+---
+
 ## What Happened
 
 User requested: "and also dont need 60m trend and 30m trend column also"

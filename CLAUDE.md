@@ -128,22 +128,48 @@ _KIND_BG = {
 
 ## Lessons Learned — Do Not Repeat
 
-**See full audit:** `docs/AUDIT_Page28_Backtest_Collapse_Failure.md`
+**Full audits:** `docs/AUDIT_Page28_Backtest_Collapse_Failure.md`, `docs/AUDIT_Recent_Misreading_Mistakes.md`
 
-### Pattern: Structural/UI Changes (expander, container, scope changes)
-When moving code into/out of containers (expanders, columns, etc.):
+These are real failures from past sessions that cost the user hours and many tokens.
+Read this section before touching any page. The rules below are mandatory, not advisory.
 
-❌ **Don't:**
-- Try to fix symptoms (e.g., "session state") without understanding root cause
-- Make multiple small edits without verifying structure after each
-- Push without reading the code back to verify indentation
+### Rule 1: Grep before claiming anything is "removed" (July 2026 failure)
+Removed `60m_Trend`/`30m_Trend` from data rows, declared them gone — but the date-header
+rows still carried those dict keys, and pandas builds DataFrame columns from the UNION of
+all dict keys across rows. Columns kept reappearing across 3 user complaints.
+- **Before removing a column/feature: `Grep` for every occurrence of its name in the file.**
+- **After removing: `Grep` again to confirm zero live references.**
+- A table built from `rows.append({...})` in multiple places has multiple column sources —
+  header rows, data rows, CSV export. Fix ALL of them in one edit.
 
-✓ **Do:**
-1. Ask clarifying questions upfront ("Should X and Y collapse together?")
-2. Read file and map what's inside vs outside current structure
-3. Identify exact line numbers for code to move
-4. Make ONE comprehensive edit with proper indentation
-5. Read back affected section to verify structure is correct
-6. Only commit after verification
+### Rule 2: Ambiguous words in a request → ask, don't guess (July 2026 failure)
+User said "remove trend column"; the trend columns were already gone, so I guessed they
+meant the Div columns and deleted those instead — destroying work they wanted kept.
+- If the thing the user names doesn't match the current code state, SAY SO and ask —
+  never silently substitute a different target.
+- Restate what you're about to delete before deleting it if there's any doubt.
 
-**Key lesson:** When indenting code into containers, a single `Read` call catches 90% of mistakes. Use it.
+### Rule 3: Never lose finalized features while editing nearby code (July 2026 failure)
+While simplifying styling, dropped the finalized text-color convention (red text when RSI
+declining). Finalized requirements on pg28 RSI table:
+- Text: RED when RSI falling; dark red/green/slate when rising/flat
+- Background: RED ≥70 (overbought), GREEN ≤30 (oversold), GRAY neutral
+- Div cells: green Bull / red Bear; Signal cells: green LONG / red SHORT
+- **Before committing any pg28 table change, verify every one of these still renders.**
+
+### Rule 4: Structural/UI changes (expander, container, scope) — one mapped edit
+The backtest-collapse fix took 5 commits because I wrapped only part of the section.
+1. Clarify scope upfront ("Should config AND results both collapse?")
+2. Read the file, map exact line ranges inside vs outside the container
+3. Make ONE comprehensive edit with correct indentation
+4. Read back the affected section; only then commit
+
+### Rule 5: Don't add helper columns for display-only logic
+Needed "is declining" only for styling → added hidden `_declining` columns the user then
+had to ask to remove. Compute derived values inside the styling function (compare against
+the previous row via `df.index.get_loc(row.name)`), keep the DataFrame clean.
+
+**Meta-rule:** Every one of these failures shares a root cause — acting on an assumption
+instead of reading/grepping the actual code first, and claiming success without verifying.
+Verify before AND after. One Grep/Read costs seconds; a wrong assumption costs the user
+another round trip and their confidence.
