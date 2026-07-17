@@ -227,30 +227,25 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
-        def _rsi_css(val, is_declining=False):
+        def _rsi_css(val):
             """
-            Text color convention from page 20: RED if falling/declining, dark text if rising.
-            Background (opposite of page 20 for fade strategy): RED for overbought, GREEN for oversold, GRAY for neutral.
+            RSI styling: red/green/gray background by zone, dark text for readability.
             """
             try:
                 rsi = float(val)
 
-                # Determine background based on RSI zone (opposite of page 20)
+                # Determine background and text based on RSI zone
                 if rsi >= 70:
                     bg_color = "#fca5a5"  # Red/pink background for overbought
-                    text_color_rise = "#7f1d1d"  # Dark red text when rising
+                    text_color = "#7f1d1d"  # Dark red text
                 elif rsi <= 30:
                     bg_color = "#86efac"  # Green background for oversold
-                    text_color_rise = "#064e3b"  # Dark green text when rising
+                    text_color = "#064e3b"  # Dark green text
                 else:
                     bg_color = "#e2e8f0"  # Gray background for neutral
-                    text_color_rise = "#334155"  # Dark slate text when rising
+                    text_color = "#334155"  # Dark slate text
 
-                # Text color: RED if falling (like page 20), otherwise zone-appropriate color
-                text_color = "#dc2626" if is_declining else text_color_rise
-                text_weight = "800" if is_declining else "600"
-
-                return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
+                return f"background-color:{bg_color};color:{text_color};font-weight:600;"
             except:
                 return ""
 
@@ -396,10 +391,8 @@ else:
                             'Time': time_str,
                             '60m_RSI': rsi_60m_val,
                             '60m_Div': div_60m_str,
-                            '_60m_declining': '↘' in trend_60m_str,  # Hidden: used for styling
                             '30m_RSI': f"{rsi_30m:.1f}",
                             '30m_Div': div_30m_str,
-                            '_30m_declining': '↘' in trend_30m,  # Hidden: used for styling
                             'Signal': signal
                         })
 
@@ -417,14 +410,8 @@ else:
                 def _rsi_row(row):
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
-                        if col == '60m_RSI':
-                            # Use hidden _60m_declining column to determine if declining
-                            is_declining = row.get('_60m_declining', False)
-                            styles[i] = _rsi_css(row[col], is_declining)
-                        elif col == '30m_RSI':
-                            # Use hidden _30m_declining column to determine if declining
-                            is_declining = row.get('_30m_declining', False)
-                            styles[i] = _rsi_css(row[col], is_declining)
+                        if col in ['60m_RSI', '30m_RSI']:
+                            styles[i] = _rsi_css(row[col])
                         else:
                             styles[i] = ''
                     return styles
@@ -457,9 +444,7 @@ else:
 
                 return styler
 
-            styled_table = _style_rsi_table(hist_table)  # Style uses full table with hidden columns
-            # Hide the helper columns from display
-            styled_table = styled_table.hide(axis='columns', subset=['_60m_declining', '_30m_declining'])
+            styled_table = _style_rsi_table(hist_table)
             st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
 
             # Download button
