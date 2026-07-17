@@ -348,19 +348,100 @@ else:
                     '60m': '', '30m': '', '15m': '', 'Signal': ''
                 })
 
-                # Iterate through all 30m candles for this date
-                if not df_30m.empty:
-                    day_30m = df_30m[df_30m.index.date == date]
+                # Iterate through all 15m candles for this date (4 per hour)
+                if not df_15m.empty:
+                    day_15m = df_15m[df_15m.index.date == date]
+                    day_30m = df_30m[df_30m.index.date == date] if not df_30m.empty else pd.DataFrame()
                     day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
-                    day_15m = df_15m[df_15m.index.date == date] if not df_15m.empty else pd.DataFrame()
+                    day_div_15m = div_15m[div_15m.index.date == date] if not div_15m.empty else pd.Series()
                     day_div_30m = div_30m[div_30m.index.date == date] if not div_30m.empty else pd.Series()
                     day_div_60m = div_60m[div_60m.index.date == date] if not div_60m.empty else pd.Series()
-                    day_div_15m = div_15m[div_15m.index.date == date] if not div_15m.empty else pd.Series()
 
                     shown_60m_hours = set()
-                    shown_15m_times = set()
+                    shown_30m_times = set()
 
-                    # Iterate through 30m candles in REVERSE order (newest first)
+                    # Iterate through 15m candles in REVERSE order (newest first)
+                    day_15m_reversed = day_15m.iloc[::-1]
+                    for idx_in_reversed, (idx_15m, row_15m) in enumerate(day_15m_reversed.iterrows()):
+                        rsi_15m = row_15m['rsi']
+                        if pd.isna(rsi_15m):
+                            continue
+
+                        time_str = idx_15m.strftime('%H:%M')
+
+                        # 15m: Always show (every row)
+                        div_15m_str = day_div_15m.get(idx_15m, "") if not day_div_15m.empty else ""
+                        col_15m = f"{rsi_15m:.1f}" + (f" {div_15m_str}" if div_15m_str else "")
+
+                        # 30m: Show on every 30m boundary (00, 30 minutes)
+                        hour_15m = idx_15m.hour
+                        minute_15m = idx_15m.minute
+                        time_key_30m = f"{hour_15m}:{minute_15m//30 * 30:02d}"
+                        col_30m = ""
+                        if time_key_30m not in shown_30m_times and not day_30m.empty:
+                            # Find 30m candle at this time
+                            matching_30m = day_30m[
+                                (day_30m.index.hour == hour_15m) &
+                                (day_30m.index.minute == minute_15m//30 * 30)
+                            ]
+                            if len(matching_30m) > 0:
+                                idx_30m = matching_30m.index[-1]
+                                rsi_30m = matching_30m['rsi'].iloc[-1]
+                                if not pd.isna(rsi_30m):
+                                    div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
+                                    col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
+                                    shown_30m_times.add(time_key_30m)
+
+                        # 60m: Show once per hour (on first 15m candle of the hour)
+                        col_60m = ""
+                        if hour_15m not in shown_60m_hours and not day_60m.empty:
+                            # Find 60m candle that covers this hour
+                            covering_60m = day_60m[day_60m.index.hour == hour_15m]
+                            if len(covering_60m) > 0:
+                                idx_60m = covering_60m.index[-1]
+                                rsi_60m = covering_60m['rsi'].iloc[-1]
+                                if not pd.isna(rsi_60m):
+                                    div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
+                                    col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
+                                    shown_60m_hours.add(hour_15m)
+
+                        # Signal: Only show on 30m boundaries (signal detection is 30m-based)
+                        signal = ""
+                        if minute_15m % 30 == 0 and not day_30m.empty:
+                            matching_30m = day_30m[
+                                (day_30m.index.hour == hour_15m) &
+                                (day_30m.index.minute == minute_15m)
+                            ]
+                            if len(matching_30m) > 0:
+                                rsi_30m_sig = matching_30m['rsi'].iloc[-1]
+                                if not pd.isna(rsi_30m_sig):
+                                    # Get previous 30m RSI for trend
+                                    prev_30m_idx = day_30m.index.get_loc(matching_30m.index[-1])
+                                    prev_rsi_30m = day_30m['rsi'].iloc[prev_30m_idx - 1] if prev_30m_idx > 0 else rsi_30m_sig
+                                    if rsi_30m_sig < 25 and prev_rsi_30m > 30:
+                                        signal = f"🟢 LONG {time_str}"
+                                    elif rsi_30m_sig > 75 and prev_rsi_30m < 70:
+                                        signal = f"🔴 SHORT {time_str}"
+                                    elif rsi_30m_sig < 22 and prev_rsi_30m > 25:
+                                        signal = f"↓ ROLL DOWN {time_str}"
+                                    elif rsi_30m_sig > 78 and prev_rsi_30m < 75:
+                                        signal = f"↑ ROLL UP {time_str}"
+
+                        rows.append({
+                            'Time': time_str,
+                            '60m': col_60m,
+                            '30m': col_30m,
+                            '15m': col_15m,
+                            'Signal': signal
+                        })
+                elif not df_30m.empty:
+                    # Fallback to 30m iteration if 15m data unavailable
+                    day_30m = df_30m[df_30m.index.date == date]
+                    day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
+                    day_div_30m = div_30m[div_30m.index.date == date] if not div_30m.empty else pd.Series()
+                    day_div_60m = div_60m[div_60m.index.date == date] if not div_60m.empty else pd.Series()
+
+                    shown_60m_hours = set()
                     day_30m_reversed = day_30m.iloc[::-1]
                     for idx_in_reversed, (idx_30m, row_30m) in enumerate(day_30m_reversed.iterrows()):
                         rsi_30m = row_30m['rsi']
@@ -371,7 +452,6 @@ else:
                         div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
                         col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
 
-                        # 60m: Show on first 30m candle of each hour
                         hour_30m = idx_30m.hour
                         minute_30m = idx_30m.minute
                         col_60m = ""
@@ -388,23 +468,6 @@ else:
                                     col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
                                     shown_60m_hours.add(hour_30m)
 
-                        # 15m: Show on first 30m candle of each 30min block (00, 30 minutes)
-                        time_key_15m = f"{idx_30m.hour}:{idx_30m.minute//30 * 30:02d}"
-                        col_15m = ""
-                        if time_key_15m not in shown_15m_times and not day_15m.empty:
-                            # Get 15m candles that fall within this 30m window
-                            start_time = idx_30m.replace(second=0, microsecond=0) - pd.Timedelta(minutes=14)
-                            end_time = idx_30m.replace(second=0, microsecond=0)
-                            candles_15m = day_15m[(day_15m.index >= start_time) & (day_15m.index <= end_time)]
-                            if len(candles_15m) > 0:
-                                idx_15m = candles_15m.index[-1]
-                                rsi_15m = candles_15m['rsi'].iloc[-1]
-                                if not pd.isna(rsi_15m):
-                                    div_15m_str = day_div_15m.get(idx_15m, "") if not day_div_15m.empty else ""
-                                    col_15m = f"{rsi_15m:.1f}" + (f" {div_15m_str}" if div_15m_str else "")
-                                    shown_15m_times.add(time_key_15m)
-
-                        # Determine signal (30m-based)
                         signal = ""
                         time_str = idx_30m.strftime('%H:%M')
                         if rsi_30m < 25 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 30:
@@ -420,7 +483,7 @@ else:
                             'Time': time_str,
                             '60m': col_60m,
                             '30m': col_30m,
-                            '15m': col_15m,
+                            '15m': '',
                             'Signal': signal
                         })
 
