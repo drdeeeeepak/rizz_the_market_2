@@ -1,4 +1,4 @@
-# pages/28_Swing_RSI_Fade_Backtest.py
+# pages/28_RSI_Swing_Fade.py
 # Swing setup: Nifty tends to run one-sided for ~3-6 trading days, then reverse
 # for a similar stretch. This page tests fading intraday RSI overbought/oversold
 # extremes (30-minute and hourly) as the entry trigger for that turn — short on
@@ -21,13 +21,13 @@ try:
 except Exception:
     pass
 
-st.set_page_config(page_title="P28 · Swing RSI Fade Backtest", layout="wide")
+st.set_page_config(page_title="P28 · RSI Swing Fade", layout="wide")
 
 # Initialize backtest expander state at page top (before any rendering)
 if "p28_backtest_expanded" not in st.session_state:
     st.session_state.p28_backtest_expanded = False
 
-st.title("Page 28 — Swing RSI Fade Backtest")
+st.title("RSI Swing Fade")
 st.caption("Fade hourly / 30-minute RSI overbought & oversold extremes as a swing entry "
           "for the 3-6 day one-sided-move-then-reverse pattern.")
 
