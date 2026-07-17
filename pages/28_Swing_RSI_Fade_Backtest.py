@@ -328,8 +328,8 @@ else:
             for date in sorted(unique_dates, reverse=True):
                 rows.append({
                     'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
-                    '60m_RSI': '', '60m_Div': '', '60m_Trend': '',
-                    '30m_RSI': '', '30m_Div': '', '30m_Trend': '', 'Signal': ''
+                    '60m_RSI': '', '60m_Div': '',
+                    '30m_RSI': '', '30m_Div': '', 'Signal': ''
                 })
 
                 # Iterate through all 30m candles for this date
