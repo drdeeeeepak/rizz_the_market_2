@@ -516,6 +516,18 @@ else:
                 line=dict(color="#3b82f6", width=2),
                 name="RSI(14)"
             ))
+            # Add vertical lines at date boundaries
+            if len(df_live_60m_rsi.tail(40)) > 0:
+                last_40 = df_live_60m_rsi.tail(40)
+                current_date = None
+                for i, (idx, row) in enumerate(last_40.iterrows()):
+                    row_date = pd.to_datetime(idx).date() if hasattr(pd.to_datetime(idx), 'date') else idx.date()
+                    if current_date is None:
+                        current_date = row_date
+                    elif row_date != current_date:
+                        fig_60m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
+                                         annotation_text=row_date.strftime("%b %d"), annotation_position="top")
+                        current_date = row_date
             fig_60m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
             fig_60m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
             fig_60m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
@@ -536,6 +548,18 @@ else:
                 line=dict(color="#f59e0b", width=2),
                 name="RSI(14)"
             ))
+            # Add vertical lines at date boundaries
+            if len(df_live_30m_rsi.tail(80)) > 0:
+                last_80 = df_live_30m_rsi.tail(80)
+                current_date = None
+                for i, (idx, row) in enumerate(last_80.iterrows()):
+                    row_date = pd.to_datetime(idx).date() if hasattr(pd.to_datetime(idx), 'date') else idx.date()
+                    if current_date is None:
+                        current_date = row_date
+                    elif row_date != current_date:
+                        fig_30m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
+                                         annotation_text=row_date.strftime("%b %d"), annotation_position="top")
+                        current_date = row_date
             fig_30m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
             fig_30m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
             fig_30m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
