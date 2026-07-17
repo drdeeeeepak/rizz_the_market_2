@@ -384,26 +384,26 @@ else:
                                 (day_30m.index.hour == hour_15m) &
                                 (day_30m.index.minute == minute_15m//30 * 30)
                             ]
+                            shown_30m_times.add(time_key_30m)  # Mark as tried, regardless of result
                             if len(matching_30m) > 0:
                                 idx_30m = matching_30m.index[-1]
                                 rsi_30m = matching_30m['rsi'].iloc[-1]
                                 if not pd.isna(rsi_30m):
                                     div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
                                     col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
-                                    shown_30m_times.add(time_key_30m)
 
                         # 60m: Show once per hour (on first 15m candle of the hour)
                         col_60m = ""
                         if hour_15m not in shown_60m_hours and not day_60m.empty:
                             # Find 60m candle that covers this hour
                             covering_60m = day_60m[day_60m.index.hour == hour_15m]
+                            shown_60m_hours.add(hour_15m)  # Mark as tried, regardless of result
                             if len(covering_60m) > 0:
                                 idx_60m = covering_60m.index[-1]
                                 rsi_60m = covering_60m['rsi'].iloc[-1]
                                 if not pd.isna(rsi_60m):
                                     div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
                                     col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
-                                    shown_60m_hours.add(hour_15m)
 
                         # Signal: Only show on 30m boundaries (signal detection is 30m-based)
                         signal = ""
