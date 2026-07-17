@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"AUTO-REMINDER (project hook): 1) Ambiguous request, or the thing named does not match current code state -> STOP and ask the user before acting. 2) Before removing any column/feature -> Grep every occurrence of its name; after removing -> Grep again to confirm zero live references. 3) After every edit -> Read the affected section back before claiming done; never report success without verifying. 4) Any pg28 table change -> re-verify the finalized styling spec in CLAUDE.md Lessons Learned still renders. 5) After committing -> push to BOTH the feature branch AND main.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
