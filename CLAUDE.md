@@ -182,6 +182,30 @@ Needed "is declining" only for styling → added hidden `_declining` columns the
 had to ask to remove. Compute derived values inside the styling function (compare against
 the previous row via `df.index.get_loc(row.name)`), keep the DataFrame clean.
 
+### Rule 6: Tracking sets must be updated BEFORE success checks (July 2026 failure)
+When showing data once per period (e.g., "show 30m RSI once per 30m block while iterating
+by 15m candles"), the tracking set was only updated INSIDE the `if len(found_data) > 0:`
+block. Result: if first iteration in a period failed to find data, that period was never
+marked "shown", so all subsequent iterations in the same period retried the failed lookup.
+- **Track attempts AFTER filtering, not inside success conditions:**
+  ```python
+  # WRONG: only marks as shown if data found
+  if time_key not in shown and data:
+      matches = find(data, filter)
+      if len(matches) > 0:
+          show(matches)
+          shown.add(time_key)  # ← only here
+  
+  # RIGHT: marks as tried regardless
+  if time_key not in shown and data:
+      matches = find(data, filter)
+      shown.add(time_key)  # ← always here
+      if len(matches) > 0:
+          show(matches)
+  ```
+- Prevents repeated failed lookups in subsequent loop iterations
+- Gracefully handles sparse/missing data (blank cell, not retries)
+
 **Meta-rule:** Every one of these failures shares a root cause — acting on an assumption
 instead of reading/grepping the actual code first, and claiming success without verifying.
 Verify before AND after. One Grep/Read costs seconds; a wrong assumption costs the user
