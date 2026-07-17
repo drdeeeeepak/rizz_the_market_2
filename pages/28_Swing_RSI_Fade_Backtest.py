@@ -418,12 +418,12 @@ else:
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
                         if col == '60m_RSI':
-                            # Check if 60m trend shows declining (↓)
-                            is_declining = '↓' in str(row.get('60m_Trend', ''))
+                            # Check if 60m trend shows declining (↘ Falling)
+                            is_declining = '↘' in str(row.get('60m_Trend', ''))
                             styles[i] = _rsi_css(row[col], is_declining)
                         elif col == '30m_RSI':
-                            # Check if 30m trend shows declining (↓)
-                            is_declining = '↓' in str(row.get('30m_Trend', ''))
+                            # Check if 30m trend shows declining (↘ Falling)
+                            is_declining = '↘' in str(row.get('30m_Trend', ''))
                             styles[i] = _rsi_css(row[col], is_declining)
                         else:
                             styles[i] = ''
