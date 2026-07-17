@@ -227,27 +227,42 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
-        def _rsi_css(val):
+        def _rsi_css(val, is_declining=False):
             """
-            RSI styling: red/green/gray background by zone, dark text for readability.
+            RSI styling: background by zone (red/green/gray), text color by trend.
+            Text: RED if declining, dark text (red/green/slate) if rising/flat.
+            Background: RED for overbought ≥70, GREEN for oversold ≤30, GRAY for neutral.
             """
             try:
                 rsi = float(val)
 
-                # Determine background and text based on RSI zone
+                # Determine background based on RSI zone
                 if rsi >= 70:
                     bg_color = "#fca5a5"  # Red/pink background for overbought
-                    text_color = "#7f1d1d"  # Dark red text
+                    text_color_rising = "#7f1d1d"  # Dark red text when rising
                 elif rsi <= 30:
                     bg_color = "#86efac"  # Green background for oversold
-                    text_color = "#064e3b"  # Dark green text
+                    text_color_rising = "#064e3b"  # Dark green text when rising
                 else:
                     bg_color = "#e2e8f0"  # Gray background for neutral
-                    text_color = "#334155"  # Dark slate text
+                    text_color_rising = "#334155"  # Dark slate text when rising
 
-                return f"background-color:{bg_color};color:{text_color};font-weight:600;"
+                # Text color: RED if declining, otherwise zone-appropriate color when rising
+                text_color = "#dc2626" if is_declining else text_color_rising
+                text_weight = "800" if is_declining else "600"
+
+                return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
             except:
                 return ""
+
+        def _div_css(val):
+            """Color divergence cells: Green=Bullish (LONG), Red=Bearish (SHORT)"""
+            s = str(val)
+            if "Bull" in s:
+                return "background-color:#10b981;color:#ffffff;font-weight:800;"  # Green - bullish div
+            elif "Bear" in s:
+                return "background-color:#ef4444;color:#ffffff;font-weight:800;"  # Red - bearish div
+            return ""
 
         def _signal_css(val):
             """Color signal column: Green for LONG, Red for SHORT"""
@@ -381,7 +396,11 @@ else:
                         rows.append({
                             'Time': time_str,
                             '60m_RSI': rsi_60m_val,
+                            '60m_Div': div_60m_str,
+                            '_60m_declining': '↘' in trend_60m_str,  # Hidden: for text color styling
                             '30m_RSI': f"{rsi_30m:.1f}",
+                            '30m_Div': div_30m_str,
+                            '_30m_declining': '↘' in trend_30m,  # Hidden: for text color styling
                             'Signal': signal
                         })
 
@@ -399,15 +418,25 @@ else:
                 def _rsi_row(row):
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
-                        if col in ['60m_RSI', '30m_RSI']:
-                            styles[i] = _rsi_css(row[col])
+                        if col == '60m_RSI':
+                            is_declining = row.get('_60m_declining', False)
+                            styles[i] = _rsi_css(row[col], is_declining)
+                        elif col == '30m_RSI':
+                            is_declining = row.get('_30m_declining', False)
+                            styles[i] = _rsi_css(row[col], is_declining)
                         else:
                             styles[i] = ''
                     return styles
 
-                styler = styler.apply(_rsi_row, axis=1)
+                def _div_row(row):
+                    styles = [''] * len(row)
+                    for i, col in enumerate(row.index):
+                        if col in ['60m_Div', '30m_Div']:
+                            styles[i] = _div_css(row[col])
+                        else:
+                            styles[i] = ''
+                    return styles
 
-                # Color signal column (LONG/SHORT)
                 def _signal_row(row):
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
@@ -417,11 +446,15 @@ else:
                             styles[i] = ''
                     return styles
 
+                styler = styler.apply(_rsi_row, axis=1)
+                styler = styler.apply(_div_row, axis=1)
                 styler = styler.apply(_signal_row, axis=1)
 
                 return styler
 
             styled_table = _style_rsi_table(hist_table)
+            # Hide the internal helper columns from display
+            styled_table = styled_table.hide(axis='columns', subset=['_60m_declining', '_30m_declining'])
             st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
 
             # Download button
