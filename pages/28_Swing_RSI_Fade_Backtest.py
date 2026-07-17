@@ -249,15 +249,6 @@ else:
             except:
                 return ""
 
-        def _div_css(val):
-            """Color divergence cells: Green=Bullish (LONG), Red=Bearish (SHORT)"""
-            s = str(val)
-            if "Bull" in s:
-                return "background-color:#10b981;color:#ffffff;font-weight:800;"  # Green - bullish div
-            elif "Bear" in s:
-                return "background-color:#ef4444;color:#ffffff;font-weight:800;"  # Red - bearish div
-            return ""
-
         def _signal_css(val):
             """Color signal column: Green for LONG, Red for SHORT"""
             s = str(val)
@@ -390,9 +381,7 @@ else:
                         rows.append({
                             'Time': time_str,
                             '60m_RSI': rsi_60m_val,
-                            '60m_Div': div_60m_str,
                             '30m_RSI': f"{rsi_30m:.1f}",
-                            '30m_Div': div_30m_str,
                             'Signal': signal
                         })
 
@@ -417,18 +406,6 @@ else:
                     return styles
 
                 styler = styler.apply(_rsi_row, axis=1)
-
-                # Color divergence cells (bullish/bearish signals)
-                def _div_row(row):
-                    styles = [''] * len(row)
-                    for i, col in enumerate(row.index):
-                        if col in ['60m_Div', '30m_Div']:
-                            styles[i] = _div_css(row[col])
-                        else:
-                            styles[i] = ''
-                    return styles
-
-                styler = styler.apply(_div_row, axis=1)
 
                 # Color signal column (LONG/SHORT)
                 def _signal_row(row):
