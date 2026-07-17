@@ -396,10 +396,10 @@ else:
                             'Time': time_str,
                             '60m_RSI': rsi_60m_val,
                             '60m_Div': div_60m_str,
-                            '60m_Trend': trend_60m_str,
+                            '_60m_declining': '↘' in trend_60m_str,  # Hidden: used for styling
                             '30m_RSI': f"{rsi_30m:.1f}",
                             '30m_Div': div_30m_str,
-                            '30m_Trend': trend_30m,
+                            '_30m_declining': '↘' in trend_30m,  # Hidden: used for styling
                             'Signal': signal
                         })
 
@@ -418,12 +418,12 @@ else:
                     styles = [''] * len(row)
                     for i, col in enumerate(row.index):
                         if col == '60m_RSI':
-                            # Check if 60m trend shows declining (↘ Falling)
-                            is_declining = '↘' in str(row.get('60m_Trend', ''))
+                            # Use hidden _60m_declining column to determine if declining
+                            is_declining = row.get('_60m_declining', False)
                             styles[i] = _rsi_css(row[col], is_declining)
                         elif col == '30m_RSI':
-                            # Check if 30m trend shows declining (↘ Falling)
-                            is_declining = '↘' in str(row.get('30m_Trend', ''))
+                            # Use hidden _30m_declining column to determine if declining
+                            is_declining = row.get('_30m_declining', False)
                             styles[i] = _rsi_css(row[col], is_declining)
                         else:
                             styles[i] = ''
@@ -457,7 +457,9 @@ else:
 
                 return styler
 
-            styled_table = _style_rsi_table(hist_table)
+            styled_table = _style_rsi_table(hist_table)  # Style uses full table with hidden columns
+            # Hide the helper columns from display
+            styled_table = styled_table.hide(axis='columns', subset=['_60m_declining', '_30m_declining'])
             st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
 
             # Download button
