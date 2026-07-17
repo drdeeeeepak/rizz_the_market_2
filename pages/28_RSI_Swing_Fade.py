@@ -435,17 +435,20 @@ else:
                 styler = df.style
 
                 # Table is sorted NEWEST-first, so the chronologically previous candle
-                # sits BELOW the current row. 60m cells are also sparse (one value per
-                # hour, blanks in between) and date-header rows are blank — scan down
-                # to the next non-empty numeric value to find the true previous RSI.
+                # sits BELOW the current row. Combined columns contain RSI + Div info,
+                # so extract RSI value from previous row's combined cell.
                 def _prev_rsi_below(row_loc, col):
+                    import re
                     for j in range(row_loc + 1, len(df)):
                         v = df.iloc[j][col]
                         if v:
-                            try:
-                                return float(v)
-                            except ValueError:
-                                continue  # skip non-numeric cells (e.g. date headers)
+                            # Extract RSI number from combined cell (e.g., "72.5 ▼Bear" → 72.5)
+                            rsi_match = re.search(r'(\d+\.?\d*)', str(v))
+                            if rsi_match:
+                                try:
+                                    return float(rsi_match.group(1))
+                                except ValueError:
+                                    continue
                     return None
 
                 def _rsi_trend(row_loc, col, curr_val):
@@ -465,6 +468,7 @@ else:
 
                 # Color combined RSI+Div cells using row-wise apply
                 def _combined_rsi_div_row(row):
+                    import re
                     styles = [''] * len(row)
                     row_loc = df.index.get_loc(row.name)
 
@@ -473,13 +477,11 @@ else:
                             cell_val = row[col]
                             if cell_val:
                                 # Extract RSI value (first number) from combined cell
-                                import re
                                 rsi_match = re.search(r'(\d+\.?\d*)', str(cell_val))
                                 if rsi_match:
                                     rsi_val = rsi_match.group(1)
-                                    # Map column name for trend calculation (need to match original structure)
-                                    trend_col = col + '_RSI' if col != 'Signal' else col
-                                    trend = _rsi_trend(row_loc, trend_col, rsi_val)
+                                    # Get trend by comparing with previous value in same column
+                                    trend = _rsi_trend(row_loc, col, rsi_val)
                                     styles[i] = _rsi_css(rsi_val, trend)
                                 else:
                                     # No RSI value, check if it's just Div
