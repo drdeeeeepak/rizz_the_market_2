@@ -117,8 +117,49 @@ The `is_declining` parameter got lost when I removed the hidden declining column
 
 ## How to Avoid This Going Forward
 
-1. **Ask first, act second** — Ambiguous request = clarification question
-2. **Read after editing** — Verify what actually changed
-3. **Keep feature map** — Document all styling rules in code comments
-4. **Test full pipeline** — Don't assume one change doesn't affect others
-5. **Version your requirements** — When requirements are complex, write them down explicitly
+### Immediate Actions (Before Any Code Change)
+1. **Ask first, act second** — Ambiguous request = clarification question before making ANY edits
+2. **Repeat back the requirements** — Confirm understanding before proceeding
+3. **Identify dependencies** — What other features depend on this change?
+
+### During Implementation
+4. **Read after editing** — Verify what actually changed vs what you intended
+5. **Keep feature map** — Document all styling rules in code comments
+6. **Test full pipeline** — Don't assume one change doesn't affect others
+7. **Check for cascading impacts** — If removing A, will B and C still work?
+
+### Avoiding Wasted Effort Specifically
+8. **Don't add temporary columns** — If you need data only for styling, calculate it DURING styling
+   - Use comparison logic in the styling function itself
+   - Access the full dataframe via row index positioning
+   - Don't clutter the dataframe with helper columns
+
+9. **Calculate on-demand** — For properties like "is_declining":
+   - ❌ DON'T: Add `_60m_declining` column to dataframe
+   - ✅ DO: Calculate in styling function by comparing `current_rsi < prev_rsi`
+   - ✓ Result: Clean data, no wasted columns, feature still works
+
+10. **Version your requirements** — When requirements are complex, write them down explicitly
+
+---
+
+## Lesson Applied: Declining Detection
+
+**Original mistake:** Added hidden columns `_60m_declining` and `_30m_declining` to store boolean values
+
+**Better solution:** Calculate declining on-the-fly during styling:
+```python
+def _rsi_row(row):
+    row_loc = df.index.get_loc(row.name)  # Find row position
+    if row_loc > 0:
+        prev_rsi = float(df.iloc[row_loc - 1]['60m_RSI'])
+        curr_rsi = float(row['60m_RSI'])
+        is_declining = curr_rsi < prev_rsi - 2  # Compare with previous
+    styles[i] = _rsi_css(row[col], is_declining)
+```
+
+**Benefits:**
+- No extra columns clutter the dataframe
+- Styling logic self-contained
+- Clean table display
+- No wasted effort on columns the user didn't want
