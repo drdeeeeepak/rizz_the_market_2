@@ -325,6 +325,7 @@ else:
                 st.write(f"DEBUG 30m: shape={df_30m.shape}, columns={df_30m.columns.tolist()}, index_type={type(df_30m.index)}")
                 if len(df_30m) > 0:
                     st.write(f"DEBUG 30m first row: {df_30m.iloc[0].to_dict()}")
+                    st.write(f"DEBUG 30m minutes: {sorted(df_30m.index.minute.unique().tolist())}")
 
             rows = []
 
