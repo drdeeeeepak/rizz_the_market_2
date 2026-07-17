@@ -8,19 +8,30 @@
 
 ## ⚠️ CRITICAL: Git Workflow (Read This Every Time)
 
-**RULE: Every commit must be pushed to BOTH the feature branch AND main.**
+**RULE: Auto-push every commit to the feature branch. NEVER push to main without asking.**
 
-Steps after committing:
-```bash
-git push -u origin <feature-branch>   # Push to feature branch first
-git checkout main
-git merge <feature-branch>            # Fast-forward merge
-git push origin main                  # Push to main
-git checkout <feature-branch>         # Return to feature branch
-```
+`main` deploys the live Streamlit app. The feature branch is a safe draft/backup —
+pushing there never changes the live app.
 
-**Never leave code sitting only on the feature branch.** Both branches must stay in sync.
-This ensures code is visible in the live app immediately and prevents work from being lost.
+1. **Work and commit on the feature branch** (not on main).
+2. **After every commit, immediately push the feature branch** — no need to ask:
+   ```bash
+   git push -u origin <feature-branch>
+   ```
+   This is the backup that survives cloud-session expiry. Verify the push output shows
+   the commit actually landed (an "Everything up-to-date" after committing on a
+   DIFFERENT branch means nothing was pushed — check you're pushing the right branch).
+3. **Before touching main: ASK the user and wait for an explicit yes** in the current
+   conversation. A yes for an earlier push does NOT cover new commits. When approved:
+   ```bash
+   git checkout main
+   git merge <feature-branch>            # fast-forward
+   git push origin main
+   git log origin/main -1                # verify it landed before claiming success
+   git checkout <feature-branch>
+   ```
+4. **If the session is ending with commits not yet on main**, tell the user exactly
+   what is pending and that the live app does not have it yet.
 
 ## Key files
 | File | Purpose |
