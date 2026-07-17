@@ -376,34 +376,32 @@ else:
                         # 30m: Show on every 30m boundary (00, 30 minutes)
                         hour_15m = idx_15m.hour
                         minute_15m = idx_15m.minute
-                        time_key_30m = f"{hour_15m}:{minute_15m//30 * 30:02d}"
+                        target_30m_minute = (minute_15m // 30) * 30  # 0 or 30
+                        time_key_30m = f"{hour_15m}:{target_30m_minute:02d}"
                         col_30m = ""
                         if time_key_30m not in shown_30m_times and not day_30m.empty:
-                            # Find 30m candle at this time
-                            matching_30m = day_30m[
-                                (day_30m.index.hour == hour_15m) &
-                                (day_30m.index.minute == minute_15m//30 * 30)
-                            ]
-                            shown_30m_times.add(time_key_30m)  # Mark as tried, regardless of result
-                            if len(matching_30m) > 0:
-                                idx_30m = matching_30m.index[-1]
-                                rsi_30m = matching_30m['rsi'].iloc[-1]
-                                if not pd.isna(rsi_30m):
-                                    div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
-                                    col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
+                            shown_30m_times.add(time_key_30m)  # Mark as tried first
+                            # Find 30m candle by iterating (more reliable than index filtering)
+                            for idx_30m, row_30m in day_30m.iterrows():
+                                if idx_30m.hour == hour_15m and idx_30m.minute == target_30m_minute:
+                                    rsi_30m = row_30m.get('rsi') if isinstance(row_30m, dict) else row_30m['rsi']
+                                    if not pd.isna(rsi_30m):
+                                        div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
+                                        col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
+                                    break  # Found it, stop looking
 
                         # 60m: Show once per hour (on first 15m candle of the hour)
                         col_60m = ""
                         if hour_15m not in shown_60m_hours and not day_60m.empty:
-                            # Find 60m candle that covers this hour
-                            covering_60m = day_60m[day_60m.index.hour == hour_15m]
-                            shown_60m_hours.add(hour_15m)  # Mark as tried, regardless of result
-                            if len(covering_60m) > 0:
-                                idx_60m = covering_60m.index[-1]
-                                rsi_60m = covering_60m['rsi'].iloc[-1]
-                                if not pd.isna(rsi_60m):
-                                    div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
-                                    col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
+                            shown_60m_hours.add(hour_15m)  # Mark as tried first
+                            # Find 60m candle for this hour by iterating
+                            for idx_60m, row_60m in day_60m.iterrows():
+                                if idx_60m.hour == hour_15m:
+                                    rsi_60m = row_60m.get('rsi') if isinstance(row_60m, dict) else row_60m['rsi']
+                                    if not pd.isna(rsi_60m):
+                                        div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
+                                        col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
+                                    break  # Found it, stop looking
 
                         # Signal: Only show on 30m boundaries (signal detection is 30m-based)
                         signal = ""
