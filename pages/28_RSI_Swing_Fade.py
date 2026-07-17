@@ -320,6 +320,12 @@ else:
             if df_15m is None or df_15m.empty:
                 df_15m = pd.DataFrame()
 
+            # DEBUG: Check data structure
+            if not df_30m.empty:
+                st.write(f"DEBUG 30m: shape={df_30m.shape}, columns={df_30m.columns.tolist()}, index_type={type(df_30m.index)}")
+                if len(df_30m) > 0:
+                    st.write(f"DEBUG 30m first row: {df_30m.iloc[0].to_dict()}")
+
             rows = []
 
             # Normalize index to datetime
@@ -381,14 +387,21 @@ else:
                         col_30m = ""
                         if time_key_30m not in shown_30m_times and not day_30m.empty:
                             shown_30m_times.add(time_key_30m)  # Mark as tried first
+                            found_30m = False
                             # Find 30m candle by iterating (more reliable than index filtering)
                             for idx_30m, row_30m in day_30m.iterrows():
                                 if idx_30m.hour == hour_15m and idx_30m.minute == target_30m_minute:
-                                    rsi_30m = row_30m.get('rsi') if isinstance(row_30m, dict) else row_30m['rsi']
-                                    if not pd.isna(rsi_30m):
+                                    found_30m = True
+                                    try:
+                                        rsi_30m = row_30m['rsi'] if 'rsi' in row_30m.index else None
+                                    except (KeyError, AttributeError):
+                                        rsi_30m = None
+                                    if rsi_30m is not None and not pd.isna(rsi_30m):
                                         div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
                                         col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
                                     break  # Found it, stop looking
+                            if not found_30m and len(day_30m) > 0:
+                                st.write(f"DEBUG: No 30m match for {time_key_30m}. Day 30m hours: {day_30m.index.hour.unique().tolist()}")
 
                         # 60m: Show once per hour (on first 15m candle of the hour)
                         col_60m = ""
