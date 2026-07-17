@@ -194,7 +194,7 @@ else:
     # Historical RSI table (last 5 trading days)
     st.divider()
     st.subheader("📋 Historical RSI Status (Last 5 Trading Days)")
-    st.caption("7 × 60m candles + 13 × 30m candles per day | Signals show when Bull Put/Bear Call/Roll conditions were met")
+    st.caption("60m/30m/15m RSI with Divergence | Signals show when Bull Put/Bear Call/Roll conditions were met")
 
     # Always-visible refresh button
     if st.button("🔄 Refresh Historical Data (Clear Cache)", key="p28_refresh_hist"):
@@ -218,15 +218,28 @@ else:
         except Exception:
             return None
 
+    @st.cache_data(ttl=120, show_spinner=False)
+    def _fetch_hist_15m():
+        try:
+            # Fetch 40 days for 15m RSI (capped at 200-day Kite limit)
+            return _lf.get_nifty_15m(days=40)
+        except Exception:
+            return None
+
     df_hist_60m = _fetch_hist_60m()
     df_hist_30m = _fetch_hist_30m()
+    df_hist_15m = _fetch_hist_15m()
 
     if df_hist_60m is not None and not df_hist_60m.empty:
         df_hist_60m = rfb.compute_rsi(df_hist_60m, 14)
     if df_hist_30m is not None and not df_hist_30m.empty:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
+    if df_hist_15m is not None and not df_hist_15m.empty:
+        df_hist_15m = rfb.compute_rsi(df_hist_15m, 14)
 
-    if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
+    if ((df_hist_60m is not None and not df_hist_60m.empty) or
+        (df_hist_30m is not None and not df_hist_30m.empty) or
+        (df_hist_15m is not None and not df_hist_15m.empty)):
         def _rsi_css(val, trend=0):
             """
             RSI styling.
@@ -298,24 +311,26 @@ else:
             div_signal[bearish_div] = "▼ Bear"
             return div_signal
 
-        def _build_hist_table(df_60m, df_30m):
-            """Build flat historical RSI table: 30m rows with 60m data in cols 2-4"""
+        def _build_hist_table(df_60m, df_30m, df_15m):
+            """Build historical RSI table with combined RSI+Div columns for 60m, 30m, 15m"""
             if df_60m is None or df_60m.empty:
                 df_60m = pd.DataFrame()
             if df_30m is None or df_30m.empty:
                 df_30m = pd.DataFrame()
+            if df_15m is None or df_15m.empty:
+                df_15m = pd.DataFrame()
 
             rows = []
 
             # Normalize index to datetime
-            if not df_60m.empty and not isinstance(df_60m.index, pd.DatetimeIndex):
-                df_60m.index = pd.to_datetime(df_60m.index)
-            if not df_30m.empty and not isinstance(df_30m.index, pd.DatetimeIndex):
-                df_30m.index = pd.to_datetime(df_30m.index)
+            for df in [df_60m, df_30m, df_15m]:
+                if not df.empty and not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index)
 
             # Add divergence detection
             div_60m = _detect_divergence(df_60m) if not df_60m.empty else pd.Series()
             div_30m = _detect_divergence(df_30m) if not df_30m.empty else pd.Series()
+            div_15m = _detect_divergence(df_15m) if not df_15m.empty else pd.Series()
 
             # Get last 5 trading days
             if not df_30m.empty:
@@ -330,18 +345,20 @@ else:
             for date in sorted(unique_dates, reverse=True):
                 rows.append({
                     'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
-                    '60m_RSI': '', '60m_Div': '',
-                    '30m_RSI': '', '30m_Div': '', 'Signal': ''
+                    '60m': '', '30m': '', '15m': '', 'Signal': ''
                 })
 
                 # Iterate through all 30m candles for this date
                 if not df_30m.empty:
                     day_30m = df_30m[df_30m.index.date == date]
                     day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
+                    day_15m = df_15m[df_15m.index.date == date] if not df_15m.empty else pd.DataFrame()
                     day_div_30m = div_30m[div_30m.index.date == date] if not div_30m.empty else pd.Series()
                     day_div_60m = div_60m[div_60m.index.date == date] if not div_60m.empty else pd.Series()
+                    day_div_15m = div_15m[div_15m.index.date == date] if not div_15m.empty else pd.Series()
 
-                    shown_60m_hours = set()  # Track which hours we've already shown 60m data for
+                    shown_60m_hours = set()
+                    shown_15m_times = set()
 
                     # Iterate through 30m candles in REVERSE order (newest first)
                     day_30m_reversed = day_30m.iloc[::-1]
@@ -350,23 +367,15 @@ else:
                         if pd.isna(rsi_30m):
                             continue
 
-                        zone_dot_30m, zone_label_30m = _rsi_zone(rsi_30m)
-                        # Get previous candle (which is next in reversed iteration)
                         prev_rsi_30m = day_30m_reversed['rsi'].iloc[idx_in_reversed+1] if idx_in_reversed+1 < len(day_30m_reversed) else rsi_30m
-                        trend_30m = _trend_arrow(prev_rsi_30m, rsi_30m)
                         div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
+                        col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
 
-                        # Find corresponding 60m candle (same hour as 30m candle)
+                        # 60m: Show on first 30m candle of each hour
                         hour_30m = idx_30m.hour
                         minute_30m = idx_30m.minute
-
-                        rsi_60m_val = ""
-                        div_60m_str = ""
-                        trend_60m_str = ""
-
-                        # Only show 60m data on the first 30m candle of each hour
+                        col_60m = ""
                         if hour_30m not in shown_60m_hours and not day_60m.empty:
-                            # Get 60m candle that covers this 30m time
                             covering_60m = day_60m[
                                 ((day_60m.index.hour == hour_30m) & (day_60m.index.minute <= minute_30m)) |
                                 ((day_60m.index.hour == hour_30m + 1) & (day_60m.index.minute > minute_30m))
@@ -375,15 +384,27 @@ else:
                                 idx_60m = covering_60m.index[-1]
                                 rsi_60m = covering_60m['rsi'].iloc[-1]
                                 if not pd.isna(rsi_60m):
-                                    zone_dot_60m, zone_label_60m = _rsi_zone(rsi_60m)
-                                    idx_60m_prev = day_60m.index.get_indexer([idx_60m], method='backfill')
-                                    prev_rsi_60m = day_60m['rsi'].iloc[idx_60m_prev[0]-1] if idx_60m_prev[0] > 0 else rsi_60m
-                                    trend_60m_str = _trend_arrow(prev_rsi_60m, rsi_60m)
-                                    rsi_60m_val = f"{rsi_60m:.1f}"
                                     div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
+                                    col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
                                     shown_60m_hours.add(hour_30m)
 
-                        # Determine 30m signal with entry direction
+                        # 15m: Show on first 30m candle of each 30min block (00, 30 minutes)
+                        time_key_15m = f"{idx_30m.hour}:{idx_30m.minute//30 * 30:02d}"
+                        col_15m = ""
+                        if time_key_15m not in shown_15m_times and not day_15m.empty:
+                            # Get 15m candles that fall within this 30m window
+                            start_time = idx_30m.replace(second=0, microsecond=0) - pd.Timedelta(minutes=14)
+                            end_time = idx_30m.replace(second=0, microsecond=0)
+                            candles_15m = day_15m[(day_15m.index >= start_time) & (day_15m.index <= end_time)]
+                            if len(candles_15m) > 0:
+                                idx_15m = candles_15m.index[-1]
+                                rsi_15m = candles_15m['rsi'].iloc[-1]
+                                if not pd.isna(rsi_15m):
+                                    div_15m_str = day_div_15m.get(idx_15m, "") if not day_div_15m.empty else ""
+                                    col_15m = f"{rsi_15m:.1f}" + (f" {div_15m_str}" if div_15m_str else "")
+                                    shown_15m_times.add(time_key_15m)
+
+                        # Determine signal (30m-based)
                         signal = ""
                         time_str = idx_30m.strftime('%H:%M')
                         if rsi_30m < 25 and idx_in_reversed + 1 < len(day_30m_reversed) and prev_rsi_30m > 30:
@@ -397,16 +418,15 @@ else:
 
                         rows.append({
                             'Time': time_str,
-                            '60m_RSI': rsi_60m_val,
-                            '60m_Div': div_60m_str,
-                            '30m_RSI': f"{rsi_30m:.1f}",
-                            '30m_Div': div_30m_str,
+                            '60m': col_60m,
+                            '30m': col_30m,
+                            '15m': col_15m,
                             'Signal': signal
                         })
 
             return pd.DataFrame(rows)
 
-        hist_table = _build_hist_table(df_hist_60m, df_hist_30m)
+        hist_table = _build_hist_table(df_hist_60m, df_hist_30m, df_hist_15m)
 
         if not hist_table.empty:
             # Apply pandas Styler for cell coloring
@@ -443,26 +463,30 @@ else:
                         return 1
                     return 0
 
-                # Color RSI cells (trading zones) using row-wise apply to avoid format conflict
-                def _rsi_row(row):
+                # Color combined RSI+Div cells using row-wise apply
+                def _combined_rsi_div_row(row):
                     styles = [''] * len(row)
-                    row_loc = df.index.get_loc(row.name)  # Get current row position
+                    row_loc = df.index.get_loc(row.name)
 
                     for i, col in enumerate(row.index):
-                        if col in ('60m_RSI', '30m_RSI'):
-                            if row[col]:
-                                styles[i] = _rsi_css(row[col], _rsi_trend(row_loc, col, row[col]))
+                        if col in ('60m', '30m', '15m'):
+                            cell_val = row[col]
+                            if cell_val:
+                                # Extract RSI value (first number) from combined cell
+                                import re
+                                rsi_match = re.search(r'(\d+\.?\d*)', str(cell_val))
+                                if rsi_match:
+                                    rsi_val = rsi_match.group(1)
+                                    # Map column name for trend calculation (need to match original structure)
+                                    trend_col = col + '_RSI' if col != 'Signal' else col
+                                    trend = _rsi_trend(row_loc, trend_col, rsi_val)
+                                    styles[i] = _rsi_css(rsi_val, trend)
+                                else:
+                                    # No RSI value, check if it's just Div
+                                    if "Bull" in str(cell_val) or "Bear" in str(cell_val):
+                                        styles[i] = _div_css(cell_val)
                             else:
                                 styles[i] = ''
-                        else:
-                            styles[i] = ''
-                    return styles
-
-                def _div_row(row):
-                    styles = [''] * len(row)
-                    for i, col in enumerate(row.index):
-                        if col in ['60m_Div', '30m_Div']:
-                            styles[i] = _div_css(row[col])
                         else:
                             styles[i] = ''
                     return styles
@@ -476,8 +500,7 @@ else:
                             styles[i] = ''
                     return styles
 
-                styler = styler.apply(_rsi_row, axis=1)
-                styler = styler.apply(_div_row, axis=1)
+                styler = styler.apply(_combined_rsi_div_row, axis=1)
                 styler = styler.apply(_signal_row, axis=1)
 
                 return styler
