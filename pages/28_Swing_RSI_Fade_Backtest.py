@@ -397,10 +397,8 @@ else:
                             'Time': time_str,
                             '60m_RSI': rsi_60m_val,
                             '60m_Div': div_60m_str,
-                            '_60m_declining': '↘' in trend_60m_str,  # Hidden: for text color styling
                             '30m_RSI': f"{rsi_30m:.1f}",
                             '30m_Div': div_30m_str,
-                            '_30m_declining': '↘' in trend_30m,  # Hidden: for text color styling
                             'Signal': signal
                         })
 
@@ -417,12 +415,30 @@ else:
                 # Color RSI cells (trading zones) using row-wise apply to avoid format conflict
                 def _rsi_row(row):
                     styles = [''] * len(row)
+                    row_loc = df.index.get_loc(row.name)  # Get current row position
+
                     for i, col in enumerate(row.index):
                         if col == '60m_RSI':
-                            is_declining = row.get('_60m_declining', False)
+                            # Calculate declining by comparing with previous row
+                            is_declining = False
+                            if row_loc > 0 and row[col]:
+                                try:
+                                    prev_rsi = float(df.iloc[row_loc - 1]['60m_RSI'])
+                                    curr_rsi = float(row[col])
+                                    is_declining = curr_rsi < prev_rsi - 2  # Declining if drop > 2 points
+                                except (ValueError, IndexError):
+                                    is_declining = False
                             styles[i] = _rsi_css(row[col], is_declining)
                         elif col == '30m_RSI':
-                            is_declining = row.get('_30m_declining', False)
+                            # Calculate declining by comparing with previous row
+                            is_declining = False
+                            if row_loc > 0 and row[col]:
+                                try:
+                                    prev_rsi = float(df.iloc[row_loc - 1]['30m_RSI'])
+                                    curr_rsi = float(row[col])
+                                    is_declining = curr_rsi < prev_rsi - 2  # Declining if drop > 2 points
+                                except (ValueError, IndexError):
+                                    is_declining = False
                             styles[i] = _rsi_css(row[col], is_declining)
                         else:
                             styles[i] = ''
@@ -453,8 +469,6 @@ else:
                 return styler
 
             styled_table = _style_rsi_table(hist_table)
-            # Hide the internal helper columns from display
-            styled_table = styled_table.hide(axis='columns', subset=['_60m_declining', '_30m_declining'])
             st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
 
             # Download button
