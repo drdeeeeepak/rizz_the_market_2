@@ -152,9 +152,11 @@ meant the Div columns and deleted those instead — destroying work they wanted 
 ### Rule 3: Never lose finalized features while editing nearby code (July 2026 failure)
 While simplifying styling, dropped the finalized text-color convention (red text when RSI
 declining). Finalized requirements on pg28 RSI table:
-- Text: RED when RSI falling; dark red/green/slate when rising/flat
+- Text: RED when RSI < previous candle, GREEN when RSI > previous, dark slate when flat/first
 - Background: RED ≥70 (overbought), GREEN ≤30 (oversold), GRAY neutral
 - Div cells: green Bull / red Bear; Signal cells: green LONG / red SHORT
+- Table is NEWEST-first → "previous candle" is the row BELOW; 60m cells are sparse
+  (one per hour) → scan down past blanks/date-headers for the true previous value
 - **Before committing any pg28 table change, verify every one of these still renders.**
 
 ### Rule 4: Structural/UI changes (expander, container, scope) — one mapped edit

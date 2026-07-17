@@ -227,29 +227,31 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
 
     if (df_hist_60m is not None and not df_hist_60m.empty) or (df_hist_30m is not None and not df_hist_30m.empty):
-        def _rsi_css(val, is_declining=False):
+        def _rsi_css(val, trend=0):
             """
-            RSI styling: background by zone (red/green/gray), text color by trend.
-            Text: RED if declining, dark text (red/green/slate) if rising/flat.
-            Background: RED for overbought ≥70, GREEN for oversold ≤30, GRAY for neutral.
+            RSI styling.
+            Background by zone: RED ≥70 (overbought), GREEN ≤30 (oversold), GRAY neutral.
+            Text by trend vs previous candle: RED if lower (trend=-1), GREEN if higher
+            (trend=+1), dark slate if flat/first candle (trend=0).
             """
             try:
                 rsi = float(val)
 
-                # Determine background based on RSI zone
+                # Background based on RSI zone
                 if rsi >= 70:
-                    bg_color = "#fca5a5"  # Red/pink background for overbought
-                    text_color_rising = "#7f1d1d"  # Dark red text when rising
+                    bg_color = "#fca5a5"  # Red/pink — overbought
                 elif rsi <= 30:
-                    bg_color = "#86efac"  # Green background for oversold
-                    text_color_rising = "#064e3b"  # Dark green text when rising
+                    bg_color = "#86efac"  # Green — oversold
                 else:
-                    bg_color = "#e2e8f0"  # Gray background for neutral
-                    text_color_rising = "#334155"  # Dark slate text when rising
+                    bg_color = "#e2e8f0"  # Gray — neutral
 
-                # Text color: RED if declining, otherwise zone-appropriate color when rising
-                text_color = "#dc2626" if is_declining else text_color_rising
-                text_weight = "800" if is_declining else "600"
+                # Text color strictly by trend vs previous RSI
+                if trend < 0:
+                    text_color, text_weight = "#dc2626", "800"  # RED — lower than previous
+                elif trend > 0:
+                    text_color, text_weight = "#15803d", "800"  # GREEN — higher than previous
+                else:
+                    text_color, text_weight = "#334155", "600"  # Dark slate — flat / no previous
 
                 return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
             except:
@@ -412,34 +414,46 @@ else:
                 """Apply trading-signal colors to RSI and Divergence columns"""
                 styler = df.style
 
+                # Table is sorted NEWEST-first, so the chronologically previous candle
+                # sits BELOW the current row. 60m cells are also sparse (one value per
+                # hour, blanks in between) and date-header rows are blank — scan down
+                # to the next non-empty numeric value to find the true previous RSI.
+                def _prev_rsi_below(row_loc, col):
+                    for j in range(row_loc + 1, len(df)):
+                        v = df.iloc[j][col]
+                        if v:
+                            try:
+                                return float(v)
+                            except ValueError:
+                                continue  # skip non-numeric cells (e.g. date headers)
+                    return None
+
+                def _rsi_trend(row_loc, col, curr_val):
+                    """-1 if current < previous (red), +1 if higher (green), 0 flat/first."""
+                    try:
+                        curr = float(curr_val)
+                    except (TypeError, ValueError):
+                        return 0
+                    prev = _prev_rsi_below(row_loc, col)
+                    if prev is None:
+                        return 0
+                    if curr < prev:
+                        return -1
+                    if curr > prev:
+                        return 1
+                    return 0
+
                 # Color RSI cells (trading zones) using row-wise apply to avoid format conflict
                 def _rsi_row(row):
                     styles = [''] * len(row)
                     row_loc = df.index.get_loc(row.name)  # Get current row position
 
                     for i, col in enumerate(row.index):
-                        if col == '60m_RSI':
-                            # Calculate declining by comparing with previous row
-                            is_declining = False
-                            if row_loc > 0 and row[col]:
-                                try:
-                                    prev_rsi = float(df.iloc[row_loc - 1]['60m_RSI'])
-                                    curr_rsi = float(row[col])
-                                    is_declining = curr_rsi < prev_rsi - 2  # Declining if drop > 2 points
-                                except (ValueError, IndexError):
-                                    is_declining = False
-                            styles[i] = _rsi_css(row[col], is_declining)
-                        elif col == '30m_RSI':
-                            # Calculate declining by comparing with previous row
-                            is_declining = False
-                            if row_loc > 0 and row[col]:
-                                try:
-                                    prev_rsi = float(df.iloc[row_loc - 1]['30m_RSI'])
-                                    curr_rsi = float(row[col])
-                                    is_declining = curr_rsi < prev_rsi - 2  # Declining if drop > 2 points
-                                except (ValueError, IndexError):
-                                    is_declining = False
-                            styles[i] = _rsi_css(row[col], is_declining)
+                        if col in ('60m_RSI', '30m_RSI'):
+                            if row[col]:
+                                styles[i] = _rsi_css(row[col], _rsi_trend(row_loc, col, row[col]))
+                            else:
+                                styles[i] = ''
                         else:
                             styles[i] = ''
                     return styles
