@@ -74,20 +74,19 @@ st.title("🎯 Hourly RSI Breakout — HL/LH Pivot Signals")
 
 # Sidebar controls
 st.sidebar.header("Settings")
-days_to_fetch = st.sidebar.slider("Days of hourly data (needs 60+ for RSI accuracy)", 60, 365, 120)
 rsi_period = st.sidebar.slider("RSI Period", 7, 21, 14)
 lookback = st.sidebar.slider("Lookback for pivot detection", 2, 5, 3)
 
-# Fetch data
+# Fetch maximum available data for accurate RSI calculation
 @st.cache_data(ttl=300, show_spinner="Fetching hourly data...")
-def load_hourly_data(days):
-    df = get_nifty_1h_phase(days=days)
+def load_hourly_data():
+    df = get_nifty_1h_phase(days=365)
     if df.empty:
         st.error("Failed to fetch hourly data")
         return None
     return df
 
-df_hourly = load_hourly_data(days_to_fetch)
+df_hourly = load_hourly_data()
 
 if df_hourly is None or df_hourly.empty:
     st.warning("No data available")
