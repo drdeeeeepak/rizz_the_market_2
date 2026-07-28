@@ -11,3 +11,4 @@ from analytics.vix_iv_regime   import VixIVRegimeEngine
 from analytics.market_profile  import MarketProfileEngine
 from analytics.dow_theory      import DowTheoryEngine
 from analytics.constituent_ema import ConstituentEMAEngine
+from analytics.hourly_rsi_pivot import analyze_hourly_rsi, backtest_rsi_pivots, backtest_stats
