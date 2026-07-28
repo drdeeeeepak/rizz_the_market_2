@@ -11,6 +11,9 @@ from analytics.hourly_rsi_pivot import analyze_hourly_rsi, backtest_rsi_pivots, 
 st.set_page_config(page_title="Hourly RSI Breakout", layout="wide")
 st.title("🎯 Hourly RSI Breakout — HL/LH Pivot Signals")
 
+# Cache invalidation
+_cache_buster = "v2"
+
 # ─── Sidebar controls ─────────────────────────────────────────────────────────
 st.sidebar.header("Settings")
 days_to_fetch = st.sidebar.slider("Days of hourly data", 5, 30, 14)
