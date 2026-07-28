@@ -3,9 +3,93 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import pytz
+import numpy as np
 
 from data.live_fetcher import get_nifty_1h_phase, get_nifty_spot
-from analytics.hourly_rsi_pivot import analyze_hourly_rsi, backtest_rsi_pivots, backtest_stats
+from analytics.hourly_rsi_pivot import analyze_hourly_rsi
+
+
+# ─── Backtest functions (inlined to avoid import issues) ──────────────────────
+def __backtest_rsi_pivots(df: pd.DataFrame, rsi_period: int = 14, lookback: int = 3) -> pd.DataFrame:
+    """Backtest the RSI pivot strategy."""
+    df = df.copy()
+    df, signals = analyze_hourly_rsi(df, rsi_period, lookback)
+
+    if not signals:
+        return pd.DataFrame()
+
+    backtest_results = []
+    for i, signal in enumerate(signals):
+        signal_idx = signal['index']
+        signal_time = df.index[signal_idx]
+        signal_type = signal['signal']
+        signal_price = df['close'].iloc[signal_idx]
+        signal_rsi = signal['rsi_at_signal']
+        pivot_level = signal['pivot_level']
+
+        next_signal_idx = None
+        for j in range(i + 1, len(signals)):
+            if signals[j]['index'] > signal_idx:
+                if (signal_type == 'BUY' and signals[j]['signal'] == 'SELL') or \
+                   (signal_type == 'SELL' and signals[j]['signal'] == 'BUY'):
+                    next_signal_idx = signals[j]['index']
+                    break
+
+        if next_signal_idx is None:
+            next_signal_idx = len(df) - 1
+
+        exit_time = df.index[next_signal_idx]
+        exit_price = df['close'].iloc[next_signal_idx]
+
+        if signal_type == 'BUY':
+            pnl_pts = exit_price - signal_price
+            pnl_pct = (pnl_pts / signal_price) * 100 if signal_price != 0 else 0
+        else:
+            pnl_pts = signal_price - exit_price
+            pnl_pct = (pnl_pts / signal_price) * 100 if signal_price != 0 else 0
+
+        bars_held = next_signal_idx - signal_idx
+
+        backtest_results.append({
+            'signal_type': signal_type,
+            'signal_time': signal_time,
+            'signal_price': signal_price,
+            'signal_rsi': signal_rsi,
+            'pivot_level': pivot_level,
+            'exit_time': exit_time,
+            'exit_price': exit_price,
+            'pnl_pts': pnl_pts,
+            'pnl_pct': pnl_pct,
+            'bars_held': bars_held
+        })
+
+    return pd.DataFrame(backtest_results)
+
+
+def __backtest_stats(backtest_df: pd.DataFrame) -> dict:
+    """Calculate backtest statistics."""
+    if backtest_df.empty:
+        return {}
+
+    total_trades = len(backtest_df)
+    winning_trades = (backtest_df['pnl_pct'] > 0).sum()
+    losing_trades = (backtest_df['pnl_pct'] < 0).sum()
+    total_pnl_pct = backtest_df['pnl_pct'].sum()
+    avg_pnl_pct = backtest_df['pnl_pct'].mean()
+    max_win = backtest_df['pnl_pct'].max()
+    max_loss = backtest_df['pnl_pct'].min()
+    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+
+    return {
+        'total_trades': total_trades,
+        'winning_trades': winning_trades,
+        'losing_trades': losing_trades,
+        'win_rate': win_rate,
+        'total_pnl_pct': total_pnl_pct,
+        'avg_pnl_pct': avg_pnl_pct,
+        'max_win_pct': max_win,
+        'max_loss_pct': max_loss,
+    }
 
 
 st.set_page_config(page_title="Hourly RSI Breakout", layout="wide")
@@ -215,11 +299,11 @@ with col_bt2:
 
 if run_backtest:
     with st.spinner(f"Backtesting {len(df_analysis)} candles..."):
-        backtest_df = backtest_rsi_pivots(df_analysis, rsi_period=rsi_period, lookback=lookback)
+        backtest_df = _backtest_rsi_pivots(df_analysis, rsi_period=rsi_period, lookback=lookback)
 
     if not backtest_df.empty:
         # Display stats
-        stats = backtest_stats(backtest_df)
+        stats = _backtest_stats(backtest_df)
 
         st.success(f"✅ Backtest complete: **{stats['total_trades']} trades** | **{stats['win_rate']:.1f}% win rate** | **{stats['total_pnl_pct']:.2f}% total P&L**")
 
