@@ -197,7 +197,7 @@ if signals:
             return 'background-color: #ef4444; color: white; font-weight: bold'
         return ''
 
-    styled_df = sig_df.style.applymap(style_signal_column, subset=['Signal'])
+    styled_df = sig_df.style.map(style_signal_column, subset=['Signal'])
     st.dataframe(styled_df, use_container_width=True)
 else:
     st.info("No signals yet")
