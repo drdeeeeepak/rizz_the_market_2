@@ -213,7 +213,7 @@ else:
     col3.metric("Current RSI", "—")
 
 # Debug info
-with st.expander("🔧 Debug Info", expanded=False):
+with st.expander("🔧 Debug Info", expanded=True):
     st.write(f"**Data shape:** {df_analysis.shape}")
     st.write(f"**Latest timestamp:** {df_analysis.index[-1]}")
     st.write(f"**Latest close:** {df_analysis['close'].iloc[-1]:.2f}")
