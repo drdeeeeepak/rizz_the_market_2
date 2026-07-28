@@ -83,6 +83,22 @@ st.sidebar.header("Settings")
 rsi_period = st.sidebar.slider("RSI Period", 7, 21, 14)
 lookback = st.sidebar.slider("Lookback for pivot detection", 2, 5, 3)
 
+# Strategy selection
+st.sidebar.divider()
+st.sidebar.header("Backtest Strategy")
+strategy = st.sidebar.radio(
+    "Select strategy",
+    ["Pivot Breakout (HL/LH)", "RSI Extremes (OS/OB)"],
+    help="Choose entry signal type"
+)
+
+if strategy == "RSI Extremes (OS/OB)":
+    os_level = st.sidebar.slider("Oversold Level (buy below)", 15, 40, 30, step=5)
+    ob_level = st.sidebar.slider("Overbought Level (sell above)", 60, 85, 70, step=5)
+else:
+    os_level = None
+    ob_level = None
+
 # Fetch maximum available data for accurate RSI calculation
 @st.cache_data(ttl=300, show_spinner="Fetching hourly data...")
 def load_hourly_data():
@@ -278,6 +294,17 @@ if st.button("▶ Run Backtest", use_container_width=True):
         if candle_wait > 0:
             filtered_df = filtered_df[filtered_df['bars_held'] > candle_wait]
 
+        # Apply RSI Extremes filter if selected
+        if strategy == "RSI Extremes (OS/OB)":
+            buy_trades = filtered_df[filtered_df['signal_type'] == 'BUY']
+            sell_trades = filtered_df[filtered_df['signal_type'] == 'SELL']
+
+            # Filter by RSI levels
+            buy_filtered = buy_trades[buy_trades['signal_rsi'] < os_level]
+            sell_filtered = sell_trades[sell_trades['signal_rsi'] > ob_level]
+
+            filtered_df = pd.concat([buy_filtered, sell_filtered]).sort_index()
+
         # Recalculate stats
         if not filtered_df.empty:
             filtered_stats = {
@@ -295,12 +322,14 @@ if st.button("▶ Run Backtest", use_container_width=True):
             filtered_df = backtest_df
 
         filter_summary = []
+        if strategy == "RSI Extremes (OS/OB)":
+            filter_summary.append(f"OS<{os_level} | OB>{ob_level}")
         if rsi_wait > 0:
             filter_summary.append(f"RSI Wait ±{rsi_wait}pts")
         if candle_wait > 0:
             filter_summary.append(f"Candle Wait {candle_wait}")
 
-        filter_text = " | ".join(filter_summary) if filter_summary else "No filters"
+        filter_text = " | ".join(filter_summary) if filter_summary else "Pivot Breakout"
         st.success(f"✅ {filtered_stats['total_trades']} trades (was {trades_before}) | {filtered_stats['win_rate']:.1f}% win rate | {filtered_stats['total_pnl_pct']:.2f}% P&L | {filter_text}")
         
         col1, col2, col3, col4, col5 = st.columns(5)
