@@ -228,23 +228,91 @@ st.divider()
 st.subheader("🧪 Backtest")
 st.info(f"Real data: {len(df_analysis)} hourly candles from Kite API")
 
+# Backtest configuration
+st.subheader("Confirmation Strategy")
+col1, col2 = st.columns(2)
+with col1:
+    rsi_wait = st.selectbox(
+        "RSI Wait Confirmation",
+        [0, 5, 7, 10],
+        help="How many RSI points to wait in your favor direction before entering"
+    )
+with col2:
+    candle_wait = st.selectbox(
+        "Candle Wait Confirmation",
+        [0, 1, 2],
+        help="How many candles to wait beyond pivot before entering (0=immediate, 1=1st close, 2=2nd close)"
+    )
+
 if st.button("▶ Run Backtest", use_container_width=True):
     with st.spinner(f"Backtesting {len(df_analysis)} candles..."):
         backtest_df, stats = run_backtest(df_analysis, rsi_period, lookback)
-    
+
     if not backtest_df.empty:
-        st.success(f"✅ {stats['total_trades']} trades | {stats['win_rate']:.1f}% win rate | {stats['total_pnl_pct']:.2f}% P&L")
+        # Apply filters
+        filtered_df = backtest_df.copy()
+        trades_before = len(filtered_df)
+
+        if rsi_wait > 0:
+            # RSI thresholds based on backtest analysis:
+            # BUY losers averaged RSI 55.7 → require better RSI
+            # SELL losers averaged RSI 46.4 → require better RSI
+            buy_trades = filtered_df[filtered_df['signal_type'] == 'BUY'].copy()
+            sell_trades = filtered_df[filtered_df['signal_type'] == 'SELL'].copy()
+
+            if rsi_wait == 5:
+                buy_threshold = 50.7   # 55.7 - 5 points
+                sell_threshold = 51.4  # 46.4 + 5 points
+            elif rsi_wait == 7:
+                buy_threshold = 48.7   # 55.7 - 7 points (recommended sweet spot)
+                sell_threshold = 53.4  # 46.4 + 7 points
+            else:  # rsi_wait == 10
+                buy_threshold = 45.7   # 55.7 - 10 points
+                sell_threshold = 56.4  # 46.4 + 10 points
+
+            buy_filtered = buy_trades[buy_trades['signal_rsi'] < buy_threshold]
+            sell_filtered = sell_trades[sell_trades['signal_rsi'] > sell_threshold]
+
+            filtered_df = pd.concat([buy_filtered, sell_filtered]).sort_index()
+
+        if candle_wait > 0:
+            filtered_df = filtered_df[filtered_df['bars_held'] > candle_wait]
+
+        # Recalculate stats
+        if not filtered_df.empty:
+            filtered_stats = {
+                'total_trades': len(filtered_df),
+                'winning_trades': (filtered_df['pnl_pct'] > 0).sum(),
+                'losing_trades': (filtered_df['pnl_pct'] < 0).sum(),
+                'total_pnl_pct': filtered_df['pnl_pct'].sum(),
+                'avg_pnl_pct': filtered_df['pnl_pct'].mean(),
+                'max_win_pct': filtered_df['pnl_pct'].max(),
+                'max_loss_pct': filtered_df['pnl_pct'].min(),
+                'win_rate': (filtered_df['pnl_pct'] > 0).sum() / len(filtered_df) * 100 if len(filtered_df) > 0 else 0
+            }
+        else:
+            filtered_stats = stats
+            filtered_df = backtest_df
+
+        filter_summary = []
+        if rsi_wait > 0:
+            filter_summary.append(f"RSI Wait ±{rsi_wait}pts")
+        if candle_wait > 0:
+            filter_summary.append(f"Candle Wait {candle_wait}")
+
+        filter_text = " | ".join(filter_summary) if filter_summary else "No filters"
+        st.success(f"✅ {filtered_stats['total_trades']} trades (was {trades_before}) | {filtered_stats['win_rate']:.1f}% win rate | {filtered_stats['total_pnl_pct']:.2f}% P&L | {filter_text}")
         
         col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Trades", stats['total_trades'])
-        col2.metric("Wins", stats['winning_trades'])
-        col3.metric("Losses", stats['losing_trades'])
-        col4.metric("Avg P&L", f"{stats['avg_pnl_pct']:.2f}%")
-        col5.metric("Total P&L", f"{stats['total_pnl_pct']:.2f}%")
-        
+        col1.metric("Trades", filtered_stats['total_trades'])
+        col2.metric("Wins", filtered_stats['winning_trades'])
+        col3.metric("Losses", filtered_stats['losing_trades'])
+        col4.metric("Avg P&L", f"{filtered_stats['avg_pnl_pct']:.2f}%")
+        col5.metric("Total P&L", f"{filtered_stats['total_pnl_pct']:.2f}%")
+
         # Results table
         st.subheader("Trade Results (Latest First)")
-        display_df = backtest_df.copy()
+        display_df = filtered_df.copy()
         display_df['signal_time'] = display_df['signal_time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df['exit_time'] = display_df['exit_time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df = display_df[[
@@ -270,16 +338,16 @@ if st.button("▶ Run Backtest", use_container_width=True):
         st.dataframe(styled_backtest, use_container_width=True)
         
         # CSV download
-        csv = backtest_df.to_csv(index=False)
+        csv = filtered_df.to_csv(index=False)
         st.download_button(
             "📥 Download CSV", csv,
             f"backtest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
             "text/csv", use_container_width=True
         )
-        
+
         # P&L chart
         st.subheader("P&L Chart")
-        chart_df = backtest_df.copy()
+        chart_df = filtered_df.copy()
         chart_df['cumulative'] = chart_df['pnl_pct'].cumsum()
         chart_df['trade'] = range(1, len(chart_df) + 1)
         
