@@ -10,13 +10,20 @@ try:
     _HAS_TALIB = True
 except ImportError:
     _HAS_TALIB = False
+    import logging
+    logging.warning("TA-Lib not installed, using fallback Wilder's smoothing")
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """Calculate RSI using TA-Lib if available, else Wilder's smoothing."""
     if _HAS_TALIB:
-        rsi = talib.RSI(series.values, timeperiod=period)
-        return pd.Series(rsi, index=series.index)
+        try:
+            rsi = talib.RSI(series.values, timeperiod=period)
+            return pd.Series(rsi, index=series.index)
+        except Exception as e:
+            import logging
+            logging.warning(f"TA-Lib RSI failed ({e}), using fallback")
+            pass
 
     # Fallback: Wilder's smoothing (manual)
     delta = series.diff().values
