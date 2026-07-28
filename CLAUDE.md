@@ -206,6 +206,25 @@ marked "shown", so all subsequent iterations in the same period retried the fail
 - Prevents repeated failed lookups in subsequent loop iterations
 - Gracefully handles sparse/missing data (blank cell, not retries)
 
+### Rule 7: For "live" indicator pages — diagnostic output saves hours (July 2026 failure)
+Page 04 (Hourly RSI) showed RSI 73.50 vs Kite 55.2 vs Page 28 (same calc) 55.2. Spent time
+investigating calculation, trying TA-Lib, improving RSI formula — but the calculation was
+**always correct**. Real issue: stale cached data from incomplete test run. Solution: added
+debug expander showing latest timestamp + close price + calculated value + spot difference.
+Immediately revealed the data was correct (24001.65 close ≈ 24001.85 spot).
+- **Pattern for any indicator showing "live" price/RSI/signals:**
+  1. Fetch maximum historical data (e.g., 365 days of candles for RSI warm-up)
+  2. Calculate from all that data (don't drop history — RSI needs ~60-candle warm-up to stabilize)
+  3. Display only recent window (e.g., 7-day chart) to keep UI clean
+  4. **Always include debug output showing:** latest data timestamp, latest close vs spot, latest calculated value
+  5. This debug output should survive to production (collapsed expander, not removed) — reuse it when troubleshooting
+- **When values don't match external source (Kite):**
+  - **DON'T** assume calculation is wrong — add diagnostic timestamps/values first
+  - **DO** check: is the data stale (timestamp is old)? Is close price matching current spot?
+  - Streamlit `@st.cache_data` with mismatched TTLs hides staleness; compare page versions to catch it
+- **Cross-page validation:** When building similar indicators on different pages, compare their outputs
+  against each other AND external source (Kite). Mismatches reveal data issues faster than math audits.
+
 **Meta-rule:** Every one of these failures shares a root cause — acting on an assumption
 instead of reading/grepping the actual code first, and claiming success without verifying.
 Verify before AND after. One Grep/Read costs seconds; a wrong assumption costs the user

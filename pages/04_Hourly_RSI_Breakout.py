@@ -69,6 +69,12 @@ def run_backtest(df, rsi_period, lookback):
     return result_df, stats
 
 
+# Page 04 Pattern: Live Indicator Best Practice (CLAUDE.md Rule 7)
+# 1. Fetch max history for accurate RSI (365 days)
+# 2. Display only recent window (7 days chart)
+# 3. Preserve debug output (diagnostics) for troubleshooting
+# This prevents cached-stale-data issues and catches Kite mismatches fast.
+
 st.set_page_config(page_title="Hourly RSI Breakout", layout="wide")
 st.title("🎯 Hourly RSI Breakout — HL/LH Pivot Signals")
 
