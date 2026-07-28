@@ -15,7 +15,7 @@ except ImportError:
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using TA-Lib if available, else Wilder's smoothing."""
+    """Calculate RSI using TA-Lib if available, else standard Wilder's smoothing."""
     if _HAS_TALIB:
         try:
             rsi = talib.RSI(series.values, timeperiod=period)
@@ -23,29 +23,37 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
         except Exception as e:
             import logging
             logging.warning(f"TA-Lib RSI failed ({e}), using fallback")
-            pass
 
-    # Fallback: Wilder's smoothing (manual)
-    delta = series.diff().values
-    gains = np.where(delta > 0, delta, 0)
-    losses = np.where(delta < 0, -delta, 0)
+    # Wilder's RSI calculation (standard method used by TradingView/Kite)
+    close = series.values
+    change = np.diff(close)
 
-    avg_gain = np.zeros_like(delta, dtype=float)
-    avg_loss = np.zeros_like(delta, dtype=float)
+    # Separate gains and losses
+    gains = np.where(change > 0, change, 0.0)
+    losses = np.where(change < 0, -change, 0.0)
 
-    if len(gains) >= period:
-        avg_gain[period - 1] = np.mean(gains[:period])
-        avg_loss[period - 1] = np.mean(losses[:period])
+    # Pad arrays to match original length
+    gains = np.insert(gains, 0, 0)
+    losses = np.insert(losses, 0, 0)
 
-    for i in range(period, len(delta)):
-        avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gains[i]) / period
-        avg_loss[i] = (avg_loss[i - 1] * (period - 1) + losses[i]) / period
+    # Initialize RSI array
+    rsi_values = np.full_like(close, np.nan, dtype=float)
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        rs = avg_gain / np.where(avg_loss != 0, avg_loss, np.nan)
-        rsi = 100 - (100 / (1 + rs))
+    # First RSI value: use simple average
+    if len(close) > period:
+        avg_gain = np.mean(gains[1:period+1])
+        avg_loss = np.mean(losses[1:period+1])
+        rs = avg_gain / avg_loss if avg_loss != 0 else 0
+        rsi_values[period] = 100 - (100 / (1 + rs))
 
-    return pd.Series(rsi, index=series.index)
+    # Subsequent RSI values: use Wilder's smoothing
+    for i in range(period + 1, len(close)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        rs = avg_gain / avg_loss if avg_loss != 0 else 0
+        rsi_values[i] = 100 - (100 / (1 + rs))
+
+    return pd.Series(rsi_values, index=series.index)
 
 
 def detect_hl_lh_pivots(rsi_series: pd.Series, lookback: int = 3) -> pd.DataFrame:
