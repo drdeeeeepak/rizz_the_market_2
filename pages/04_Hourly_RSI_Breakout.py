@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from data.live_fetcher import get_nifty_1h_phase, get_nifty_spot
-from analytics.hourly_rsi_pivot import analyze_hourly_rsi, backtest_rsi_pivots, backtest_stats
+from analytics.hourly_rsi_pivot import analyze_hourly_rsi
 
 
 st.set_page_config(page_title="Hourly RSI Breakout", layout="wide")
@@ -203,90 +203,3 @@ recent_df.index.name = 'Time'
 recent_df = recent_df.rename(columns={'pivot_type': 'Pivot'})
 
 st.dataframe(recent_df, use_container_width=True)
-
-# ─── Backtesting Section ──────────────────────────────────────────────────────
-st.divider()
-st.subheader("🧪 Backtest Strategy")
-
-backtest_col1, backtest_col2 = st.columns([2, 1])
-
-with backtest_col1:
-    st.write("Test the RSI pivot strategy on historical data")
-
-with backtest_col2:
-    run_backtest = st.button("▶ Run Backtest", key="run_backtest", use_container_width=True)
-
-if run_backtest:
-    with st.spinner("Running backtest..."):
-        backtest_df = backtest_rsi_pivots(df_analysis, rsi_period=rsi_period, lookback=lookback)
-
-    if not backtest_df.empty:
-        # Display stats
-        stats = backtest_stats(backtest_df)
-
-        st.success(f"✅ Backtest complete: {stats['total_trades']} trades")
-
-        # Stats columns
-        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-        stat_col1.metric("Total Trades", stats['total_trades'])
-        stat_col2.metric("Win Rate", f"{stats['win_rate']:.1f}%", delta=f"{stats['winning_trades']} wins")
-        stat_col3.metric("Avg P&L", f"{stats['avg_pnl_pct']:.2f}%")
-        stat_col4.metric("Total P&L", f"{stats['total_pnl_pct']:.2f}%")
-
-        # Detailed results
-        st.subheader("Trade Results")
-
-        # Format for display
-        display_df = backtest_df.copy()
-        display_df['signal_time'] = display_df['signal_time'].dt.strftime('%Y-%m-%d %H:%M')
-        display_df['exit_time'] = display_df['exit_time'].dt.strftime('%Y-%m-%d %H:%M')
-        display_df = display_df[[
-            'signal_type', 'signal_time', 'signal_price', 'signal_rsi',
-            'exit_time', 'exit_price', 'pnl_pts', 'pnl_pct', 'bars_held'
-        ]].rename(columns={
-            'signal_type': 'Type',
-            'signal_time': 'Entry Time',
-            'signal_price': 'Entry Price',
-            'signal_rsi': 'Entry RSI',
-            'exit_time': 'Exit Time',
-            'exit_price': 'Exit Price',
-            'pnl_pts': 'P&L (pts)',
-            'pnl_pct': 'P&L (%)',
-            'bars_held': 'Bars'
-        })
-
-        st.dataframe(display_df, use_container_width=True)
-
-        # Download CSV
-        csv_data = display_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Backtest CSV",
-            data=csv_data,
-            file_name=f"rsi_pivot_backtest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-
-        # Chart of P&L
-        st.subheader("P&L Analysis")
-        display_df['cumulative_pnl'] = display_df['P&L (%)'].cumsum()
-
-        fig_pnl = go.Figure()
-        fig_pnl.add_trace(go.Scatter(
-            y=display_df['cumulative_pnl'],
-            mode='lines+markers',
-            name='Cumulative P&L',
-            line=dict(color='#0ea5e9', width=2),
-            fill='tozeroy'
-        ))
-        fig_pnl.update_layout(
-            title="Cumulative P&L Over Time",
-            yaxis_title="Cumulative P&L (%)",
-            xaxis_title="Trade #",
-            height=400,
-            template='plotly_dark',
-            hovermode='x unified'
-        )
-        st.plotly_chart(fig_pnl, use_container_width=True)
-
-    else:
-        st.warning("No trades generated in backtest period")
