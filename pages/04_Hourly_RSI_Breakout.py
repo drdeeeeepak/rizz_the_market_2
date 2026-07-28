@@ -98,11 +98,14 @@ if not isinstance(df_hourly.index, pd.DatetimeIndex):
 df_analysis, signals = analyze_hourly_rsi(df_hourly, rsi_period=rsi_period, lookback=lookback)
 spot = get_nifty_spot()
 
-# RSI Chart
+# Chart: 7 days RSI (calculated from all available data, displayed for last 7 days)
+seven_days_ago = df_analysis.index[-1] - timedelta(days=7)
+df_chart = df_analysis[df_analysis.index >= seven_days_ago]
+
 fig = go.Figure()
 fig.add_trace(go.Scatter(
-    x=df_analysis.index,
-    y=df_analysis['rsi'],
+    x=df_chart.index,
+    y=df_chart['rsi'],
     mode='lines',
     name='RSI',
     line=dict(color='#0ea5e9', width=2)
@@ -112,8 +115,8 @@ fig.add_hline(y=70, line_dash="dash", line_color="rgba(255,0,0,0.3)", annotation
 fig.add_hline(y=30, line_dash="dash", line_color="rgba(0,255,0,0.3)", annotation_text="Oversold (30)")
 fig.add_hline(y=50, line_dash="dot", line_color="rgba(200,200,200,0.3)")
 
-# HL pivots
-hl_pivots = df_analysis[df_analysis['pivot_type'] == 'HL']
+# HL pivots (7 days)
+hl_pivots = df_chart[df_chart['pivot_type'] == 'HL']
 if not hl_pivots.empty:
     fig.add_trace(go.Scatter(
         x=hl_pivots.index,
@@ -123,8 +126,8 @@ if not hl_pivots.empty:
         marker=dict(size=10, color='#10b981', symbol='circle')
     ))
 
-# LH pivots
-lh_pivots = df_analysis[df_analysis['pivot_type'] == 'LH']
+# LH pivots (7 days)
+lh_pivots = df_chart[df_chart['pivot_type'] == 'LH']
 if not lh_pivots.empty:
     fig.add_trace(go.Scatter(
         x=lh_pivots.index,
@@ -134,22 +137,22 @@ if not lh_pivots.empty:
         marker=dict(size=10, color='#ef4444', symbol='diamond')
     ))
 
-# Signals
+# Signals (7 days)
 if signals:
-    buy_sig = [s for s in signals if s['signal'] == 'BUY']
-    sell_sig = [s for s in signals if s['signal'] == 'SELL']
-    
+    buy_sig = [s for s in signals if s['signal'] == 'BUY' and df_analysis.index[s['index']] >= seven_days_ago]
+    sell_sig = [s for s in signals if s['signal'] == 'SELL' and df_analysis.index[s['index']] >= seven_days_ago]
+
     if buy_sig:
-        buy_times = [df_analysis.index[s['index']] for s in buy_sig if s['index'] < len(df_analysis)]
+        buy_times = [df_analysis.index[s['index']] for s in buy_sig]
         buy_rsis = [s['rsi_at_signal'] for s in buy_sig]
         fig.add_trace(go.Scatter(
             x=buy_times, y=buy_rsis, mode='markers+text', name='BUY',
             marker=dict(size=14, color='#00ff00', symbol='triangle-up'),
             text=['BUY']*len(buy_times), textposition='top center'
         ))
-    
+
     if sell_sig:
-        sell_times = [df_analysis.index[s['index']] for s in sell_sig if s['index'] < len(df_analysis)]
+        sell_times = [df_analysis.index[s['index']] for s in sell_sig]
         sell_rsis = [s['rsi_at_signal'] for s in sell_sig]
         fig.add_trace(go.Scatter(
             x=sell_times, y=sell_rsis, mode='markers+text', name='SELL',
@@ -158,7 +161,7 @@ if signals:
         ))
 
 fig.update_layout(
-    title=f"Hourly RSI — Nifty: {spot:.2f}",
+    title=f"Hourly RSI (7 Days) — Nifty: {spot:.2f}",
     xaxis_title="Time",
     yaxis_title="RSI",
     height=600,
@@ -169,8 +172,8 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# Signals table
-st.subheader("📊 Breakout Signals (Latest First)")
+# Signals table (last 5 signals)
+st.subheader("📊 Breakout Signals (Last 5)")
 if signals:
     sig_df = pd.DataFrame(signals)
     sig_df['Time'] = sig_df['index'].apply(lambda i: df_analysis.index[i] if i < len(df_analysis) else None)
@@ -178,6 +181,7 @@ if signals:
         'signal': 'Signal', 'pivot_level': 'Pivot', 'rsi_at_signal': 'RSI'
     })
     sig_df = sig_df.iloc[::-1].reset_index(drop=True)  # Reverse to show latest first
+    sig_df = sig_df.head(5)  # Show only last 5 signals
 
     # Add color styling
     def style_signals(row):
@@ -211,25 +215,6 @@ if current_rsi:
     col3.metric("Current RSI", f"{current_rsi:.2f}")
 else:
     col3.metric("Current RSI", "—")
-
-# Debug info
-with st.expander("🔧 Debug Info", expanded=True):
-    st.write(f"**Data shape:** {df_analysis.shape}")
-    st.write(f"**Latest timestamp:** {df_analysis.index[-1]}")
-    st.write(f"**Latest close:** {df_analysis['close'].iloc[-1]:.2f}")
-    st.write(f"**Latest RSI:** {df_analysis['rsi'].iloc[-1]:.2f}")
-    st.write(f"**Spot price:** {spot:.2f}")
-    st.write(f"**Difference:** {spot - df_analysis['close'].iloc[-1]:.2f} pts")
-    st.write(f"**First timestamp:** {df_analysis.index[0]}")
-    st.write(f"**Index is sorted ascending:** {all(df_analysis.index[i] <= df_analysis.index[i+1] for i in range(len(df_analysis)-1))}")
-
-# Recent data
-st.subheader("📋 Recent Candles (Latest First)")
-recent_df = df_analysis[['open', 'high', 'low', 'close', 'rsi', 'pivot_type']].tail(20).copy()
-recent_df = recent_df.iloc[::-1]  # Reverse to show latest first
-recent_df.index.name = 'Time'
-recent_df = recent_df.rename(columns={'pivot_type': 'Pivot'})
-st.dataframe(recent_df, use_container_width=True)
 
 # Backtest section
 st.divider()
