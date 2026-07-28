@@ -5,55 +5,16 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, List, Dict
 
-try:
-    import talib
-    _HAS_TALIB = True
-except ImportError:
-    _HAS_TALIB = False
-    import logging
-    logging.warning("TA-Lib not installed, using fallback Wilder's smoothing")
-
-
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using TA-Lib if available, else standard Wilder's smoothing."""
-    if _HAS_TALIB:
-        try:
-            rsi = talib.RSI(series.values, timeperiod=period)
-            return pd.Series(rsi, index=series.index)
-        except Exception as e:
-            import logging
-            logging.warning(f"TA-Lib RSI failed ({e}), using fallback")
-
-    # Wilder's RSI calculation (standard method used by TradingView/Kite)
-    close = series.values
-    change = np.diff(close)
-
-    # Separate gains and losses
-    gains = np.where(change > 0, change, 0.0)
-    losses = np.where(change < 0, -change, 0.0)
-
-    # Pad arrays to match original length
-    gains = np.insert(gains, 0, 0)
-    losses = np.insert(losses, 0, 0)
-
-    # Initialize RSI array
-    rsi_values = np.full_like(close, np.nan, dtype=float)
-
-    # First RSI value: use simple average
-    if len(close) > period:
-        avg_gain = np.mean(gains[1:period+1])
-        avg_loss = np.mean(losses[1:period+1])
-        rs = avg_gain / avg_loss if avg_loss != 0 else 0
-        rsi_values[period] = 100 - (100 / (1 + rs))
-
-    # Subsequent RSI values: use Wilder's smoothing
-    for i in range(period + 1, len(close)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        rs = avg_gain / avg_loss if avg_loss != 0 else 0
-        rsi_values[i] = 100 - (100 / (1 + rs))
-
-    return pd.Series(rsi_values, index=series.index)
+    """
+    RSI using Wilder's smoothing (ewm com=period-1).
+    Matches Kite and TradingView exactly — proven method from BaseStrategy.rsi().
+    """
+    delta = series.diff()
+    gain  = delta.clip(lower=0).ewm(com=period - 1, adjust=False).mean()
+    loss  = (-delta).clip(lower=0).ewm(com=period - 1, adjust=False).mean()
+    rs    = gain / loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
 
 
 def detect_hl_lh_pivots(rsi_series: pd.Series, lookback: int = 3) -> pd.DataFrame:
