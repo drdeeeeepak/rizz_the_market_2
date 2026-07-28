@@ -74,7 +74,7 @@ st.title("🎯 Hourly RSI Breakout — HL/LH Pivot Signals")
 
 # Sidebar controls
 st.sidebar.header("Settings")
-days_to_fetch = st.sidebar.slider("Days of hourly data (max available)", 5, 60, 30)
+days_to_fetch = st.sidebar.slider("Days of hourly data (max available)", 5, 120, 60)
 rsi_period = st.sidebar.slider("RSI Period", 7, 21, 14)
 lookback = st.sidebar.slider("Lookback for pivot detection", 2, 5, 3)
 
@@ -171,14 +171,24 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # Signals table
-st.subheader("📊 Breakout Signals")
+st.subheader("📊 Breakout Signals (Latest First)")
 if signals:
     sig_df = pd.DataFrame(signals)
     sig_df['Time'] = sig_df['index'].apply(lambda i: df_analysis.index[i] if i < len(df_analysis) else None)
     sig_df = sig_df[['Time', 'signal', 'pivot_level', 'rsi_at_signal']].rename(columns={
         'signal': 'Signal', 'pivot_level': 'Pivot', 'rsi_at_signal': 'RSI'
     })
-    st.dataframe(sig_df, use_container_width=True)
+    sig_df = sig_df.iloc[::-1].reset_index(drop=True)  # Reverse to show latest first
+
+    # Add color styling
+    def style_signals(row):
+        if row['Signal'] == 'BUY':
+            return ['background-color: #10b981'] * len(row)
+        else:
+            return ['background-color: #ef4444'] * len(row)
+
+    styled_df = sig_df.style.apply(style_signals, axis=1)
+    st.dataframe(styled_df, use_container_width=True)
 else:
     st.info("No signals yet")
 
@@ -204,8 +214,9 @@ else:
     col3.metric("Current RSI", "—")
 
 # Recent data
-st.subheader("📋 Recent Candles")
+st.subheader("📋 Recent Candles (Latest First)")
 recent_df = df_analysis[['open', 'high', 'low', 'close', 'rsi', 'pivot_type']].tail(20).copy()
+recent_df = recent_df.iloc[::-1]  # Reverse to show latest first
 recent_df.index.name = 'Time'
 recent_df = recent_df.rename(columns={'pivot_type': 'Pivot'})
 st.dataframe(recent_df, use_container_width=True)
@@ -230,7 +241,7 @@ if st.button("▶ Run Backtest", use_container_width=True):
         col5.metric("Total P&L", f"{stats['total_pnl_pct']:.2f}%")
         
         # Results table
-        st.subheader("Trade Results")
+        st.subheader("Trade Results (Latest First)")
         display_df = backtest_df.copy()
         display_df['signal_time'] = display_df['signal_time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df['exit_time'] = display_df['exit_time'].dt.strftime('%Y-%m-%d %H:%M')
@@ -242,7 +253,19 @@ if st.button("▶ Run Backtest", use_container_width=True):
             'signal_rsi': 'RSI@Entry', 'exit_time': 'Exit', 'exit_price': 'Exit$',
             'pnl_pts': 'P&L(pts)', 'pnl_pct': 'P&L(%)', 'bars_held': 'Hrs'
         })
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # Reverse to show latest first
+        display_df = display_df.iloc[::-1].reset_index(drop=True)
+
+        # Add color styling
+        def style_backtest(row):
+            if row['Type'] == 'BUY':
+                return ['background-color: #10b981; color: white'] * len(row)
+            else:
+                return ['background-color: #ef4444; color: white'] * len(row)
+
+        styled_backtest = display_df.style.apply(style_backtest, axis=1)
+        st.dataframe(styled_backtest, use_container_width=True)
         
         # CSV download
         csv = backtest_df.to_csv(index=False)

@@ -7,28 +7,20 @@ from typing import Tuple, List, Dict
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using Wilder's smoothing method (matches Kite API)."""
+    """Calculate RSI using standard method (SMA-based, matches most platforms)."""
     delta = series.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
 
-    # Wilder's smoothing: first SMA, then EMA
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
 
-    # After first period, use Wilder's smoothing formula
-    avg_gain_smooth = avg_gain.copy()
-    avg_loss_smooth = avg_loss.copy()
+    # Use EMA for smoothing (standard RSI on most platforms)
+    avg_gain = pd.Series(gain).ewm(span=period, adjust=False).mean().values
+    avg_loss = pd.Series(loss).ewm(span=period, adjust=False).mean().values
 
-    for i in range(period, len(series)):
-        if not pd.isna(avg_gain.iloc[i]):
-            avg_gain_smooth.iloc[i] = (avg_gain_smooth.iloc[i-1] * (period - 1) + gain.iloc[i]) / period
-        if not pd.isna(avg_loss.iloc[i]):
-            avg_loss_smooth.iloc[i] = (avg_loss_smooth.iloc[i-1] * (period - 1) + loss.iloc[i]) / period
-
-    rs = avg_gain_smooth / avg_loss_smooth.replace(0, np.nan)
+    rs = np.divide(avg_gain, avg_loss, where=avg_loss != 0, out=np.zeros_like(avg_gain))
     rsi = 100 - (100 / (1 + rs))
-    return rsi
+
+    return pd.Series(rsi, index=series.index)
 
 
 def detect_hl_lh_pivots(rsi_series: pd.Series, lookback: int = 3) -> pd.DataFrame:
