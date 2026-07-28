@@ -74,7 +74,7 @@ st.title("🎯 Hourly RSI Breakout — HL/LH Pivot Signals")
 
 # Sidebar controls
 st.sidebar.header("Settings")
-days_to_fetch = st.sidebar.slider("Days of hourly data", 5, 30, 10)
+days_to_fetch = st.sidebar.slider("Days of hourly data (needs 60+ for RSI accuracy)", 60, 365, 120)
 rsi_period = st.sidebar.slider("RSI Period", 7, 21, 14)
 lookback = st.sidebar.slider("Lookback for pivot detection", 2, 5, 3)
 
