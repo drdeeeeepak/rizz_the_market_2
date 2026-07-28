@@ -46,54 +46,57 @@ def detect_hl_lh_pivots(rsi_series: pd.Series, lookback: int = 3) -> pd.DataFram
 
         # Check if it's a local minimum (valley)
         if all(rsi[i] <= rsi[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1)) if j != i and not pd.isna(rsi[j])):
-            df.loc[i, 'pivot_type'] = 'Valley'
+            df.iloc[i, df.columns.get_loc('pivot_type')] = 'Valley'
 
         # Check if it's a local maximum (peak)
         if all(rsi[i] >= rsi[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1)) if j != i and not pd.isna(rsi[j])):
-            df.loc[i, 'pivot_type'] = 'Peak'
+            df.iloc[i, df.columns.get_loc('pivot_type')] = 'Peak'
 
     # Now detect HL and LH
-    valleys = df[df['pivot_type'] == 'Valley'].copy()
-    peaks = df[df['pivot_type'] == 'Peak'].copy()
+    valley_indices = np.where(df['pivot_type'] == 'Valley')[0]
+    peak_indices = np.where(df['pivot_type'] == 'Peak')[0]
 
-    if len(valleys) > 1:
-        for idx, i in enumerate(valleys.index[1:], 1):
-            prev_valley_idx = valleys.index[idx - 1]
-            prev_valley_rsi = rsi[prev_valley_idx]
-            curr_valley_rsi = rsi[i]
+    if len(valley_indices) > 1:
+        for idx in range(1, len(valley_indices)):
+            prev_i = valley_indices[idx - 1]
+            curr_i = valley_indices[idx]
+            prev_valley_rsi = rsi[prev_i]
+            curr_valley_rsi = rsi[curr_i]
 
             if curr_valley_rsi > prev_valley_rsi:
-                df.loc[i, 'pivot_type'] = 'HL'
-                df.loc[i, 'pivot_value'] = curr_valley_rsi
+                df.iloc[curr_i, df.columns.get_loc('pivot_type')] = 'HL'
+                df.iloc[curr_i, df.columns.get_loc('pivot_value')] = curr_valley_rsi
 
-    if len(peaks) > 1:
-        for idx, i in enumerate(peaks.index[1:], 1):
-            prev_peak_idx = peaks.index[idx - 1]
-            prev_peak_rsi = rsi[prev_peak_idx]
-            curr_peak_rsi = rsi[i]
+    if len(peak_indices) > 1:
+        for idx in range(1, len(peak_indices)):
+            prev_i = peak_indices[idx - 1]
+            curr_i = peak_indices[idx]
+            prev_peak_rsi = rsi[prev_i]
+            curr_peak_rsi = rsi[curr_i]
 
             if curr_peak_rsi < prev_peak_rsi:
-                df.loc[i, 'pivot_type'] = 'LH'
-                df.loc[i, 'pivot_value'] = curr_peak_rsi
+                df.iloc[curr_i, df.columns.get_loc('pivot_type')] = 'LH'
+                df.iloc[curr_i, df.columns.get_loc('pivot_value')] = curr_peak_rsi
 
     # Mark if pivots are broken
     last_hl = None
     last_lh = None
 
     for i in range(len(df)):
-        if df.loc[i, 'pivot_type'] == 'HL':
-            last_hl = (i, df.loc[i, 'pivot_value'])
-        elif df.loc[i, 'pivot_type'] == 'LH':
-            last_lh = (i, df.loc[i, 'pivot_value'])
+        ptype = df.iloc[i]['pivot_type']
+        if ptype == 'HL':
+            last_hl = (i, df.iloc[i]['pivot_value'])
+        elif ptype == 'LH':
+            last_lh = (i, df.iloc[i]['pivot_value'])
         else:
             # Check if recent pivot is broken
             if last_hl and i > last_hl[0]:
                 if rsi[i] < last_hl[1]:
-                    df.loc[last_hl[0], 'is_broken'] = True
+                    df.iloc[last_hl[0], df.columns.get_loc('is_broken')] = True
 
             if last_lh and i > last_lh[0]:
                 if rsi[i] > last_lh[1]:
-                    df.loc[last_lh[0], 'is_broken'] = True
+                    df.iloc[last_lh[0], df.columns.get_loc('is_broken')] = True
 
     return df
 
