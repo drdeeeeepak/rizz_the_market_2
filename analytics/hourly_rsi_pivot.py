@@ -8,29 +8,33 @@ from typing import Tuple, List, Dict
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """Calculate RSI using Wilder's smoothing (matches Kite/TradingView standard)."""
-    delta = series.diff()
+    delta = series.diff().values
 
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
+    # Separate gains and losses
+    gains = np.where(delta > 0, delta, 0)
+    losses = np.where(delta < 0, -delta, 0)
 
-    # Wilder's smoothing: first avg is simple, then exponential with 1/period alpha
-    avg_gain = gain.rolling(window=period, min_periods=period).mean()
-    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    # Initialize output arrays
+    avg_gain = np.zeros_like(delta, dtype=float)
+    avg_loss = np.zeros_like(delta, dtype=float)
 
-    # Subsequent values use Wilder's formula: (prev * (n-1) + current) / n
-    for i in range(period, len(avg_gain)):
-        if i == period:
-            continue
-        if not pd.isna(avg_gain.iloc[i-1]) and not pd.isna(gain.iloc[i]):
-            avg_gain.iloc[i] = (avg_gain.iloc[i-1] * (period - 1) + gain.iloc[i]) / period
-        if not pd.isna(avg_loss.iloc[i-1]) and not pd.isna(loss.iloc[i]):
-            avg_loss.iloc[i] = (avg_loss.iloc[i-1] * (period - 1) + loss.iloc[i]) / period
+    # First average is simple mean
+    if len(gains) >= period:
+        avg_gain[period - 1] = np.mean(gains[:period])
+        avg_loss[period - 1] = np.mean(losses[:period])
+
+    # Wilder's smoothing: (previous_avg * (period - 1) + current) / period
+    for i in range(period, len(delta)):
+        avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gains[i]) / period
+        avg_loss[i] = (avg_loss[i - 1] * (period - 1) + losses[i]) / period
 
     # Calculate RS and RSI
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rs = avg_gain / np.where(avg_loss != 0, avg_loss, np.nan)
+        rsi = 100 - (100 / (1 + rs))
 
-    return rsi
+    # Convert to Series with proper indexing
+    return pd.Series(rsi, index=series.index)
 
 
 def detect_hl_lh_pivots(rsi_series: pd.Series, lookback: int = 3) -> pd.DataFrame:
