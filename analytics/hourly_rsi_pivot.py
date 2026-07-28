@@ -7,12 +7,26 @@ from typing import Tuple, List, Dict
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI for a given series (typically close prices)."""
+    """Calculate RSI using Wilder's smoothing method (matches Kite API)."""
     delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
 
-    rs = gain / loss.replace(0, np.nan)
+    # Wilder's smoothing: first SMA, then EMA
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+
+    # After first period, use Wilder's smoothing formula
+    avg_gain_smooth = avg_gain.copy()
+    avg_loss_smooth = avg_loss.copy()
+
+    for i in range(period, len(series)):
+        if not pd.isna(avg_gain.iloc[i]):
+            avg_gain_smooth.iloc[i] = (avg_gain_smooth.iloc[i-1] * (period - 1) + gain.iloc[i]) / period
+        if not pd.isna(avg_loss.iloc[i]):
+            avg_loss_smooth.iloc[i] = (avg_loss_smooth.iloc[i-1] * (period - 1) + loss.iloc[i]) / period
+
+    rs = avg_gain_smooth / avg_loss_smooth.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
