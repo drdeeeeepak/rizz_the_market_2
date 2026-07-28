@@ -212,6 +212,17 @@ if current_rsi:
 else:
     col3.metric("Current RSI", "—")
 
+# Debug info
+with st.expander("🔧 Debug Info", expanded=False):
+    st.write(f"**Data shape:** {df_analysis.shape}")
+    st.write(f"**Latest timestamp:** {df_analysis.index[-1]}")
+    st.write(f"**Latest close:** {df_analysis['close'].iloc[-1]:.2f}")
+    st.write(f"**Latest RSI:** {df_analysis['rsi'].iloc[-1]:.2f}")
+    st.write(f"**Spot price:** {spot:.2f}")
+    st.write(f"**Difference:** {spot - df_analysis['close'].iloc[-1]:.2f} pts")
+    st.write(f"**First timestamp:** {df_analysis.index[0]}")
+    st.write(f"**Index is sorted ascending:** {all(df_analysis.index[i] <= df_analysis.index[i+1] for i in range(len(df_analysis)-1))}")
+
 # Recent data
 st.subheader("📋 Recent Candles (Latest First)")
 recent_df = df_analysis[['open', 'high', 'low', 'close', 'rsi', 'pivot_type']].tail(20).copy()
