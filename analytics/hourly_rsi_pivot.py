@@ -5,35 +5,39 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, List, Dict
 
+try:
+    import talib
+    _HAS_TALIB = True
+except ImportError:
+    _HAS_TALIB = False
+
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using Wilder's smoothing (matches Kite/TradingView standard)."""
-    delta = series.diff().values
+    """Calculate RSI using TA-Lib if available, else Wilder's smoothing."""
+    if _HAS_TALIB:
+        rsi = talib.RSI(series.values, timeperiod=period)
+        return pd.Series(rsi, index=series.index)
 
-    # Separate gains and losses
+    # Fallback: Wilder's smoothing (manual)
+    delta = series.diff().values
     gains = np.where(delta > 0, delta, 0)
     losses = np.where(delta < 0, -delta, 0)
 
-    # Initialize output arrays
     avg_gain = np.zeros_like(delta, dtype=float)
     avg_loss = np.zeros_like(delta, dtype=float)
 
-    # First average is simple mean
     if len(gains) >= period:
         avg_gain[period - 1] = np.mean(gains[:period])
         avg_loss[period - 1] = np.mean(losses[:period])
 
-    # Wilder's smoothing: (previous_avg * (period - 1) + current) / period
     for i in range(period, len(delta)):
         avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gains[i]) / period
         avg_loss[i] = (avg_loss[i - 1] * (period - 1) + losses[i]) / period
 
-    # Calculate RS and RSI
     with np.errstate(divide='ignore', invalid='ignore'):
         rs = avg_gain / np.where(avg_loss != 0, avg_loss, np.nan)
         rsi = 100 - (100 / (1 + rs))
 
-    # Convert to Series with proper indexing
     return pd.Series(rsi, index=series.index)
 
 
