@@ -189,14 +189,15 @@ if signals:
     sig_df = sig_df.iloc[::-1].reset_index(drop=True)  # Reverse to show latest first
     sig_df = sig_df.head(5)  # Show only last 5 signals
 
-    # Add color styling
-    def style_signals(row):
-        if row['Signal'] == 'BUY':
-            return ['background-color: #10b981'] * len(row)
-        else:
-            return ['background-color: #ef4444'] * len(row)
+    # Color only the Signal column
+    def style_signal_column(val):
+        if val == 'BUY':
+            return 'background-color: #10b981; color: white; font-weight: bold'
+        elif val == 'SELL':
+            return 'background-color: #ef4444; color: white; font-weight: bold'
+        return ''
 
-    styled_df = sig_df.style.apply(style_signals, axis=1)
+    styled_df = sig_df.style.applymap(style_signal_column, subset=['Signal'])
     st.dataframe(styled_df, use_container_width=True)
 else:
     st.info("No signals yet")
