@@ -7,15 +7,24 @@ from typing import Tuple, List, Dict
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate RSI using simple moving average (standard method)."""
+    """Calculate RSI using Wilder's smoothing (matches Kite/TradingView standard)."""
     delta = series.diff()
 
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
 
-    # Simple moving average
+    # Wilder's smoothing: first avg is simple, then exponential with 1/period alpha
     avg_gain = gain.rolling(window=period, min_periods=period).mean()
     avg_loss = loss.rolling(window=period, min_periods=period).mean()
+
+    # Subsequent values use Wilder's formula: (prev * (n-1) + current) / n
+    for i in range(period, len(avg_gain)):
+        if i == period:
+            continue
+        if not pd.isna(avg_gain.iloc[i-1]) and not pd.isna(gain.iloc[i]):
+            avg_gain.iloc[i] = (avg_gain.iloc[i-1] * (period - 1) + gain.iloc[i]) / period
+        if not pd.isna(avg_loss.iloc[i-1]) and not pd.isna(loss.iloc[i]):
+            avg_loss.iloc[i] = (avg_loss.iloc[i-1] * (period - 1) + loss.iloc[i]) / period
 
     # Calculate RS and RSI
     rs = avg_gain / avg_loss
