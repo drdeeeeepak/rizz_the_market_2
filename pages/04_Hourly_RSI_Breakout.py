@@ -230,13 +230,19 @@ st.info(f"Real data: {len(df_analysis)} hourly candles from Kite API")
 
 # OS/OB Entry Filter - MAIN PAGE (visible on mobile)
 st.subheader("📊 Entry Filters")
-col1, col2 = st.columns(2)
-with col1:
-    os_level = st.slider("Oversold Threshold", 15, 40, 30, step=5, help="Only buy if RSI < this level")
-with col2:
-    ob_level = st.slider("Overbought Threshold", 60, 85, 70, step=5, help="Only sell if RSI > this level")
+use_os_ob_filter = st.checkbox("Apply OS/OB Entry Filter", value=True, help="Require RSI at extremes (OS/OB) to enter")
 
-st.info("Breakout at OS/OB: Enter HL/LH pivot breakouts ONLY when RSI is at extremes")
+if use_os_ob_filter:
+    col1, col2 = st.columns(2)
+    with col1:
+        os_level = st.slider("Oversold Threshold", 15, 40, 30, step=5, help="Only buy if RSI < this level")
+    with col2:
+        ob_level = st.slider("Overbought Threshold", 60, 85, 70, step=5, help="Only sell if RSI > this level")
+    st.info("Breakout at OS/OB: Enter HL/LH pivot breakouts ONLY when RSI is at extremes")
+else:
+    os_level = 0  # Disable filter (allow all)
+    ob_level = 100  # Disable filter (allow all)
+    st.info("Pure Pivot Breakout: Enter HL/LH immediately, no RSI level requirement")
 
 # Backtest configuration
 st.subheader("Confirmation Strategy")
@@ -314,7 +320,11 @@ if st.button("▶ Run Backtest", use_container_width=True):
             filtered_stats = stats
             filtered_df = backtest_df
 
-        filter_summary = [f"OS<{os_level} | OB>{ob_level}"]
+        filter_summary = []
+        if use_os_ob_filter:
+            filter_summary.append(f"OS<{os_level} | OB>{ob_level}")
+        else:
+            filter_summary.append("No OS/OB filter")
         if rsi_wait > 0:
             filter_summary.append(f"RSI Wait ±{rsi_wait}pts")
         if candle_wait > 0:
