@@ -83,19 +83,6 @@ st.sidebar.header("Settings")
 rsi_period = st.sidebar.slider("RSI Period", 7, 21, 14)
 lookback = st.sidebar.slider("Lookback for pivot detection", 2, 5, 3)
 
-# Strategy selection
-st.sidebar.divider()
-st.sidebar.header("Backtest Strategy")
-strategy = st.sidebar.radio(
-    "Select strategy",
-    ["Pivot Breakout (HL/LH)", "RSI Extremes (OS/OB)"],
-    help="Choose entry signal type"
-)
-
-# Always create sliders (Streamlit best practice)
-os_level = st.sidebar.slider("Oversold Level (buy below)", 15, 40, 30, step=5)
-ob_level = st.sidebar.slider("Overbought Level (sell above)", 60, 85, 70, step=5)
-
 # Fetch maximum available data for accurate RSI calculation
 @st.cache_data(ttl=300, show_spinner="Fetching hourly data...")
 def load_hourly_data():
@@ -240,6 +227,20 @@ else:
 st.divider()
 st.subheader("🧪 Backtest")
 st.info(f"Real data: {len(df_analysis)} hourly candles from Kite API")
+
+# Strategy selection - MAIN PAGE (visible on mobile)
+st.subheader("📊 Strategy Selection")
+col_strat, col_os, col_ob = st.columns(3)
+with col_strat:
+    strategy = st.radio(
+        "Select strategy",
+        ["Pivot Breakout (HL/LH)", "RSI Extremes (OS/OB)"],
+        help="Choose entry signal type"
+    )
+with col_os:
+    os_level = st.slider("Oversold Level", 15, 40, 30, step=5, help="Buy below this RSI")
+with col_ob:
+    ob_level = st.slider("Overbought Level", 60, 85, 70, step=5, help="Sell above this RSI")
 
 # Backtest configuration
 st.subheader("Confirmation Strategy")
