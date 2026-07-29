@@ -191,6 +191,80 @@ else:
             else:
                 st.info("⭕ No Bear Call signal right now")
 
+    # ══════════════════════════════════════════════════════════════════════════════
+    # FADE SIGNALS TABLE (Last 5 Signals)
+    # ══════════════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("📊 Fade Signals (Last 5)")
+
+    # Helper function to extract fade signals from 30m data
+    def extract_fade_signals(df_30m, lookback_candles=100):
+        """Extract LONG/SHORT fade signals from 30m RSI data"""
+        if df_30m is None or df_30m.empty or 'rsi' not in df_30m.columns:
+            return []
+
+        signals = []
+        df = df_30m.copy().tail(lookback_candles)  # Look at recent data only
+
+        for i in range(1, len(df)):
+            curr_rsi = df['rsi'].iloc[i]
+            prev_rsi = df['rsi'].iloc[i - 1]
+            curr_time = df.index[i]
+            curr_price = df['close'].iloc[i]
+
+            # LONG: RSI crosses below 25 (from above 25)
+            if curr_rsi < 25 and prev_rsi >= 25:
+                signals.append({
+                    'time': curr_time,
+                    'signal': 'LONG',
+                    'rsi': curr_rsi,
+                    'price': curr_price
+                })
+
+            # SHORT: RSI crosses above 75 (from below 75)
+            elif curr_rsi > 75 and prev_rsi <= 75:
+                signals.append({
+                    'time': curr_time,
+                    'signal': 'SHORT',
+                    'rsi': curr_rsi,
+                    'price': curr_price
+                })
+
+        return signals
+
+    # Extract signals from 30m data
+    if df_hist_30m is not None and not df_hist_30m.empty:
+        fade_signals = extract_fade_signals(df_hist_30m, lookback_candles=100)
+
+        if fade_signals:
+            # Convert to DataFrame and show last 5
+            sig_df = pd.DataFrame(fade_signals)
+            sig_df = sig_df.iloc[::-1].reset_index(drop=True)  # Reverse to show latest first
+            sig_df = sig_df.head(5)
+
+            # Format for display
+            display_sig_df = sig_df.copy()
+            display_sig_df['Time'] = display_sig_df['time'].dt.strftime('%Y-%m-%d %H:%M')
+            display_sig_df['Signal'] = display_sig_df['signal']
+            display_sig_df['RSI@Entry'] = display_sig_df['rsi'].round(2)
+            display_sig_df['Entry$'] = display_sig_df['price'].round(2)
+            display_sig_df = display_sig_df[['Time', 'Signal', 'RSI@Entry', 'Entry$']]
+
+            # Apply styling
+            def style_fade_signal(val):
+                if val == 'LONG':
+                    return 'background-color: #10b981; color: white; font-weight: bold'
+                elif val == 'SHORT':
+                    return 'background-color: #ef4444; color: white; font-weight: bold'
+                return ''
+
+            styled_sig_df = display_sig_df.style.map(style_fade_signal, subset=['Signal'])
+            st.dataframe(styled_sig_df, use_container_width=True)
+        else:
+            st.info("No fade signals in recent history")
+    else:
+        st.warning("30m data unavailable for signal extraction")
+
     # Historical RSI table (last 5 trading days)
     st.divider()
     st.subheader("📋 Historical RSI Status (Last 5 Trading Days)")
