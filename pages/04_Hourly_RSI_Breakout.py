@@ -228,19 +228,15 @@ st.divider()
 st.subheader("🧪 Backtest")
 st.info(f"Real data: {len(df_analysis)} hourly candles from Kite API")
 
-# Strategy selection - MAIN PAGE (visible on mobile)
-st.subheader("📊 Strategy Selection")
-col_strat, col_os, col_ob = st.columns(3)
-with col_strat:
-    strategy = st.radio(
-        "Select strategy",
-        ["Pivot Breakout (HL/LH)", "RSI Extremes (OS/OB)"],
-        help="Choose entry signal type"
-    )
-with col_os:
-    os_level = st.slider("Oversold Level", 15, 40, 30, step=5, help="Buy below this RSI")
-with col_ob:
-    ob_level = st.slider("Overbought Level", 60, 85, 70, step=5, help="Sell above this RSI")
+# OS/OB Entry Filter - MAIN PAGE (visible on mobile)
+st.subheader("📊 Entry Filters")
+col1, col2 = st.columns(2)
+with col1:
+    os_level = st.slider("Oversold Threshold", 15, 40, 30, step=5, help="Only buy if RSI < this level")
+with col2:
+    ob_level = st.slider("Overbought Threshold", 60, 85, 70, step=5, help="Only sell if RSI > this level")
+
+st.info("Breakout at OS/OB: Enter HL/LH pivot breakouts ONLY when RSI is at extremes")
 
 # Backtest configuration
 st.subheader("Confirmation Strategy")
@@ -292,16 +288,15 @@ if st.button("▶ Run Backtest", use_container_width=True):
         if candle_wait > 0:
             filtered_df = filtered_df[filtered_df['bars_held'] > candle_wait]
 
-        # Apply RSI Extremes filter if selected
-        if strategy == "RSI Extremes (OS/OB)":
-            buy_trades = filtered_df[filtered_df['signal_type'] == 'BUY']
-            sell_trades = filtered_df[filtered_df['signal_type'] == 'SELL']
+        # Apply OS/OB entry filter
+        buy_trades = filtered_df[filtered_df['signal_type'] == 'BUY']
+        sell_trades = filtered_df[filtered_df['signal_type'] == 'SELL']
 
-            # Filter by RSI levels
-            buy_filtered = buy_trades[buy_trades['signal_rsi'] < os_level]
-            sell_filtered = sell_trades[sell_trades['signal_rsi'] > ob_level]
+        # Filter by RSI levels - only enter if at extremes
+        buy_filtered = buy_trades[buy_trades['signal_rsi'] < os_level]
+        sell_filtered = sell_trades[sell_trades['signal_rsi'] > ob_level]
 
-            filtered_df = pd.concat([buy_filtered, sell_filtered]).sort_index()
+        filtered_df = pd.concat([buy_filtered, sell_filtered]).sort_index()
 
         # Recalculate stats
         if not filtered_df.empty:
@@ -319,15 +314,13 @@ if st.button("▶ Run Backtest", use_container_width=True):
             filtered_stats = stats
             filtered_df = backtest_df
 
-        filter_summary = []
-        if strategy == "RSI Extremes (OS/OB)":
-            filter_summary.append(f"OS<{os_level} | OB>{ob_level}")
+        filter_summary = [f"OS<{os_level} | OB>{ob_level}"]
         if rsi_wait > 0:
             filter_summary.append(f"RSI Wait ±{rsi_wait}pts")
         if candle_wait > 0:
             filter_summary.append(f"Candle Wait {candle_wait}")
 
-        filter_text = " | ".join(filter_summary) if filter_summary else "Pivot Breakout"
+        filter_text = " | ".join(filter_summary)
         st.success(f"✅ {filtered_stats['total_trades']} trades (was {trades_before}) | {filtered_stats['win_rate']:.1f}% win rate | {filtered_stats['total_pnl_pct']:.2f}% P&L | {filter_text}")
         
         col1, col2, col3, col4, col5 = st.columns(5)
