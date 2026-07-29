@@ -92,12 +92,9 @@ strategy = st.sidebar.radio(
     help="Choose entry signal type"
 )
 
-if strategy == "RSI Extremes (OS/OB)":
-    os_level = st.sidebar.slider("Oversold Level (buy below)", 15, 40, 30, step=5)
-    ob_level = st.sidebar.slider("Overbought Level (sell above)", 60, 85, 70, step=5)
-else:
-    os_level = None
-    ob_level = None
+# Always create sliders (Streamlit best practice)
+os_level = st.sidebar.slider("Oversold Level (buy below)", 15, 40, 30, step=5)
+ob_level = st.sidebar.slider("Overbought Level (sell above)", 60, 85, 70, step=5)
 
 # Fetch maximum available data for accurate RSI calculation
 @st.cache_data(ttl=300, show_spinner="Fetching hourly data...")
