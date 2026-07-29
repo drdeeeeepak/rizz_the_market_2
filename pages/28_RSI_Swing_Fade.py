@@ -191,123 +191,6 @@ else:
             else:
                 st.info("⭕ No Bear Call signal right now")
 
-    # ══════════════════════════════════════════════════════════════════════════════
-    # FADE SIGNALS TABLE (Last 5 Signals)
-    # ══════════════════════════════════════════════════════════════════════════════
-    st.divider()
-    st.subheader("📊 Fade Signals (Last 5)")
-
-    # Helper function to detect divergence
-    def detect_divergence_at_index(df, idx, lookback=20, min_gap=2.0):
-        """Detect bullish/bearish divergence at specific index"""
-        if idx < lookback:
-            return None
-
-        try:
-            rsi = df['rsi'].iloc[idx]
-            price = df['close'].iloc[idx]
-            low = df['low'].iloc[idx]
-            high = df['high'].iloc[idx]
-
-            # Look back 20 candles
-            prior_low_price = df['low'].iloc[max(0, idx - lookback):idx].min()
-            prior_low_rsi = df['rsi'].iloc[max(0, idx - lookback):idx].min()
-            prior_high_price = df['high'].iloc[max(0, idx - lookback):idx].max()
-            prior_high_rsi = df['rsi'].iloc[max(0, idx - lookback):idx].max()
-
-            # Bullish divergence: price makes new low, but RSI higher
-            if low <= prior_low_price and rsi > prior_low_rsi + min_gap:
-                return "▲ Bull"
-
-            # Bearish divergence: price makes new high, but RSI lower
-            if high >= prior_high_price and rsi < prior_high_rsi - min_gap:
-                return "▼ Bear"
-
-            return None
-        except:
-            return None
-
-    # Helper function to extract fade signals from 30m data WITH divergence confirmation
-    def extract_fade_signals(df_30m, lookback_candles=100):
-        """Extract LONG/SHORT fade signals from 30m RSI data
-
-        Rules:
-        - LONG: RSI < 25 AND Bullish Divergence present
-        - SHORT: RSI > 75 AND Bearish Divergence present
-        """
-        if df_30m is None or df_30m.empty or 'rsi' not in df_30m.columns:
-            return []
-
-        signals = []
-        df = df_30m.copy().tail(lookback_candles)  # Look at recent data only
-
-        for i in range(1, len(df)):
-            curr_rsi = df['rsi'].iloc[i]
-            prev_rsi = df['rsi'].iloc[i - 1]
-            curr_time = df.index[i]
-            curr_price = df['close'].iloc[i]
-
-            # LONG: RSI crosses below 25 (from above 25) + Bullish Divergence
-            if curr_rsi < 25 and prev_rsi >= 25:
-                divergence = detect_divergence_at_index(df, i, lookback=20, min_gap=2.0)
-                if divergence == "▲ Bull":
-                    signals.append({
-                        'time': curr_time,
-                        'signal': 'LONG',
-                        'rsi': curr_rsi,
-                        'price': curr_price,
-                        'divergence': divergence
-                    })
-
-            # SHORT: RSI crosses above 75 (from below 75) + Bearish Divergence
-            elif curr_rsi > 75 and prev_rsi <= 75:
-                divergence = detect_divergence_at_index(df, i, lookback=20, min_gap=2.0)
-                if divergence == "▼ Bear":
-                    signals.append({
-                        'time': curr_time,
-                        'signal': 'SHORT',
-                        'rsi': curr_rsi,
-                        'price': curr_price,
-                        'divergence': divergence
-                    })
-
-        return signals
-
-    # Extract signals from 30m data
-    if df_hist_30m is not None and not df_hist_30m.empty:
-        fade_signals = extract_fade_signals(df_hist_30m, lookback_candles=100)
-
-        if fade_signals:
-            # Convert to DataFrame and show last 5
-            sig_df = pd.DataFrame(fade_signals)
-            sig_df = sig_df.iloc[::-1].reset_index(drop=True)  # Reverse to show latest first
-            sig_df = sig_df.head(5)
-
-            # Format for display
-            display_sig_df = sig_df.copy()
-            display_sig_df['Time'] = display_sig_df['time'].dt.strftime('%Y-%m-%d %H:%M')
-            display_sig_df['Signal'] = display_sig_df['signal']
-            display_sig_df['RSI@Entry'] = display_sig_df['rsi'].round(2)
-            display_sig_df['Divergence'] = display_sig_df['divergence']
-            display_sig_df['Entry$'] = display_sig_df['price'].round(2)
-            display_sig_df = display_sig_df[['Time', 'Signal', 'RSI@Entry', 'Divergence', 'Entry$']]
-
-            # Apply styling
-            def style_fade_signal(val):
-                if val == 'LONG':
-                    return 'background-color: #10b981; color: white; font-weight: bold'
-                elif val == 'SHORT':
-                    return 'background-color: #ef4444; color: white; font-weight: bold'
-                return ''
-
-            styled_sig_df = display_sig_df.style.map(style_fade_signal, subset=['Signal'])
-            st.dataframe(styled_sig_df, use_container_width=True)
-            st.caption("📋 Entry Rule: LONG = RSI < 25 + Bullish Divergence | SHORT = RSI > 75 + Bearish Divergence (lookback 20 candles)")
-        else:
-            st.info("No fade signals in recent history (signals require RSI extreme + matching divergence)")
-    else:
-        st.warning("30m data unavailable for signal extraction")
-
     # Historical RSI table (last 5 trading days)
     st.divider()
     st.subheader("📋 Historical RSI Status (Last 5 Trading Days)")
@@ -353,6 +236,119 @@ else:
         df_hist_30m = rfb.compute_rsi(df_hist_30m, 14)
     if df_hist_15m is not None and not df_hist_15m.empty:
         df_hist_15m = rfb.compute_rsi(df_hist_15m, 14)
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Extract & Display Recent Fade Signals (LONG/SHORT with Divergence Confirmation)
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    def _detect_divergence_at_index(df, idx, lookback=20, min_gap=2.0):
+        """
+        Detect if current candle has bullish or bearish divergence.
+        Returns: "Bullish", "Bearish", or ""
+        """
+        if df is None or df.empty or 'rsi' not in df.columns:
+            return ""
+        if idx not in df.index:
+            return ""
+
+        try:
+            pos = df.index.get_loc(idx)
+            if pos < lookback:
+                return ""  # Not enough history
+
+            lookback_window = df.iloc[max(0, pos - lookback):pos]
+            if lookback_window.empty:
+                return ""
+
+            curr_low = df.loc[idx, 'low']
+            curr_high = df.loc[idx, 'high']
+            curr_rsi = df.loc[idx, 'rsi']
+
+            prior_low = lookback_window['low'].min()
+            prior_high = lookback_window['high'].max()
+            prior_low_rsi = lookback_window[lookback_window['low'] == prior_low]['rsi'].iloc[0] if len(lookback_window[lookback_window['low'] == prior_low]) > 0 else None
+            prior_high_rsi = lookback_window[lookback_window['high'] == prior_high]['rsi'].iloc[0] if len(lookback_window[lookback_window['high'] == prior_high]) > 0 else None
+
+            # Bullish divergence: price makes new low but RSI is higher
+            if curr_low <= prior_low and prior_low_rsi is not None and not pd.isna(prior_low_rsi):
+                if curr_rsi > prior_low_rsi + min_gap:
+                    return "Bullish"
+
+            # Bearish divergence: price makes new high but RSI is lower
+            if curr_high >= prior_high and prior_high_rsi is not None and not pd.isna(prior_high_rsi):
+                if curr_rsi < prior_high_rsi - min_gap:
+                    return "Bearish"
+
+            return ""
+        except Exception:
+            return ""
+
+    def _extract_fade_signals(df_30m, lookback_candles=100):
+        """
+        Extract recent LONG/SHORT/ROLL signals from 30m RSI with divergence confirmation.
+        Returns list of (datetime, signal_type, rsi, price) tuples.
+        """
+        if df_30m is None or df_30m.empty or 'rsi' not in df_30m.columns:
+            return []
+
+        signals = []
+        lookback_df = df_30m.tail(lookback_candles).copy()
+
+        for i in range(1, len(lookback_df)):
+            curr_idx = lookback_df.index[i]
+            prev_idx = lookback_df.index[i - 1]
+
+            curr_rsi = lookback_df.loc[curr_idx, 'rsi']
+            prev_rsi = lookback_df.loc[prev_idx, 'rsi']
+            curr_price = lookback_df.loc[curr_idx, 'close']
+
+            if pd.isna(curr_rsi) or pd.isna(prev_rsi):
+                continue
+
+            # LONG signal: 30m RSI crosses into oversold (<25) with bullish divergence
+            if curr_rsi < 25 and prev_rsi >= 25:
+                div = _detect_divergence_at_index(df_30m, curr_idx, lookback=20, min_gap=2.0)
+                if div == "Bullish":
+                    signals.append((curr_idx, "LONG", curr_rsi, curr_price))
+
+            # SHORT signal: 30m RSI crosses into overbought (>75) with bearish divergence
+            elif curr_rsi > 75 and prev_rsi <= 75:
+                div = _detect_divergence_at_index(df_30m, curr_idx, lookback=20, min_gap=2.0)
+                if div == "Bearish":
+                    signals.append((curr_idx, "SHORT", curr_rsi, curr_price))
+
+            # ROLL DOWN: extreme oversold, bounce confirmed by rising RSI
+            elif curr_rsi < 22 and prev_rsi > 25:
+                signals.append((curr_idx, "ROLL DOWN", curr_rsi, curr_price))
+
+            # ROLL UP: extreme overbought, correction confirmed by falling RSI
+            elif curr_rsi > 78 and prev_rsi < 75:
+                signals.append((curr_idx, "ROLL UP", curr_rsi, curr_price))
+
+        return signals
+
+    # Extract signals from historical 30m data
+    recent_signals = _extract_fade_signals(df_hist_30m, lookback_candles=100) if df_hist_30m is not None else []
+
+    # Display recent signals if any found
+    if recent_signals:
+        st.divider()
+        st.subheader("📊 Recent Fade Signals (Last 3)")
+        st.caption("LONG/SHORT signals with divergence confirmation | ROLL signals for position adjustments")
+
+        # Show only last 3 signals
+        for idx, (ts, sig_type, rsi, price) in enumerate(sorted(recent_signals, reverse=True)[:3]):
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                sig_emoji = "🟢" if "LONG" in sig_type else ("🔴" if "SHORT" in sig_type else "🔄")
+                st.metric(f"{sig_emoji} {sig_type}", ts.strftime("%H:%M / %b %d"))
+            with col2:
+                st.metric("30m RSI", f"{rsi:.1f}")
+            with col3:
+                st.metric("Price @Entry", f"{price:.0f}")
+            with col4:
+                status_text = "Waiting for exit" if idx == 0 else "Closed"
+                st.metric("Status", status_text)
 
     if ((df_hist_60m is not None and not df_hist_60m.empty) or
         (df_hist_30m is not None and not df_hist_30m.empty) or
