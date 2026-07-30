@@ -180,7 +180,8 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
 
 def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
                                     div_lookback: int = 20,
-                                    div_min_gap: float = 2.0) -> pd.DataFrame:
+                                    div_min_gap: float = 2.0,
+                                    stop_pts: float = 0.0) -> pd.DataFrame:
     """
     Pure divergence — divergence is the ONLY entry rule. No RSI overbought/oversold
     gate, no stop, no target, no time stop. This is deliberately different from
@@ -193,12 +194,23 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
       SHORT — price makes a fresh div_lookback-bar high, RSI does NOT confirm it
               (rsi < prior rsi high - div_min_gap).
 
-    Exit — the OPPOSITE divergence, and nothing else. No midline exit, no stop, no
-    target, no time stop: a trade rides on until the market prints a divergence the
-    other way, at which point it closes at that bar's close and the new signal opens
-    the opposite trade. Always in the market once the first signal fires. Same-side
-    divergences while a trade is open are ignored (already in it). A trade still open
-    when the data ends is dropped from the log — it has no exit yet.
+    Exit — the OPPOSITE divergence, and nothing else when stop_pts == 0. No midline
+    exit, no target, no time stop: a trade rides on until the market prints a
+    divergence the other way, at which point it closes at that bar's close and the
+    new signal opens the opposite trade. Always in the market once the first signal
+    fires. Same-side divergences while a trade is open are ignored (already in it).
+    A trade still open when the data ends is dropped from the log — it has no exit yet.
+
+    stop_pts > 0 adds a fixed points stop measured from the entry price, checked
+    against each bar's LOW (long) / HIGH (short) — so it uses the real intrabar
+    excursion rather than the close, and a trade that dips through the stop before
+    recovering is correctly recorded as stopped out. If a bar both trips the stop and
+    prints the opposing divergence, the stop is taken first (intrabar order is
+    unknowable from OHLC, so assume the adverse fill — same convention as
+    simulate_fade_trades). Being stopped out goes FLAT rather than reversing: the next
+    entry is then the next divergence of either side, which is why a stop changes the
+    trade sequence itself and cannot be evaluated by capping losses in a finished
+    trade log.
     """
     d = compute_rsi(df, rsi_period)
     rsi_s = d["rsi"]
@@ -212,6 +224,8 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
     n = len(d)
     idx = d.index
     close = d["close"].to_numpy()
+    high = d["high"].to_numpy()
+    low = d["low"].to_numpy()
     rsi = rsi_s.to_numpy()
     long_sig = bullish.to_numpy()
     short_sig = bearish.to_numpy()
@@ -231,29 +245,66 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
             continue
 
         entry_price, entry_rsi = close[i], rsi[i]
-        exit_j = None
+        stop_price = ((entry_price - stop_pts) if side == "LONG" else (entry_price + stop_pts)) \
+            if stop_pts > 0 else None
+
+        exit_j = exit_price = exit_reason = None
+        worst = 0.0   # maximum adverse excursion, in points, while the trade was open
         for j in range(i + 1, n):
+            adverse = (entry_price - low[j]) if side == "LONG" else (high[j] - entry_price)
+            worst = max(worst, float(adverse))
+            if stop_price is not None:
+                hit = (low[j] <= stop_price) if side == "LONG" else (high[j] >= stop_price)
+                if hit:   # stop wins a tie with the opposing divergence on the same bar
+                    exit_j, exit_price, exit_reason = j, stop_price, "STOP"
+                    break
             # only a divergence the OTHER way ends the trade
             if (side == "LONG" and short_sig[j]) or (side == "SHORT" and long_sig[j]):
-                exit_j = j
+                exit_j, exit_price, exit_reason = j, close[j], "OPPOSITE_DIV"
                 break
         if exit_j is None:   # still open at the end of the data — not a completed trade
             break
 
-        exit_price = close[exit_j]
         pnl_pts = (exit_price - entry_price) if side == "LONG" else (entry_price - exit_price)
         trades.append(dict(
             entry_time=idx[i], side=side, entry_price=round(float(entry_price), 2),
             entry_rsi=round(float(entry_rsi), 1), exit_time=idx[exit_j],
             exit_price=round(float(exit_price), 2), exit_rsi=round(float(rsi[exit_j]), 1),
-            exit_reason="OPPOSITE_DIV", bars_held=exit_j - i,
+            exit_reason=exit_reason, bars_held=exit_j - i,
+            mae_pts=round(worst, 2),
             pnl_pts=round(float(pnl_pts), 2),
             pnl_pct=round(float(pnl_pts / entry_price * 100), 3),
         ))
         prev_side = side
-        i = exit_j   # the opposing divergence that closed this trade opens the next one
+        # an opposing divergence rolls straight into the reverse trade; a stop goes flat
+        i = exit_j if exit_reason == "OPPOSITE_DIV" else exit_j + 1
 
     return pd.DataFrame(trades)
+
+
+def stop_sweep(df: pd.DataFrame, stop_pts_list, rsi_period: int = 14,
+               div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
+    """Re-run the pure-divergence simulation once per candidate stop and tabulate it.
+
+    Each row is a full re-simulation on the real candles, NOT the finished trade log
+    with its losses clipped. That distinction is the whole point: a stop also knocks
+    out winners that dipped through it before recovering, and it changes every entry
+    that follows, so clipping a trade log always flatters a tight stop and will report
+    the tightest value tested as 'best'.
+    """
+    rows = []
+    for s in stop_pts_list:
+        tr = simulate_pure_divergence_trades(df, rsi_period, div_lookback, div_min_gap, stop_pts=s)
+        stats = trade_stats(tr)
+        stats["stop_pts"] = float(s) if s and s > 0 else np.nan
+        stats["stopped_out"] = int((tr["exit_reason"] == "STOP").sum()) if not tr.empty else 0
+        stats["stopped_pct"] = round(stats["stopped_out"] / len(tr) * 100, 1) if len(tr) else 0.0
+        rows.append(stats)
+    out = pd.DataFrame(rows)
+    cols = ["stop_pts", "n_trades", "stopped_out", "stopped_pct", "win_rate",
+            "expectancy_pts", "profit_factor", "total_pnl_pts", "max_drawdown_pts",
+            "avg_win_pts", "avg_loss_pts", "avg_bars_held"]
+    return out[[c for c in cols if c in out.columns]]
 
 
 def trade_stats(trades: pd.DataFrame) -> dict:

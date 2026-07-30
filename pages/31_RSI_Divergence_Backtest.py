@@ -204,6 +204,74 @@ with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
             st.metric("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts")
 
         # ══════════════════════════════════════════════════════════════════════════════
+        # STOP-LOSS SWEEP — the optimum SL, measured on real candles
+        # ══════════════════════════════════════════════════════════════════════════════
+
+        st.divider()
+        st.subheader("Optimum Stop Loss")
+        st.caption(
+            "Each row is a COMPLETE re-run of the backtest with that stop in place, "
+            "checked against every bar's intrabar low (long) / high (short) — not the "
+            "finished trade log with its losses clipped. A stop also knocks out winners "
+            "that dipped through it before recovering, and it changes every entry that "
+            "follows, so clipping a trade log always flatters a tight stop."
+        )
+
+        STOPS = [50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 600, 800, 0]
+
+        def _show_sweep(df_tf, label, key):
+            sweep = rfb.stop_sweep(df_tf, STOPS, rsi_period=14,
+                                   div_lookback=div_lookback, div_min_gap=div_min_gap)
+            disp = sweep.copy()
+            disp["stop_pts"] = disp["stop_pts"].apply(
+                lambda v: "no stop" if pd.isna(v) else f"{v:.0f}")
+            st.markdown(f"**{label}**")
+            st.dataframe(
+                disp.style.format({
+                    "win_rate": "{:.1f}%", "stopped_pct": "{:.1f}%",
+                    "expectancy_pts": "{:+.1f}", "profit_factor": "{:.2f}",
+                    "total_pnl_pts": "{:+.0f}", "max_drawdown_pts": "{:.0f}",
+                    "avg_win_pts": "{:+.0f}", "avg_loss_pts": "{:+.0f}",
+                    "avg_bars_held": "{:.0f}",
+                }).background_gradient(subset=["expectancy_pts"], cmap="RdYlGn"),
+                use_container_width=True, hide_index=True,
+            )
+            valid = sweep.dropna(subset=["expectancy_pts"])
+            if not valid.empty:
+                best = valid.loc[valid["expectancy_pts"].idxmax()]
+                base = sweep[sweep["stop_pts"].isna()]
+                base_exp = float(base["expectancy_pts"].iloc[0]) if not base.empty else float("nan")
+                tag = "no stop" if pd.isna(best["stop_pts"]) else f"{best['stop_pts']:.0f} pts"
+                st.success(
+                    f"Best expectancy on {label}: **{tag}** → "
+                    f"{best['expectancy_pts']:+.1f} pts/trade over {int(best['n_trades'])} trades "
+                    f"(PF {best['profit_factor']:.2f}, total {best['total_pnl_pts']:+.0f} pts, "
+                    f"max DD {best['max_drawdown_pts']:.0f}). "
+                    f"No stop = {base_exp:+.1f} pts/trade."
+                )
+            return sweep
+
+        _show_sweep(df_hist_30m, "30m", "sw30")
+        _show_sweep(df_hist_60m, "60m", "sw60")
+
+        # How far trades actually go against you — the constraint any stop has to clear
+        if not combined_trades.empty and "mae_pts" in combined_trades.columns:
+            w = combined_trades[combined_trades["pnl_pts"] > 0]["mae_pts"]
+            l = combined_trades[combined_trades["pnl_pts"] <= 0]["mae_pts"]
+            if not w.empty:
+                st.markdown(
+                    "**How far trades go against you before resolving (MAE, points)** — "
+                    "a stop tighter than the winners' MAE turns those winners into losses:"
+                )
+                mae_tbl = pd.DataFrame({
+                    "median": [w.median(), l.median() if not l.empty else float("nan")],
+                    "75th pct": [w.quantile(.75), l.quantile(.75) if not l.empty else float("nan")],
+                    "90th pct": [w.quantile(.90), l.quantile(.90) if not l.empty else float("nan")],
+                    "max": [w.max(), l.max() if not l.empty else float("nan")],
+                }, index=["winning trades", "losing trades"]).round(0)
+                st.dataframe(mae_tbl, use_container_width=True)
+
+        # ══════════════════════════════════════════════════════════════════════════════
         # RECENT TRADES TABLE
         # ══════════════════════════════════════════════════════════════════════════════
 
@@ -215,7 +283,8 @@ with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
             display_df['entry_time'] = pd.to_datetime(display_df['entry_time']).dt.strftime('%Y-%m-%d %H:%M')
             display_df['exit_time'] = pd.to_datetime(display_df['exit_time']).dt.strftime('%Y-%m-%d %H:%M')
 
-            cols_to_show = ['entry_time', 'side', 'entry_price', 'entry_rsi', 'exit_price', 'pnl_pts', 'pnl_pct', 'bars_held', 'exit_reason']
+            cols_to_show = ['entry_time', 'side', 'entry_price', 'entry_rsi', 'exit_price',
+                            'pnl_pts', 'pnl_pct', 'mae_pts', 'bars_held', 'exit_reason']
             st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
         else:
             st.info("No trades generated")
