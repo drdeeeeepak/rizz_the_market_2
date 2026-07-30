@@ -235,6 +235,77 @@ def get_nifty_1h_phase(days: int = DOW_PHASE_DAYS) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ─── Nifty 1H OHLCV — extended history via chunked fetch ─────────────────────
+
+@st.cache_data(ttl=TTL_1H, show_spinner=False)
+def _get_nifty_1h_extended_cached(days: int) -> pd.DataFrame:
+    """
+    Fetch up to `days` CALENDAR days of 60-minute candles (unlike
+    get_nifty_1h_phase, `days` here is calendar days, matching get_nifty_daily's
+    convention — no trading-day trim at the end). Kite hard-caps a single
+    60minute historical_data call at ~400 calendar days, so this walks
+    backward from today in chunks, concatenating results. Stops (keeps
+    whatever was fetched so far) the first time a chunk comes back empty or
+    errors — that's Kite signalling there's no more intraday history further
+    back, so the actual span returned may be LESS than `days` requested; this
+    is "the most history Kite will actually give you", not a fixed window.
+    """
+    kite = _get_kite_safe()
+    to_date = date.today()
+    chunk_days = 390   # safety margin under Kite's ~400-day cap for 60minute
+    frames = []
+    cursor_to = to_date
+    remaining = days
+    while remaining > 0:
+        span = min(chunk_days, remaining)
+        cursor_from = cursor_to - timedelta(days=span)
+        data = None
+        for attempt in range(2):
+            try:
+                data = kite.historical_data(
+                    NIFTY_INDEX_TOKEN,
+                    cursor_from.strftime("%Y-%m-%d"),
+                    cursor_to.strftime("%Y-%m-%d"),
+                    "60minute",
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if attempt == 0 and ("too many" in msg or "rate" in msg or "throttle" in msg):
+                    time.sleep(1.0)
+                    continue
+                log.info("1H extended chunk %s→%s stopped: %s", cursor_from, cursor_to, e)
+                data = None
+                break
+        if not data:
+            break   # no more history available further back — stop walking
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        frames.append(df[["open", "high", "low", "close", "volume"]])
+        cursor_to = cursor_from - timedelta(days=1)
+        remaining -= span
+        time.sleep(0.34)   # stay under Kite's ~3 requests/sec limit
+    if not frames:
+        raise RuntimeError("1H extended fetch returned no data")
+    out = pd.concat(frames).sort_index()
+    return out[~out.index.duplicated(keep="first")]
+
+
+def get_nifty_1h_extended(days: int = 1460) -> pd.DataFrame:
+    """
+    Up to `days` CALENDAR days (default 1460 = 4 years) of 60-minute Nifty
+    candles via chunked historical_data calls — for backtests that want the
+    maximum intraday history Kite will serve, not just one call's worth.
+    Public wrapper — returns empty DataFrame on failure, never raises.
+    """
+    try:
+        return _get_nifty_1h_extended_cached(days)
+    except Exception as e:
+        log.error("1H extended fetch failed: %s", e)
+        return pd.DataFrame()
+
+
 # ─── Auth helper — session first, token file fallback ────────────────────────
 
 def _get_kite_safe():

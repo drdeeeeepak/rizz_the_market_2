@@ -19,7 +19,7 @@ import importlib
 import pandas as pd
 import streamlit as st
 
-from data.live_fetcher import get_nifty_daily, get_nifty_1h_phase
+from data.live_fetcher import get_nifty_daily, get_nifty_1h_extended
 from analytics import strike_survival_backtest as ssb
 
 try:
@@ -64,7 +64,8 @@ with st.expander("⚠️ How events are reconstructed, and what this can't tell 
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    hourly_days = st.slider("Hourly lookback (trading days)", 90, 500, 365, 5, key="p33_hourly_days")
+    hourly_days = st.slider("Hourly lookback (calendar days, up to ~4 years)", 180, 1460, 1460, 30,
+                            key="p33_hourly_days")
 with c2:
     lookback_days = st.slider("Lead-time search window (trading days before event)", 1, 15, 5, 1,
                               key="p33_lookback_days")
@@ -75,13 +76,17 @@ with c3:
 st.caption(
     f"A signal counts as a 'hit' if it fired in the matching direction within "
     f"{lookback_days} trading days before an event. A signal counts as a 'false positive' if "
-    f"no matching-direction event of that severity followed within {lookahead_days} trading days."
+    f"no matching-direction event of that severity followed within {lookahead_days} trading days. "
+    f"Hourly history is fetched in chunks (Kite caps a single 60-minute call at ~400 days) — at "
+    f"1460 days that's several sequential API calls, so this can take a minute. If Kite doesn't "
+    f"actually retain 4 years of 60-minute candles, you'll get however much it has, not an error."
 )
 
 if st.button("▶ Run joint lead-time backtest", type="primary", key="p33_run"):
-    with st.spinner("Fetching daily + hourly Nifty history and running the joint backtest…"):
+    with st.spinner(f"Fetching up to {hourly_days} days of daily + hourly Nifty history "
+                    f"(chunked for hourly) and running the joint backtest…"):
         daily = get_nifty_daily(days=hourly_days + 60)
-        hourly = get_nifty_1h_phase(days=hourly_days)
+        hourly = get_nifty_1h_extended(days=hourly_days)
         if daily is None or daily.empty or hourly is None or hourly.empty:
             st.session_state.p33_result = None
             st.session_state.p33_error = True
