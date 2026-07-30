@@ -77,27 +77,63 @@ df_30m_hist = rfb.compute_rsi(df_30m_raw, RSI_PERIOD) if df_30m_raw is not None 
 df_15m_hist = rfb.compute_rsi(df_15m_raw, RSI_PERIOD) if df_15m_raw is not None else None
 
 
-def _rsi_chart(df_rsi, title, marker_times, marker_rsi, marker_labels, marker_colors, days_shown=10):
-    cutoff = df_rsi.index[-1] - pd.Timedelta(days=days_shown)
-    chart_df = df_rsi[df_rsi.index >= cutoff]
+def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
+                    marker_times=None, marker_rsi=None, marker_labels=None, marker_colors=None,
+                    min_candles=40):
+    """
+    Same look as the 'RSI Trend (last 5 trading days)' mini-chart: candle-number
+    x-axis, date-boundary vlines, OB/OS + extreme reference lines. Window widens
+    beyond 5 days automatically when needed so all 5 signal markers stay on-chart —
+    Divergence/Breakout signals fire roughly weekly, far less often than the
+    Fade zone-cross, so a fixed 5-day window would cut most of them off.
+    """
+    marker_times = marker_times or []
+    n_candles = min_candles
+    if marker_times:
+        earliest_marker = min(marker_times)
+        n_since_marker = (df_rsi.index >= earliest_marker).sum() + 3   # +3 candles padding
+        n_candles = max(min_candles, n_since_marker)
+    n_candles = min(n_candles, len(df_rsi))
+
+    chart_slice = df_rsi.tail(n_candles)
+    chart_data = chart_slice.reset_index(drop=True)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=chart_df.index, y=chart_df["rsi"], mode="lines",
-        line=dict(color="#0ea5e9", width=2), name="RSI(14)"
+        x=list(range(len(chart_data))), y=chart_data["rsi"],
+        mode="lines+markers", line=dict(color=line_color, width=2), name="RSI(14)"
     ))
-    fig.add_hline(y=70, line_dash="dash", line_color="rgba(239,68,68,0.5)")
-    fig.add_hline(y=30, line_dash="dash", line_color="rgba(16,185,129,0.5)")
-    fig.add_hline(y=50, line_dash="dot", line_color="rgba(150,150,150,0.4)")
+
+    current_date = None
+    for i, (idx, row) in enumerate(chart_slice.iterrows()):
+        row_date = idx.date()
+        if current_date is None:
+            current_date = row_date
+        elif row_date != current_date:
+            fig.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
+                         annotation_text=row_date.strftime("%b %d"), annotation_position="top")
+            current_date = row_date
+
+    fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
+    fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
+    fig.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
+    fig.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
+
     if marker_times:
-        fig.add_trace(go.Scatter(
-            x=marker_times, y=marker_rsi, mode="markers+text", name="Signal",
-            marker=dict(size=12, color=marker_colors,
-                       symbol=["triangle-up" if c == "#10b981" else "triangle-down" for c in marker_colors]),
-            text=marker_labels, textposition="top center"
-        ))
-    fig.update_layout(title=title, height=320, template="plotly_dark",
-                      yaxis=dict(range=[0, 100], title="RSI"), xaxis_title="",
-                      margin=dict(l=10, r=10, t=40, b=10))
+        pos_of = {ts: i for i, ts in enumerate(chart_slice.index)}
+        xs, ys, texts, colors = [], [], [], []
+        for t, r, lbl, c in zip(marker_times, marker_rsi, marker_labels, marker_colors):
+            if t in pos_of:
+                xs.append(pos_of[t]); ys.append(r); texts.append(lbl); colors.append(c)
+        if xs:
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, mode="markers+text", name="Signal",
+                marker=dict(size=13, color=colors,
+                           symbol=["triangle-up" if c == "#10b981" else "triangle-down" for c in colors]),
+                text=texts, textposition="top center"
+            ))
+
+    fig.update_layout(title=title, height=320, margin=dict(l=10, r=10, t=40, b=10),
+                      xaxis_title="Candle #", yaxis_title="RSI")
     return fig
 
 
@@ -113,6 +149,14 @@ def _last5_table(rows):
                 for col in row.index]
 
     st.dataframe(df.style.apply(_style, axis=1), use_container_width=True, hide_index=True)
+
+
+def _numbered(sig_df):
+    """Chronological order (oldest first) with a '#' 1..N — same numbers the
+    chart markers use, so a table row and its chart marker can be matched up."""
+    chrono = sig_df.tail(5).copy()
+    chrono["#"] = range(1, len(chrono) + 1)
+    return chrono
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -258,22 +302,23 @@ st.divider()
 st.header("1. RSI Fade — 75/25 Zone Cross")
 st.caption("Contrarian: RSI crossing INTO overbought (≥75) → SHORT. RSI crossing INTO oversold (≤25) → LONG.")
 
-fade_last5 = fade_sig.tail(5).iloc[::-1]
+fade_last5 = _numbered(fade_sig)
 fade_rows = [
-    {"Time": ts.strftime("%d %b %H:%M"), "Side": r["side"], "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
+    {"#": int(r["#"]), "Time": ts.strftime("%d %b %H:%M"), "Side": r["side"],
+     "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
     for ts, r in fade_last5.iterrows()
-]
+][::-1]   # display newest-first; "#" still carries the chronological chart number
 
 col_a, col_b = st.columns([1, 1])
 with col_a:
     st.subheader("Last 5 signals")
     _last5_table(fade_rows)
 with col_b:
-    fig = _rsi_chart(
-        df_fade, "RSI Fade — last 10 days",
-        fade_last5.index.tolist(), fade_last5["rsi"].tolist(),
-        fade_last5["side"].tolist(),
-        ["#ef4444" if s == "SHORT" else "#10b981" for s in fade_last5["side"]],
+    fig = _mini_rsi_chart(
+        df_fade, "RSI Fade — signals 1-5", line_color="#3b82f6",
+        marker_times=fade_last5.index.tolist(), marker_rsi=fade_last5["rsi"].tolist(),
+        marker_labels=[str(n) for n in fade_last5["#"]],
+        marker_colors=["#ef4444" if s == "SHORT" else "#10b981" for s in fade_last5["side"]],
     )
     st.plotly_chart(fig, use_container_width=True, key="chart_fade")
 
@@ -289,22 +334,23 @@ st.caption(
     "→ LONG. Bearish divergence → SHORT. No RSI zone gate."
 )
 
-div_last5 = div_sig.tail(5).iloc[::-1]
+div_last5 = _numbered(div_sig)
 div_rows = [
-    {"Time": ts.strftime("%d %b %H:%M"), "Side": r["side"], "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
+    {"#": int(r["#"]), "Time": ts.strftime("%d %b %H:%M"), "Side": r["side"],
+     "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
     for ts, r in div_last5.iterrows()
-]
+][::-1]
 
 col_a, col_b = st.columns([1, 1])
 with col_a:
     st.subheader("Last 5 signals")
     _last5_table(div_rows)
 with col_b:
-    fig = _rsi_chart(
-        df_div, "Pure Divergence — last 10 days",
-        div_last5.index.tolist(), div_last5["rsi"].tolist(),
-        div_last5["side"].tolist(),
-        ["#10b981" if s == "Bullish" else "#ef4444" for s in div_last5["side"]],
+    fig = _mini_rsi_chart(
+        df_div, "Pure Divergence — signals 1-5", line_color="#f59e0b",
+        marker_times=div_last5.index.tolist(), marker_rsi=div_last5["rsi"].tolist(),
+        marker_labels=[str(n) for n in div_last5["#"]],
+        marker_colors=["#10b981" if s == "Bullish" else "#ef4444" for s in div_last5["side"]],
     )
     st.plotly_chart(fig, use_container_width=True, key="chart_div")
 
@@ -317,29 +363,31 @@ st.divider()
 st.header("3. HL/LH Pivot Breakout")
 st.caption("RSI breaks above the last Lower High (LH) → BUY. RSI breaks below the last Higher Low (HL) → SELL.")
 
-piv_last5 = piv_signals[-5:][::-1] if piv_signals else []
+piv_chrono5 = piv_signals[-5:] if piv_signals else []   # oldest first
 piv_rows = [
     {
+        "#": i + 1,
         "Time": df_piv.index[s["index"]].strftime("%d %b %H:%M"),
         "Side": s["signal"],
         "RSI": f"{s['rsi_at_signal']:.1f}",
         "Pivot": f"{s['pivot_level']:.1f}",
     }
-    for s in piv_last5
-]
+    for i, s in enumerate(piv_chrono5)
+][::-1]
 
 col_a, col_b = st.columns([1, 1])
 with col_a:
     st.subheader("Last 5 signals")
     _last5_table(piv_rows)
 with col_b:
-    marker_times = [df_piv.index[s["index"]] for s in piv_last5]
-    marker_rsi = [s["rsi_at_signal"] for s in piv_last5]
-    marker_side = [s["signal"] for s in piv_last5]
-    fig = _rsi_chart(
-        df_piv, "Pivot Breakout — last 10 days",
-        marker_times, marker_rsi, marker_side,
-        ["#10b981" if s == "BUY" else "#ef4444" for s in marker_side],
+    marker_times = [df_piv.index[s["index"]] for s in piv_chrono5]
+    marker_rsi = [s["rsi_at_signal"] for s in piv_chrono5]
+    marker_side = [s["signal"] for s in piv_chrono5]
+    fig = _mini_rsi_chart(
+        df_piv, "Pivot Breakout — signals 1-5", line_color="#a855f7",
+        marker_times=marker_times, marker_rsi=marker_rsi,
+        marker_labels=[str(i + 1) for i in range(len(piv_chrono5))],
+        marker_colors=["#10b981" if s == "BUY" else "#ef4444" for s in marker_side],
     )
     st.plotly_chart(fig, use_container_width=True, key="chart_pivot")
 
