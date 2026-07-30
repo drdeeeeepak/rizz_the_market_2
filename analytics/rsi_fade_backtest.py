@@ -178,6 +178,84 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
     return pd.DataFrame(trades)
 
 
+def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
+                                    div_lookback: int = 20,
+                                    div_min_gap: float = 2.0) -> pd.DataFrame:
+    """
+    Pure divergence — divergence is the ONLY entry rule. No RSI overbought/oversold
+    gate, no stop, no target, no time stop. This is deliberately different from
+    simulate_fade_trades(require_divergence=True), which fires only when an RSI
+    zone cross AND a divergence land on the same bar (a much rarer coincidence,
+    which is why that path returns a handful of trades).
+
+      LONG  — price makes a fresh div_lookback-bar low, RSI does NOT confirm it
+              (rsi > prior rsi low + div_min_gap).
+      SHORT — price makes a fresh div_lookback-bar high, RSI does NOT confirm it
+              (rsi < prior rsi high - div_min_gap).
+
+    Exit — the OPPOSITE divergence, and nothing else. No midline exit, no stop, no
+    target, no time stop: a trade rides on until the market prints a divergence the
+    other way, at which point it closes at that bar's close and the new signal opens
+    the opposite trade. Always in the market once the first signal fires. Same-side
+    divergences while a trade is open are ignored (already in it). A trade still open
+    when the data ends is dropped from the log — it has no exit yet.
+    """
+    d = compute_rsi(df, rsi_period)
+    rsi_s = d["rsi"]
+    prior_low_price = d["low"].shift(1).rolling(div_lookback).min()
+    prior_low_rsi = rsi_s.shift(1).rolling(div_lookback).min()
+    prior_high_price = d["high"].shift(1).rolling(div_lookback).max()
+    prior_high_rsi = rsi_s.shift(1).rolling(div_lookback).max()
+    bullish = ((d["low"] <= prior_low_price) & (rsi_s > prior_low_rsi + div_min_gap)).fillna(False)
+    bearish = ((d["high"] >= prior_high_price) & (rsi_s < prior_high_rsi - div_min_gap)).fillna(False)
+
+    n = len(d)
+    idx = d.index
+    close = d["close"].to_numpy()
+    rsi = rsi_s.to_numpy()
+    long_sig = bullish.to_numpy()
+    short_sig = bearish.to_numpy()
+
+    trades = []
+    prev_side = None   # side just closed, so an outside bar firing BOTH ways flips rather than repeats
+    i = 0
+    while i < n:
+        if long_sig[i] and short_sig[i]:
+            side = "LONG" if prev_side == "SHORT" else "SHORT" if prev_side == "LONG" else "LONG"
+        elif long_sig[i]:
+            side = "LONG"
+        elif short_sig[i]:
+            side = "SHORT"
+        else:
+            i += 1
+            continue
+
+        entry_price, entry_rsi = close[i], rsi[i]
+        exit_j = None
+        for j in range(i + 1, n):
+            # only a divergence the OTHER way ends the trade
+            if (side == "LONG" and short_sig[j]) or (side == "SHORT" and long_sig[j]):
+                exit_j = j
+                break
+        if exit_j is None:   # still open at the end of the data — not a completed trade
+            break
+
+        exit_price = close[exit_j]
+        pnl_pts = (exit_price - entry_price) if side == "LONG" else (entry_price - exit_price)
+        trades.append(dict(
+            entry_time=idx[i], side=side, entry_price=round(float(entry_price), 2),
+            entry_rsi=round(float(entry_rsi), 1), exit_time=idx[exit_j],
+            exit_price=round(float(exit_price), 2), exit_rsi=round(float(rsi[exit_j]), 1),
+            exit_reason="OPPOSITE_DIV", bars_held=exit_j - i,
+            pnl_pts=round(float(pnl_pts), 2),
+            pnl_pct=round(float(pnl_pts / entry_price * 100), 3),
+        ))
+        prev_side = side
+        i = exit_j   # the opposing divergence that closed this trade opens the next one
+
+    return pd.DataFrame(trades)
+
+
 def trade_stats(trades: pd.DataFrame) -> dict:
     if trades is None or trades.empty:
         return dict(n_trades=0, win_rate=np.nan, expectancy_pts=np.nan, profit_factor=np.nan,
