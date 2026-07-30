@@ -19,13 +19,17 @@ import importlib
 import pandas as pd
 import streamlit as st
 
-from data.live_fetcher import get_nifty_daily, get_nifty_1h_extended
+import data.live_fetcher as _lf
 from analytics import strike_survival_backtest as ssb
 
 try:
+    importlib.reload(_lf)
     importlib.reload(ssb)
 except Exception:
     pass
+
+get_nifty_daily = _lf.get_nifty_daily
+get_nifty_1h_extended = _lf.get_nifty_1h_extended
 
 st.set_page_config(page_title="P33 · RSI Lead-Time Backtest", layout="wide")
 
