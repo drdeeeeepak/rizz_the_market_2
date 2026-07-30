@@ -217,7 +217,10 @@ with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
             "follows, so clipping a trade log always flatters a tight stop."
         )
 
-        STOPS = [50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 600, 800, 0]
+        # Tight values are kept because they show the damage a tight stop does (it
+        # kills winners, not just losers); the 600-1200 range is covered finely because
+        # that is where a stop stops hitting winners at all and only truncates crashes.
+        STOPS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 0]
 
         def _show_sweep(df_tf, label, key):
             sweep = rfb.stop_sweep(df_tf, STOPS, rsi_period=14,
