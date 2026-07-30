@@ -14,6 +14,7 @@
 # threshold scanning — this module does the same replay but keeps per-event
 # dates (that one only keeps cycle-level touched/loss flags).
 
+import numpy as np
 import pandas as pd
 
 from data.rolled_positions import check_roll_event, rolled_strikes
@@ -126,6 +127,220 @@ def all_signals(hourly: pd.DataFrame, rsi_period: int = 14) -> pd.DataFrame:
             _pivot_signals(hourly, rsi_period)]
     out = pd.concat(parts, ignore_index=True)
     return out.sort_values("ts").reset_index(drop=True) if not out.empty else out
+
+
+# ── Conditional strike-distance backtest ─────────────────────────────────────
+#
+# Different question from the lead-time test below. That one asked "does a
+# signal warn me my strike is about to be BREACHED" (answer: no). This asks
+# "when a bearish signal is active, is the UPSIDE contained enough that I can
+# sell the CALL closer than routine (and vice versa for the PUT)?" — a strictly
+# easier bar, because both a fall AND a flat market leave a sold CALL safe.
+#
+# Sign convention: a bearish signal (direction "DOWN") is the one that would
+# let you tighten the CALL; a bullish signal ("UP") the one that tightens the PUT.
+
+_CALL_SIGNAL_DIR = "DOWN"   # bearish signal → upside capped → tighten CALL
+_PUT_SIGNAL_DIR = "UP"      # bullish signal → downside capped → tighten PUT
+
+DEFAULT_DISTANCES = tuple(round(x, 2) for x in
+                          [1.5 + 0.25 * i for i in range(13)])   # 1.50% … 4.50%
+
+
+def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
+                                     horizon_days: int = 5,
+                                     distances=DEFAULT_DISTANCES,
+                                     rsi_period: int = 14,
+                                     routine_call_pct: float = 3.5,
+                                     routine_put_pct: float = 4.0) -> dict:
+    """
+    Entry is triggered BY THE SIGNAL FIRING, not by the calendar: every day on
+    which a tightening signal is generated is an entry day. Anchor = that day's
+    close (the price you'd write the strike from, in the EOD workflow the rest
+    of this app uses); the forward window is the next `horizon_days` sessions.
+    At each candidate strike distance, was the strike breached on a CLOSING
+    basis (same basis as the live roll rule)?
+
+    Compared against every other day as the control, so "signal day" vs
+    "non-signal day" is one construction measured two ways.
+
+    No lookahead: the forward window starts the session AFTER the entry day,
+    and a day counts as a signal day only for signals timestamped that day
+    (hourly bars end 15:15, so they all precede the 15:30 close).
+
+    Returns dict with:
+      breach   — long-form: system, side, condition, distance_pct, n, n_breach, breach_pct
+      excursion— percentiles of the max ADVERSE forward move per system/side/condition
+      equal_risk — for each system/side, how much closer you could sell while
+                   keeping breach risk at or below the all-days routine baseline
+      n_entries, horizon_days
+    """
+    d = daily.copy()
+    d.columns = [c.lower() for c in d.columns]
+    if not isinstance(d.index, pd.DatetimeIndex):
+        d.index = pd.to_datetime(d.index)
+    d = d.sort_index()
+
+    sigs = all_signals(hourly, rsi_period)
+    if sigs.empty or len(d) < horizon_days + 2:
+        return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
+                   equal_risk=pd.DataFrame(), n_entries=0, horizon_days=horizon_days)
+
+    # Days on which each system generated a signal, per direction.
+    sig_days = {}
+    _sd = sigs.assign(day=sigs["ts"].dt.normalize())
+    for (sy, di), g in _sd.groupby(["system", "direction"]):
+        sig_days[(sy, di)] = set(g["day"])
+    for di in (_CALL_SIGNAL_DIR, _PUT_SIGNAL_DIR):
+        per = [sig_days.get((s, di), set()) for s in SYSTEMS]
+        sig_days[("ANY of 3", di)] = set().union(*per) if per else set()
+        counts = {}
+        for st_ in per:
+            for day in st_:
+                counts[day] = counts.get(day, 0) + 1
+        sig_days[("MAJORITY (>=2 of 3)", di)] = {k for k, v in counts.items() if v >= 2}
+
+    hourly_start = pd.Timestamp(hourly.index.min()).normalize()
+    hourly_end = pd.Timestamp(hourly.index.max()).normalize()
+    close = d["close"].to_numpy()
+    idx = d.index
+
+    systems = list(SYSTEMS) + ["ANY of 3", "MAJORITY (>=2 of 3)"]
+    records = []      # one row per (entry day, system, side)
+    for i in range(len(idx)):
+        if i + horizon_days >= len(d):
+            continue
+        entry_day = idx[i].normalize()
+        # only days actually covered by the hourly signal history are comparable
+        if entry_day < hourly_start or entry_day > hourly_end:
+            continue
+        anchor = float(close[i])
+        if anchor <= 0:
+            continue
+        fwd = close[i + 1: i + 1 + horizon_days]
+        if len(fwd) == 0:
+            continue
+        up_move = (fwd.max() - anchor) / anchor * 100     # worst case for a sold CALL
+        down_move = (anchor - fwd.min()) / anchor * 100   # worst case for a sold PUT
+
+        for system in systems:
+            records.append(dict(entry=entry_day, system=system, side="CALL",
+                               adverse_pct=up_move,
+                               signal_on=entry_day in sig_days.get((system, _CALL_SIGNAL_DIR), set())))
+            records.append(dict(entry=entry_day, system=system, side="PUT",
+                               adverse_pct=down_move,
+                               signal_on=entry_day in sig_days.get((system, _PUT_SIGNAL_DIR), set())))
+
+    rec = pd.DataFrame(records)
+    if rec.empty:
+        return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
+                   equal_risk=pd.DataFrame(), n_entries=0, horizon_days=horizon_days)
+
+    n_entries = rec["entry"].nunique()
+
+    def _cond_slices(g):
+        yield "signal ACTIVE", g[g["signal_on"]]
+        yield "no signal", g[~g["signal_on"]]
+        yield "ALL days (baseline)", g
+
+    breach_rows, exc_rows = [], []
+    for (system, side), g in rec.groupby(["system", "side"]):
+        for cond, sub in _cond_slices(g):
+            n = len(sub)
+            if n == 0:
+                continue
+            exc_rows.append(dict(
+                system=system, side=side, condition=cond, n=n,
+                median_pct=round(float(sub["adverse_pct"].median()), 2),
+                p75_pct=round(float(sub["adverse_pct"].quantile(0.75)), 2),
+                p90_pct=round(float(sub["adverse_pct"].quantile(0.90)), 2),
+                p95_pct=round(float(sub["adverse_pct"].quantile(0.95)), 2),
+                max_pct=round(float(sub["adverse_pct"].max()), 2)))
+            for dist in distances:
+                nb = int((sub["adverse_pct"] >= dist).sum())
+                breach_rows.append(dict(
+                    system=system, side=side, condition=cond, distance_pct=dist,
+                    n=n, n_breach=nb, breach_pct=round(nb / n * 100, 1)))
+
+    breach = pd.DataFrame(breach_rows)
+    excursion = pd.DataFrame(exc_rows)
+
+    # ── equal-risk: how much closer can you sell and still be no riskier? ──────
+    # GUARDED. Naively solving "smallest distance where conditional breach <=
+    # baseline breach" reports a fat bogus pickup whenever the baseline breach
+    # count is 0 — it just finds another zero and calls it equal risk. Verified
+    # against random no-edge data, where the unguarded version claimed a
+    # 0.75-1.25% pickup on pure noise. So a pickup is only reported when the
+    # baseline actually breached MIN_BREACH_EVENTS times at the routine
+    # distance; otherwise there is no risk to be "equal" to and the answer is
+    # "not enough breaches to tell", not a number.
+    MIN_BREACH_EVENTS = 10
+    MIN_SIGNAL_DAYS = 20
+    try:
+        from scipy.stats import fisher_exact
+        _have_scipy = True
+    except Exception:
+        _have_scipy = False
+
+    eq_rows = []
+    for (system, side), g in breach.groupby(["system", "side"]):
+        routine = routine_call_pct if side == "CALL" else routine_put_pct
+        nearest = min(sorted(set(g["distance_pct"])), key=lambda x: abs(x - routine))
+        base_r = g[(g["condition"] == "ALL days (baseline)") & (g["distance_pct"] == nearest)]
+        on_r = g[(g["condition"] == "signal ACTIVE") & (g["distance_pct"] == nearest)]
+        off_r = g[(g["condition"] == "no signal") & (g["distance_pct"] == nearest)]
+        if base_r.empty or on_r.empty or off_r.empty:
+            continue
+        base_breach_pct = float(base_r["breach_pct"].iloc[0])
+        base_breach_n = int(base_r["n_breach"].iloc[0])
+        on_n, on_b = int(on_r["n"].iloc[0]), int(on_r["n_breach"].iloc[0])
+        off_n, off_b = int(off_r["n"].iloc[0]), int(off_r["n_breach"].iloc[0])
+
+        # signal-ON vs signal-OFF at the routine distance — independent groups,
+        # so this is the honest test of whether the signal carries information.
+        pval = np.nan
+        if _have_scipy and (on_n and off_n):
+            try:
+                pval = float(fisher_exact([[on_b, on_n - on_b],
+                                          [off_b, off_n - off_b]],
+                                         alternative="less")[1])
+            except Exception:
+                pval = np.nan
+
+        enough = base_breach_n >= MIN_BREACH_EVENTS and on_n >= MIN_SIGNAL_DAYS
+        closest = pickup = np.nan
+        if enough:
+            act = g[g["condition"] == "signal ACTIVE"].sort_values("distance_pct")
+            ok = act[act["breach_pct"] <= base_breach_pct]
+            if not ok.empty:
+                closest = float(ok["distance_pct"].min())
+                pickup = round(routine - closest, 2)
+
+        # Verdict must fold in significance itself. Reporting a bare "pickup"
+        # is how this metric lies: on random no-edge data it happily finds a
+        # 0.75-2.00% pickup (verified), and only the p-value exposes it as
+        # noise. So a pickup is only ever called real when the signal-on vs
+        # signal-off difference clears p<0.05 on its own.
+        if not enough:
+            verdict = f"can't judge (need >={MIN_BREACH_EVENTS} baseline breaches, >={MIN_SIGNAL_DAYS} signal days)"
+        elif pd.isna(pickup) or pickup <= 0:
+            verdict = "no pickup — signal day is no safer"
+        elif pd.isna(pval) or pval >= 0.05:
+            verdict = f"NOT significant (p={pval:.2f}) — treat as noise"
+        else:
+            verdict = f"significant pickup (p={pval:.3f})"
+
+        eq_rows.append(dict(
+            system=system, side=side, routine_pct=routine,
+            n_signal_on=on_n, breach_on_pct=round(on_b / on_n * 100, 1) if on_n else np.nan,
+            n_signal_off=off_n, breach_off_pct=round(off_b / off_n * 100, 1) if off_n else np.nan,
+            baseline_breach_pct=base_breach_pct, baseline_breach_events=base_breach_n,
+            p_value_on_vs_off=round(pval, 4) if pd.notna(pval) else np.nan,
+            closest_equal_risk_pct=closest, pickup_pct=pickup, verdict=verdict))
+    equal_risk = pd.DataFrame(eq_rows)
+
+    return dict(breach=breach, excursion=excursion, equal_risk=equal_risk,
+               n_entries=n_entries, horizon_days=horizon_days)
 
 
 # ── Joint lead-time / hit-rate / false-positive backtest ──────────────────────

@@ -33,12 +33,13 @@ get_nifty_1h_extended = _lf.get_nifty_1h_extended
 
 st.set_page_config(page_title="P33 · RSI Lead-Time Backtest", layout="wide")
 
-st.title("RSI Signal Lead-Time vs Strike Survival")
+st.title("RSI Signals vs Iron Condor Strike Survival")
 st.caption(
-    "Joint backtest: for every reconstructed BOOK LOSS / BOOK PROFIT roll event, did a "
-    "same-direction signal from RSI Fade 75/25, Pure Divergence, or Pivot Breakout fire "
-    "beforehand — and how much lead time did it actually give? Plus each system's "
-    "false-positive rate (fired, but no matching event followed)."
+    "Two different questions about the same 3 hourly-RSI systems (RSI Fade 75/25, Pure "
+    "Divergence, HL/LH Pivot Breakout). **Q1 — strike tightening:** on the day a bearish "
+    "signal fires, is the upside contained enough to sell the CALL closer than routine (and "
+    "vice versa for the PUT)? **Q2 — early warning:** does a signal give useful lead time "
+    "before a roll/breach event? Q1 is the more useful question; Q2 was answered 'no'."
 )
 
 with st.expander("⚠️ How events are reconstructed, and what this can't tell you", expanded=False):
@@ -65,6 +66,93 @@ with st.expander("⚠️ How events are reconstructed, and what this can't tell 
 - One sample period, spot-only, reconstructed rather than logged live — read the numbers as a
   real signal, not a large-sample guarantee.
 """)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Q1 — STRIKE TIGHTENING: sell closer on a signal day?
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.header("Q1 · Can I sell CLOSER on the day a signal fires?")
+st.caption(
+    "The rule under test: **a bearish signal fires today → the upside is capped → sell the "
+    "CALL closer than routine.** Mirror for the PUT on a bullish signal. Entry is triggered "
+    "BY THE SIGNAL — every day a signal is generated is an entry, anchored at that day's "
+    "close, then checked over the next N sessions on a closing basis. Note this is an easier "
+    "bar than Q2: for a sold CALL, the market falling AND going sideways both count as safe."
+)
+
+q1a, q1b, q1c = st.columns(3)
+with q1a:
+    q1_days = st.slider("History (calendar days)", 180, 1460, 1460, 30, key="p33_q1_days")
+with q1b:
+    q1_horizon = st.slider("Hold horizon (trading sessions)", 3, 15, 5, 1, key="p33_q1_horizon")
+with q1c:
+    q1_call = st.number_input("Routine CALL % OTM", 1.0, 8.0, 3.5, 0.25, key="p33_q1_call")
+    q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 4.0, 0.25, key="p33_q1_put")
+
+st.caption(
+    "`breach_on_pct` vs `breach_off_pct` is the whole answer: does a signal day actually "
+    "breach less often than a non-signal day, at your routine distance? The verdict column "
+    "folds in a Fisher exact test — on random no-edge data this metric otherwise reports a "
+    "fat bogus 'pickup', so anything not marked significant is noise."
+)
+
+if st.button("▶ Run Q1 — strike-tightening scan", type="primary", key="p33_q1_run"):
+    with st.spinner("Fetching history and testing signal-day entries…"):
+        _daily = get_nifty_daily(days=q1_days + 60)
+        _hourly = get_nifty_1h_extended(days=q1_days)
+        if _daily is None or _daily.empty or _hourly is None or _hourly.empty:
+            st.session_state.p33_q1 = None
+            st.session_state.p33_q1_err = True
+        else:
+            if not isinstance(_hourly.index, pd.DatetimeIndex):
+                _hourly.index = pd.to_datetime(_hourly.index)
+            st.session_state.p33_q1 = ssb.conditional_strike_distance_scan(
+                _daily, _hourly, horizon_days=q1_horizon,
+                routine_call_pct=float(q1_call), routine_put_pct=float(q1_put))
+            st.session_state.p33_q1_err = False
+
+if st.session_state.get("p33_q1_err"):
+    st.error("Could not fetch Nifty history. Log in via Home → Kite, then retry.")
+
+_q1 = st.session_state.get("p33_q1")
+if _q1 is not None and not _q1["equal_risk"].empty:
+    st.success(f"{_q1['n_entries']} entry days · {_q1['horizon_days']}-session hold")
+
+    st.markdown("**Verdict — is a signal day actually safer at your routine distance?**")
+    for _side in ("CALL", "PUT"):
+        _sig_name = "bearish" if _side == "CALL" else "bullish"
+        st.markdown(f"*{_side} side (tighten on a {_sig_name} signal)*")
+        _er = _q1["equal_risk"]
+        st.dataframe(_er[_er.side == _side], use_container_width=True, hide_index=True)
+
+    st.markdown("**Breach rate by strike distance** — signal day vs non-signal day")
+    _b = _q1["breach"]
+    _sys = st.selectbox("System", sorted(_b["system"].unique()), key="p33_q1_sys")
+    _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key="p33_q1_side")
+    _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
+        index="condition", columns="distance_pct", values="breach_pct")
+    st.dataframe(_piv, use_container_width=True)
+
+    st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
+    st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
+    st.download_button("⬇ Download Q1 breach table CSV", _b.to_csv(index=False).encode("utf-8"),
+                       file_name="q1_strike_tightening_breach.csv", mime="text/csv",
+                       key="p33_dl_q1")
+elif _q1 is not None:
+    st.warning("Not enough data to score — try a longer history window.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Q2 — EARLY WARNING (original lead-time test)
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.header("Q2 · Does a signal warn me before a breach? (answered: no)")
+st.caption(
+    "For every reconstructed BOOK LOSS / BOOK PROFIT roll event, did a same-direction signal "
+    "fire beforehand, and with how much lead time? Headline hit rates here look strong but "
+    "are an artifact — these signals fire so often that one is 'active' on 25-82% of ALL days, "
+    "so hitting an event proves little. Read hit rate against that base rate, not on its own."
+)
 
 c1, c2, c3 = st.columns(3)
 with c1:
