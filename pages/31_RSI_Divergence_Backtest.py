@@ -75,12 +75,27 @@ with col2:
     )
 
 with col3:
-    midline_exit = st.checkbox("Exit on RSI midline (50) cross?", value=True)
+    max_bars = st.slider(
+        "Max bars to hold a trade",
+        min_value=12, max_value=100, value=48, step=12
+    )
 
-# Fixed trade management parameters
-max_bars = 48  # Max bars to hold
-stop_pct = 1.5  # Stop loss %
-target_pct = 2.5  # Profit target %
+col4, col5, col6 = st.columns(3)
+
+with col4:
+    stop_pct = st.slider(
+        "Stop loss %",
+        min_value=0.5, max_value=3.0, value=1.5, step=0.25
+    )
+
+with col5:
+    target_pct = st.slider(
+        "Profit target %",
+        min_value=0.5, max_value=5.0, value=2.5, step=0.25
+    )
+
+with col6:
+    midline_exit = st.checkbox("Exit on RSI midline (50) cross?", value=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RUN BACKTEST
