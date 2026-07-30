@@ -32,10 +32,10 @@ st.caption(
 
 @st.cache_data(ttl=3600)
 def fetch_historical_data():
-    """Fetch 30m and 60m (hourly) OHLC data from Kite"""
+    """Fetch maximum available 30m and 60m (hourly) OHLC data from Kite"""
     try:
-        df_30m = _lf.get_nifty_30m(days=180)
-        df_60m = _lf.get_nifty_1h_phase(days=180)
+        df_30m = _lf.get_nifty_30m(days=365)
+        df_60m = _lf.get_nifty_1h_phase(days=365)
         return df_30m, df_60m
     except Exception as e:
         st.error(f"Failed to fetch data: {str(e)}")
@@ -75,27 +75,12 @@ with col2:
     )
 
 with col3:
-    max_bars = st.slider(
-        "Max bars to hold a trade",
-        min_value=12, max_value=100, value=48, step=12
-    )
-
-col4, col5, col6 = st.columns(3)
-
-with col4:
-    stop_pct = st.slider(
-        "Stop loss %",
-        min_value=0.5, max_value=3.0, value=1.5, step=0.25
-    )
-
-with col5:
-    target_pct = st.slider(
-        "Profit target %",
-        min_value=0.5, max_value=5.0, value=2.5, step=0.25
-    )
-
-with col6:
     midline_exit = st.checkbox("Exit on RSI midline (50) cross?", value=True)
+
+# Fixed trade management parameters
+max_bars = 48  # Max bars to hold
+stop_pct = 1.5  # Stop loss %
+target_pct = 2.5  # Profit target %
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RUN BACKTEST
