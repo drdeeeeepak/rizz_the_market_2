@@ -32,23 +32,10 @@ st.caption(
 
 @st.cache_data(ttl=3600)
 def fetch_historical_data():
-    """Fetch 6+ months of 30m and 60m OHLC data"""
+    """Fetch 30m and 60m (hourly) OHLC data from Kite"""
     try:
         df_30m = _lf.get_nifty_30m(days=180)
-
-        # Resample 30m to 60m
-        if df_30m is not None and not df_30m.empty:
-            df_30m.index = pd.to_datetime(df_30m.index)
-            df_60m = df_30m.resample('60min').agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna()
-        else:
-            df_60m = None
-
+        df_60m = _lf.get_nifty_1h_phase(days=180)
         return df_30m, df_60m
     except Exception as e:
         st.error(f"Failed to fetch data: {str(e)}")
