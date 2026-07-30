@@ -749,3 +749,42 @@ if live win rate drops below 55% (vs 66.7% backtest); if avg win/loss ratio drop
 below 1.5:1; on a VIX spike (+30% vs 14-day avg); or if it's been 90+ days since the
 last calibration.
 """)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RESTORE — bring back a retired page
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+with st.expander("🗄️ Bring back a retired page (04 / 28 / 31)", expanded=False):
+    st.markdown("""
+This page replaced 3 older pages on **30 Jul 2026**. Nothing is deleted forever —
+git keeps every version, so any of them can be restored exactly as they last looked.
+
+Run this from the repo root (adjust the filename for whichever page you want back),
+then commit and push like normal:
+
+```bash
+git show abe6634:pages/04_Hourly_RSI_Breakout.py    > pages/04_Hourly_RSI_Breakout.py
+git show 189b6c0:pages/28_RSI_Swing_Fade.py         > pages/28_RSI_Swing_Fade.py
+git show 189b6c0:pages/31_RSI_Divergence_Backtest.py > pages/31_RSI_Divergence_Backtest.py
+```
+
+**What each one had:**
+- **Page 04 — Hourly RSI Breakout.** HL/LH pivot breakout backtest, plus an OS/OB
+  entry filter (mobile-visible sliders), RSI-wait and candle-wait confirmation
+  filters — none of which made it into this page's findings writeup above.
+- **Page 28 — RSI Swing Fade.** Fully interactive fade backtest: adjustable OB/OS
+  thresholds, stop/target, entry mode, divergence filter, cooldown filter, a
+  threshold scan across 65/35→80/20 on both 30m and hourly, plus the finalized
+  Historical RSI Status table (60m/30m/15m combined) — that table's logic is
+  already ported into this page, further up.
+- **Page 31 — RSI Divergence Backtest.** The pure-divergence backtest with the
+  full stop-loss sweep tool (re-simulates per stop value, not just clipped
+  losses) and CSV export of both the trade log and the sweep table — the
+  numbers it produced are summarized in the findings section above, but the
+  interactive sweep tool itself isn't on this page.
+
+If you're not comfortable running git commands yourself, just tell me "bring back
+page 28" (or whichever) in a session and I'll do it.
+""")
