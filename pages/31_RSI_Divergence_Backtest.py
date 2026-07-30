@@ -60,7 +60,7 @@ if df_hist_60m is None or df_hist_60m.empty:
 st.divider()
 st.subheader("Divergence Configuration")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     div_lookback = st.slider(
@@ -74,28 +74,11 @@ with col2:
         min_value=0.5, max_value=5.0, value=2.0, step=0.5
     )
 
-with col3:
-    max_bars = st.slider(
-        "Max bars to hold a trade",
-        min_value=12, max_value=100, value=48, step=12
-    )
-
-col4, col5, col6 = st.columns(3)
-
-with col4:
-    stop_pct = st.slider(
-        "Stop loss %",
-        min_value=0.5, max_value=3.0, value=1.5, step=0.25
-    )
-
-with col5:
-    target_pct = st.slider(
-        "Profit target %",
-        min_value=0.5, max_value=5.0, value=2.5, step=0.25
-    )
-
-with col6:
-    midline_exit = st.checkbox("Exit on RSI midline (50) cross?", value=True)
+# Internal defaults (not user-configurable)
+max_bars = 48
+stop_pct = 1.5
+target_pct = 2.5
+midline_exit = True
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RUN BACKTEST
