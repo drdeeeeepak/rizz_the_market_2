@@ -1183,3 +1183,158 @@ with st.expander("🧪 Backtest Configuration & Results (Click to expand)", expa
                 traceback.print_exc()
         else:
             st.warning("Not enough historical data to run divergence impact analysis.")
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Divergence-Only Backtest (No Other Parameters)
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    with st.expander("📥 Divergence-Only Backtest Results (Download CSV)", expanded=False):
+        st.markdown("""
+        **Pure divergence backtest — no RSI extreme zones, no thresholds, no other filters.**
+
+        Every divergence that occurred in history → take that trade.
+        - **30m Divergence:** Price makes new low but RSI higher (bullish) OR price makes new high but RSI lower (bearish)
+        - **60m Divergence:** Same logic on hourly timeframe
+        - **Result:** P&L, win rate, all historical trades for analysis
+        """)
+
+        if df_hist_30m is not None and not df_hist_30m.empty:
+            st.info("🔄 Running pure divergence-only backtest on 30m & 60m data...")
+
+            try:
+                # 30m Divergence-only (extreme OB/OS to let only divergence trigger)
+                trades_30m = rfb.simulate_fade_trades(
+                    df_hist_30m, rsi_period=14, ob=100, os_=0,
+                    entry_mode="touch", max_bars=48, stop_pct=1.5, target_pct=2.5,
+                    midline_exit=True, require_divergence=True,
+                    div_lookback=20, div_min_gap=2.0
+                )
+                stats_30m = rfb.trade_stats(trades_30m)
+
+                # 60m Divergence-only
+                trades_60m = pd.DataFrame()
+                stats_60m = dict(n_trades=0, win_rate=0, expectancy_pts=0, total_pnl_pts=0)
+                if df_hist_60m is not None and not df_hist_60m.empty:
+                    trades_60m = rfb.simulate_fade_trades(
+                        df_hist_60m, rsi_period=14, ob=100, os_=0,
+                        entry_mode="touch", max_bars=48, stop_pct=1.5, target_pct=2.5,
+                        midline_exit=True, require_divergence=True,
+                        div_lookback=20, div_min_gap=2.0
+                    )
+                    stats_60m = rfb.trade_stats(trades_60m)
+
+                # Display metrics
+                st.divider()
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.subheader("30m Divergence")
+                    st.metric("Trades", stats_30m['n_trades'])
+                    st.metric("Win Rate", f"{stats_30m['win_rate']:.1f}%")
+                    st.metric("Total P&L", f"{stats_30m['total_pnl_pts']:.0f} pts")
+                    st.metric("Expectancy", f"{stats_30m['expectancy_pts']:.2f} pts/trade")
+
+                with col2:
+                    st.subheader("60m Divergence")
+                    st.metric("Trades", stats_60m['n_trades'])
+                    st.metric("Win Rate", f"{stats_60m['win_rate']:.1f}%")
+                    st.metric("Total P&L", f"{stats_60m['total_pnl_pts']:.0f} pts")
+                    st.metric("Expectancy", f"{stats_60m['expectancy_pts']:.2f} pts/trade")
+
+                with col3:
+                    st.subheader("Combined")
+                    combined_trades = pd.concat([trades_30m, trades_60m], ignore_index=True) if not trades_60m.empty else trades_30m
+                    combined_stats = rfb.trade_stats(combined_trades)
+                    st.metric("Total Trades", combined_stats['n_trades'])
+                    st.metric("Win Rate", f"{combined_stats['win_rate']:.1f}%")
+                    st.metric("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts")
+                    st.metric("Expectancy", f"{combined_stats['expectancy_pts']:.2f} pts/trade")
+
+                # Recent trades
+                st.divider()
+                st.markdown("### Recent Divergence Trades (Last 10):")
+
+                if not trades_30m.empty or not trades_60m.empty:
+                    all_trades = pd.concat([trades_30m, trades_60m], ignore_index=True)
+                    all_trades = all_trades.sort_values('entry_time', ascending=False).head(10)
+
+                    display_cols = ['entry_time', 'side', 'entry_price', 'exit_price', 'pnl_pts', 'pnl_pct', 'bars_held']
+                    st.dataframe(all_trades[display_cols], use_container_width=True, hide_index=True)
+
+                # Download buttons
+                st.divider()
+                st.markdown("### Download Results:")
+
+                col_30m, col_60m, col_combined = st.columns(3)
+
+                with col_30m:
+                    if not trades_30m.empty:
+                        csv_30m = trades_30m.to_csv(index=False)
+                        st.download_button(
+                            "⬇ 30m Trades CSV",
+                            csv_30m.encode('utf-8'),
+                            file_name="divergence_30m_backtest.csv",
+                            mime="text/csv",
+                            key="p28_div_30m_csv"
+                        )
+
+                with col_60m:
+                    if not trades_60m.empty:
+                        csv_60m = trades_60m.to_csv(index=False)
+                        st.download_button(
+                            "⬇ 60m Trades CSV",
+                            csv_60m.encode('utf-8'),
+                            file_name="divergence_60m_backtest.csv",
+                            mime="text/csv",
+                            key="p28_div_60m_csv"
+                        )
+
+                with col_combined:
+                    if not trades_30m.empty or not trades_60m.empty:
+                        combined_trades = pd.concat([trades_30m, trades_60m], ignore_index=True)
+                        csv_combined = combined_trades.to_csv(index=False)
+                        st.download_button(
+                            "⬇ Combined Trades CSV",
+                            csv_combined.encode('utf-8'),
+                            file_name="divergence_combined_backtest.csv",
+                            mime="text/csv",
+                            key="p28_div_combined_csv"
+                        )
+
+                # Summary stats
+                st.divider()
+                st.markdown("### Summary Statistics:")
+
+                summary = f"""
+                **30m Timeframe:**
+                - Trades: {stats_30m['n_trades']} (LONG {stats_30m['long_trades']} | SHORT {stats_30m['short_trades']})
+                - Win Rate: {stats_30m['win_rate']:.1f}%
+                - Profit Factor: {stats_30m['profit_factor']:.2f}
+                - Avg Win: {stats_30m['avg_win_pts']:.2f} pts | Avg Loss: {stats_30m['avg_loss_pts']:.2f} pts
+                - Max Drawdown: {stats_30m['max_drawdown_pts']:.0f} pts
+                - Avg Hold: {stats_30m['avg_bars_held']:.1f} candles (~{stats_30m['avg_bars_held']*30:.0f} min)
+
+                **60m Timeframe:**
+                - Trades: {stats_60m['n_trades']} (LONG {stats_60m['long_trades']} | SHORT {stats_60m['short_trades']})
+                - Win Rate: {stats_60m['win_rate']:.1f}%
+                - Profit Factor: {stats_60m['profit_factor']:.2f}
+                - Avg Win: {stats_60m['avg_win_pts']:.2f} pts | Avg Loss: {stats_60m['avg_loss_pts']:.2f} pts
+                - Max Drawdown: {stats_60m['max_drawdown_pts']:.0f} pts
+                - Avg Hold: {stats_60m['avg_bars_held']:.1f} candles (~{stats_60m['avg_bars_held']*60:.0f} min)
+
+                **Combined (30m + 60m):**
+                - Total Trades: {combined_stats['n_trades']}
+                - Win Rate: {combined_stats['win_rate']:.1f}%
+                - Profit Factor: {combined_stats['profit_factor']:.2f}
+                - Total P&L: {combined_stats['total_pnl_pts']:.0f} pts
+                - Expectancy: {combined_stats['expectancy_pts']:.2f} pts/trade
+                - Max Drawdown: {combined_stats['max_drawdown_pts']:.0f} pts
+                """
+                st.markdown(summary)
+
+            except Exception as e:
+                st.error(f"Backtest error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            st.warning("Not enough historical data to run divergence-only backtest.")
