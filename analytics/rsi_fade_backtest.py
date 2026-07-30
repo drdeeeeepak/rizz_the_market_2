@@ -178,6 +178,31 @@ def simulate_fade_trades(df: pd.DataFrame, rsi_period: int = 14, ob: float = 70.
     return pd.DataFrame(trades)
 
 
+def detect_divergence_signals(df: pd.DataFrame, rsi_period: int = 14,
+                              div_lookback: int = 20, div_min_gap: float = 2.0) -> pd.DataFrame:
+    """
+    Bar-by-bar bullish/bearish divergence flags — the exact entry rule used by
+    simulate_pure_divergence_trades(), factored out so a live "what's signalling right
+    now" view and the backtest can never drift apart.
+
+      bullish — price makes a fresh div_lookback-bar low, RSI does NOT confirm it
+                (rsi > prior rsi low + div_min_gap).
+      bearish — price makes a fresh div_lookback-bar high, RSI does NOT confirm it
+                (rsi < prior rsi high - div_min_gap).
+
+    Returns df (with an rsi column) plus boolean 'bullish' / 'bearish' columns.
+    """
+    d = compute_rsi(df, rsi_period)
+    rsi_s = d["rsi"]
+    prior_low_price = d["low"].shift(1).rolling(div_lookback).min()
+    prior_low_rsi = rsi_s.shift(1).rolling(div_lookback).min()
+    prior_high_price = d["high"].shift(1).rolling(div_lookback).max()
+    prior_high_rsi = rsi_s.shift(1).rolling(div_lookback).max()
+    d["bullish"] = ((d["low"] <= prior_low_price) & (rsi_s > prior_low_rsi + div_min_gap)).fillna(False)
+    d["bearish"] = ((d["high"] >= prior_high_price) & (rsi_s < prior_high_rsi - div_min_gap)).fillna(False)
+    return d
+
+
 def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
                                     div_lookback: int = 20,
                                     div_min_gap: float = 2.0,
@@ -212,14 +237,8 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
     trade sequence itself and cannot be evaluated by capping losses in a finished
     trade log.
     """
-    d = compute_rsi(df, rsi_period)
+    d = detect_divergence_signals(df, rsi_period, div_lookback, div_min_gap)
     rsi_s = d["rsi"]
-    prior_low_price = d["low"].shift(1).rolling(div_lookback).min()
-    prior_low_rsi = rsi_s.shift(1).rolling(div_lookback).min()
-    prior_high_price = d["high"].shift(1).rolling(div_lookback).max()
-    prior_high_rsi = rsi_s.shift(1).rolling(div_lookback).max()
-    bullish = ((d["low"] <= prior_low_price) & (rsi_s > prior_low_rsi + div_min_gap)).fillna(False)
-    bearish = ((d["high"] >= prior_high_price) & (rsi_s < prior_high_rsi - div_min_gap)).fillna(False)
 
     n = len(d)
     idx = d.index
@@ -227,8 +246,8 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
     high = d["high"].to_numpy()
     low = d["low"].to_numpy()
     rsi = rsi_s.to_numpy()
-    long_sig = bullish.to_numpy()
-    short_sig = bearish.to_numpy()
+    long_sig = d["bullish"].to_numpy()
+    short_sig = d["bearish"].to_numpy()
 
     trades = []
     prev_side = None   # side just closed, so an outside bar firing BOTH ways flips rather than repeats
