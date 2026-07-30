@@ -254,8 +254,42 @@ with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
                 )
             return sweep
 
-        _show_sweep(df_hist_30m, "30m", "sw30")
-        _show_sweep(df_hist_60m, "60m", "sw60")
+        sweep_30m = _show_sweep(df_hist_30m, "30m", "sw30")
+        sweep_60m = _show_sweep(df_hist_60m, "60m", "sw60")
+
+        st.markdown("**Download the sweep tables:**")
+        dl_30m, dl_60m, dl_sw_combined = st.columns(3)
+
+        with dl_30m:
+            st.download_button(
+                "⬇ 30m Stop Sweep CSV",
+                sweep_30m.to_csv(index=False).encode("utf-8"),
+                file_name="divergence_30m_stop_sweep.csv",
+                mime="text/csv",
+                key="sweep_30m_csv",
+            )
+
+        with dl_60m:
+            st.download_button(
+                "⬇ 60m Stop Sweep CSV",
+                sweep_60m.to_csv(index=False).encode("utf-8"),
+                file_name="divergence_60m_stop_sweep.csv",
+                mime="text/csv",
+                key="sweep_60m_csv",
+            )
+
+        with dl_sw_combined:
+            sweep_both = pd.concat(
+                [sweep_30m.assign(timeframe="30m"), sweep_60m.assign(timeframe="60m")],
+                ignore_index=True,
+            )
+            st.download_button(
+                "⬇ Both Timeframes CSV",
+                sweep_both.to_csv(index=False).encode("utf-8"),
+                file_name="divergence_stop_sweep_both.csv",
+                mime="text/csv",
+                key="sweep_both_csv",
+            )
 
         # How far trades actually go against you — the constraint any stop has to clear
         if not combined_trades.empty and "mae_pts" in combined_trades.columns:
