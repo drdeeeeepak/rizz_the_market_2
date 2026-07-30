@@ -149,6 +149,78 @@ with col_b:
     )
     st.plotly_chart(fig, use_container_width=True, key="chart_fade")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. PURE DIVERGENCE — divergence is the only entry rule
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.header("2. Pure Divergence")
+st.caption(
+    "Price makes a fresh 20-bar extreme that RSI does NOT confirm. Bullish divergence "
+    "→ LONG. Bearish divergence → SHORT. No RSI zone gate."
+)
+
+df_div = rfb.detect_divergence_signals(df_hourly, RSI_PERIOD, div_lookback=20, div_min_gap=2.0)
+div_sig = df_div[df_div["bullish"] | df_div["bearish"]].copy()
+div_sig["side"] = ["Bullish" if b else "Bearish" for b in div_sig["bullish"]]
+
+div_last5 = div_sig.tail(5).iloc[::-1]
+div_rows = [
+    {"Time": ts.strftime("%d %b %H:%M"), "Side": r["side"], "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
+    for ts, r in div_last5.iterrows()
+]
+
+col_a, col_b = st.columns([1, 1])
+with col_a:
+    st.subheader("Last 5 signals")
+    _last5_table(div_rows)
+with col_b:
+    fig = _rsi_chart(
+        df_div, "Pure Divergence — last 10 days",
+        div_last5.index.tolist(), div_last5["rsi"].tolist(),
+        div_last5["side"].tolist(),
+        ["#10b981" if s == "Bullish" else "#ef4444" for s in div_last5["side"]],
+    )
+    st.plotly_chart(fig, use_container_width=True, key="chart_div")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. HL/LH PIVOT BREAKOUT
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.header("3. HL/LH Pivot Breakout")
+st.caption("RSI breaks above the last Lower High (LH) → BUY. RSI breaks below the last Higher Low (HL) → SELL.")
+
+df_piv, piv_signals = analyze_hourly_rsi(df_hourly, rsi_period=RSI_PERIOD, lookback=3)
+piv_last5 = piv_signals[-5:][::-1] if piv_signals else []
+piv_rows = [
+    {
+        "Time": df_piv.index[s["index"]].strftime("%d %b %H:%M"),
+        "Side": s["signal"],
+        "RSI": f"{s['rsi_at_signal']:.1f}",
+        "Pivot": f"{s['pivot_level']:.1f}",
+    }
+    for s in piv_last5
+]
+
+col_a, col_b = st.columns([1, 1])
+with col_a:
+    st.subheader("Last 5 signals")
+    _last5_table(piv_rows)
+with col_b:
+    marker_times = [df_piv.index[s["index"]] for s in piv_last5]
+    marker_rsi = [s["rsi_at_signal"] for s in piv_last5]
+    marker_side = [s["signal"] for s in piv_last5]
+    fig = _rsi_chart(
+        df_piv, "Pivot Breakout — last 10 days",
+        marker_times, marker_rsi, marker_side,
+        ["#10b981" if s == "BUY" else "#ef4444" for s in marker_side],
+    )
+    st.plotly_chart(fig, use_container_width=True, key="chart_pivot")
+
+
 # ── RSI Trend mini-charts (last 5 trading days) ────────────────────────────────
 st.divider()
 mini_col1, mini_col2 = st.columns(2)
@@ -452,77 +524,6 @@ if not hist_table.empty:
     )
 else:
     st.warning("Not enough historical data to display table.")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 2. PURE DIVERGENCE — divergence is the only entry rule
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-st.header("2. Pure Divergence")
-st.caption(
-    "Price makes a fresh 20-bar extreme that RSI does NOT confirm. Bullish divergence "
-    "→ LONG. Bearish divergence → SHORT. No RSI zone gate."
-)
-
-df_div = rfb.detect_divergence_signals(df_hourly, RSI_PERIOD, div_lookback=20, div_min_gap=2.0)
-div_sig = df_div[df_div["bullish"] | df_div["bearish"]].copy()
-div_sig["side"] = ["Bullish" if b else "Bearish" for b in div_sig["bullish"]]
-
-div_last5 = div_sig.tail(5).iloc[::-1]
-div_rows = [
-    {"Time": ts.strftime("%d %b %H:%M"), "Side": r["side"], "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
-    for ts, r in div_last5.iterrows()
-]
-
-col_a, col_b = st.columns([1, 1])
-with col_a:
-    st.subheader("Last 5 signals")
-    _last5_table(div_rows)
-with col_b:
-    fig = _rsi_chart(
-        df_div, "Pure Divergence — last 10 days",
-        div_last5.index.tolist(), div_last5["rsi"].tolist(),
-        div_last5["side"].tolist(),
-        ["#10b981" if s == "Bullish" else "#ef4444" for s in div_last5["side"]],
-    )
-    st.plotly_chart(fig, use_container_width=True, key="chart_div")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. HL/LH PIVOT BREAKOUT
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-st.header("3. HL/LH Pivot Breakout")
-st.caption("RSI breaks above the last Lower High (LH) → BUY. RSI breaks below the last Higher Low (HL) → SELL.")
-
-df_piv, piv_signals = analyze_hourly_rsi(df_hourly, rsi_period=RSI_PERIOD, lookback=3)
-piv_last5 = piv_signals[-5:][::-1] if piv_signals else []
-piv_rows = [
-    {
-        "Time": df_piv.index[s["index"]].strftime("%d %b %H:%M"),
-        "Side": s["signal"],
-        "RSI": f"{s['rsi_at_signal']:.1f}",
-        "Pivot": f"{s['pivot_level']:.1f}",
-    }
-    for s in piv_last5
-]
-
-col_a, col_b = st.columns([1, 1])
-with col_a:
-    st.subheader("Last 5 signals")
-    _last5_table(piv_rows)
-with col_b:
-    marker_times = [df_piv.index[s["index"]] for s in piv_last5]
-    marker_rsi = [s["rsi_at_signal"] for s in piv_last5]
-    marker_side = [s["signal"] for s in piv_last5]
-    fig = _rsi_chart(
-        df_piv, "Pivot Breakout — last 10 days",
-        marker_times, marker_rsi, marker_side,
-        ["#10b981" if s == "BUY" else "#ef4444" for s in marker_side],
-    )
-    st.plotly_chart(fig, use_container_width=True, key="chart_pivot")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
