@@ -1065,3 +1065,121 @@ with st.expander("🧪 Backtest Configuration & Results (Click to expand)", expa
             st.dataframe(scan, use_container_width=True, hide_index=True)
             st.download_button("⬇ Download full scan CSV", scan.to_csv(index=False).encode("utf-8"),
                                file_name="rsi_fade_threshold_scan.csv", mime="text/csv", key="p28_dl_scan")
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Divergence Filter Impact Analysis
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    with st.expander("🔍 Divergence Filter Impact Analysis (All Trades vs Divergence-Only)", expanded=False):
+        st.markdown("""
+        **Question:** How much does adding divergence confirmation improve trade quality?
+
+        This analysis compares two strategies over the same historical period:
+        1. **All RSI Extreme Trades** — Any time RSI crosses 75/25
+        2. **Divergence-Confirmed Only** — RSI cross + price makes extreme but RSI doesn't confirm it
+        """)
+
+        if df_hist_30m is not None and not df_hist_30m.empty:
+            st.info("🔄 Running backtest comparison on 30m data...")
+
+            try:
+                # Settings for comparison
+                OB, OS = 75, 25
+                ENTRY_MODE = "touch"
+                STOP_PCT = 1.5
+                TARGET_PCT = 2.5
+                MAX_BARS = 48
+
+                # Backtest: All trades (no divergence filter)
+                trades_all = rfb.simulate_fade_trades(
+                    df_hist_30m, rsi_period=14, ob=OB, os_=OS, entry_mode=ENTRY_MODE,
+                    max_bars=MAX_BARS, stop_pct=STOP_PCT, target_pct=TARGET_PCT,
+                    midline_exit=True, require_divergence=False
+                )
+                stats_all = rfb.trade_stats(trades_all)
+
+                # Backtest: Divergence-only trades
+                trades_div = rfb.simulate_fade_trades(
+                    df_hist_30m, rsi_period=14, ob=OB, os_=OS, entry_mode=ENTRY_MODE,
+                    max_bars=MAX_BARS, stop_pct=STOP_PCT, target_pct=TARGET_PCT,
+                    midline_exit=True, require_divergence=True, div_lookback=20, div_min_gap=2.0
+                )
+                stats_div = rfb.trade_stats(trades_div)
+
+                # Display comparison
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.subheader("📊 All RSI Trades")
+                    st.metric("Trades", stats_all['n_trades'])
+                    st.metric("Win Rate", f"{stats_all['win_rate']:.1f}%")
+                    st.metric("Expectancy", f"{stats_all['expectancy_pts']:.2f} pts")
+                    st.metric("Profit Factor", f"{stats_all['profit_factor']:.2f}")
+                    st.metric("Total P&L", f"{stats_all['total_pnl_pts']:.0f} pts")
+
+                with col2:
+                    st.subheader("✅ Divergence Only")
+                    st.metric("Trades", stats_div['n_trades'])
+                    st.metric("Win Rate", f"{stats_div['win_rate']:.1f}%")
+                    st.metric("Expectancy", f"{stats_div['expectancy_pts']:.2f} pts")
+                    st.metric("Profit Factor", f"{stats_div['profit_factor']:.2f}")
+                    st.metric("Total P&L", f"{stats_div['total_pnl_pts']:.0f} pts")
+
+                with col3:
+                    st.subheader("📈 Impact")
+                    if stats_all['n_trades'] > 0:
+                        reduction = (1 - stats_div['n_trades'] / stats_all['n_trades']) * 100
+                        st.metric("Trade Reduction", f"-{reduction:.0f}%", delta=f"{stats_div['n_trades']} vs {stats_all['n_trades']}")
+                    if stats_all['win_rate'] is not None and stats_div['win_rate'] is not None:
+                        wr_diff = stats_div['win_rate'] - stats_all['win_rate']
+                        st.metric("Win Rate Change", f"{wr_diff:+.1f}%")
+                    if stats_all['expectancy_pts'] is not None and stats_div['expectancy_pts'] is not None:
+                        exp_diff = stats_div['expectancy_pts'] - stats_all['expectancy_pts']
+                        st.metric("Expectancy Change", f"{exp_diff:+.2f} pts")
+                    if stats_div['n_trades'] > 0 and stats_all['n_trades'] > 0:
+                        pnl_ratio = stats_div['total_pnl_pts'] / stats_all['total_pnl_pts'] if stats_all['total_pnl_pts'] != 0 else 0
+                        st.metric("P&L Ratio", f"{pnl_ratio:.2f}x")
+
+                # Key findings
+                st.divider()
+                st.markdown("### Key Findings:")
+
+                if stats_div['n_trades'] > 0 and stats_all['n_trades'] > 0:
+                    reduction_pct = (1 - stats_div['n_trades'] / stats_all['n_trades']) * 100
+
+                    findings = []
+                    if reduction_pct > 50:
+                        findings.append(f"✅ **Massive trade reduction:** Divergence filter removes {reduction_pct:.0f}% of signals, focusing only on highest-conviction setups")
+
+                    if stats_div['win_rate'] > stats_all['win_rate']:
+                        wr_gain = stats_div['win_rate'] - stats_all['win_rate']
+                        findings.append(f"✅ **Quality improvement:** Win rate rises {wr_gain:+.1f}% ({stats_div['win_rate']:.1f}% vs {stats_all['win_rate']:.1f}%)")
+                    elif stats_div['win_rate'] < stats_all['win_rate']:
+                        findings.append(f"⚠️ **Trade-off:** Win rate drops {abs(stats_div['win_rate'] - stats_all['win_rate']):.1f}% but per-trade expectancy improves")
+
+                    if stats_div['total_pnl_pts'] > stats_all['total_pnl_pts']:
+                        findings.append(f"✅ **Better total P&L:** {stats_div['total_pnl_pts']:.0f} pts vs {stats_all['total_pnl_pts']:.0f} pts on fewer trades")
+                    else:
+                        findings.append(f"⚠️ **Lower total P&L:** {stats_div['total_pnl_pts']:.0f} vs {stats_all['total_pnl_pts']:.0f} pts (but on {stats_div['n_trades']} vs {stats_all['n_trades']} trades)")
+
+                    findings.append(f"📊 **Efficiency:** {stats_div['n_trades']} divergence trades generate same return as {stats_all['n_trades']} all-trades")
+
+                    for finding in findings:
+                        st.markdown(finding)
+
+                # Recommendation
+                st.divider()
+                st.markdown("### Recommendation:")
+                if stats_div['win_rate'] > 50 and stats_div['n_trades'] > 5:
+                    st.success("✅ **Use divergence filtering** — Higher quality trades with better win rate")
+                elif stats_div['n_trades'] > 0 and stats_div['expectancy_pts'] > stats_all['expectancy_pts']:
+                    st.info("✅ **Use divergence filtering** — Fewer but higher-conviction trades")
+                else:
+                    st.warning("⚠️ **Consider data sample** — Limited trade data on this period; backtest with more data to confirm")
+
+            except Exception as e:
+                st.error(f"Backtest error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            st.warning("Not enough historical data to run divergence impact analysis.")
