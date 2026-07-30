@@ -24,8 +24,8 @@ st.title("RSI Divergence-Only Backtest")
 st.caption(
     "Pure divergence trading: Price makes new extreme but RSI doesn't confirm. "
     "LONG on bullish divergence, SHORT on bearish divergence. "
-    "No stop loss, no target, no time stop — every trade is held until RSI crosses "
-    "the 50 midline."
+    "No stop loss, no target, no time stop, no midline exit — a trade runs until the "
+    "opposite divergence fires, which closes it and opens the trade the other way."
 )
 
 # ══════════════════════════════════════════════════════════════════════════════

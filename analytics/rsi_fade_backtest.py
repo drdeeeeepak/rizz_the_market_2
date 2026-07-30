@@ -193,9 +193,12 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
       SHORT — price makes a fresh div_lookback-bar high, RSI does NOT confirm it
               (rsi < prior rsi high - div_min_gap).
 
-    Exit — RSI crosses the 50 midline in the trade's favour, i.e. the divergence
-    has played out. That is the only exit; a trade still open when the data ends
-    is dropped. One position at a time — signals during an open trade are skipped.
+    Exit — the OPPOSITE divergence, and nothing else. No midline exit, no stop, no
+    target, no time stop: a trade rides on until the market prints a divergence the
+    other way, at which point it closes at that bar's close and the new signal opens
+    the opposite trade. Always in the market once the first signal fires. Same-side
+    divergences while a trade is open are ignored (already in it). A trade still open
+    when the data ends is dropped from the log — it has no exit yet.
     """
     d = compute_rsi(df, rsi_period)
     rsi_s = d["rsi"]
@@ -214,9 +217,12 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
     short_sig = bearish.to_numpy()
 
     trades = []
+    prev_side = None   # side just closed, so an outside bar firing BOTH ways flips rather than repeats
     i = 0
     while i < n:
-        if long_sig[i]:
+        if long_sig[i] and short_sig[i]:
+            side = "LONG" if prev_side == "SHORT" else "SHORT" if prev_side == "LONG" else "LONG"
+        elif long_sig[i]:
             side = "LONG"
         elif short_sig[i]:
             side = "SHORT"
@@ -227,7 +233,8 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
         entry_price, entry_rsi = close[i], rsi[i]
         exit_j = None
         for j in range(i + 1, n):
-            if (side == "LONG" and rsi[j] >= 50) or (side == "SHORT" and rsi[j] <= 50):
+            # only a divergence the OTHER way ends the trade
+            if (side == "LONG" and short_sig[j]) or (side == "SHORT" and long_sig[j]):
                 exit_j = j
                 break
         if exit_j is None:   # still open at the end of the data — not a completed trade
@@ -239,11 +246,12 @@ def simulate_pure_divergence_trades(df: pd.DataFrame, rsi_period: int = 14,
             entry_time=idx[i], side=side, entry_price=round(float(entry_price), 2),
             entry_rsi=round(float(entry_rsi), 1), exit_time=idx[exit_j],
             exit_price=round(float(exit_price), 2), exit_rsi=round(float(rsi[exit_j]), 1),
-            exit_reason="RSI_MIDLINE", bars_held=exit_j - i,
+            exit_reason="OPPOSITE_DIV", bars_held=exit_j - i,
             pnl_pts=round(float(pnl_pts), 2),
             pnl_pct=round(float(pnl_pts / entry_price * 100), 3),
         ))
-        i = exit_j + 1   # no new entries while a position is open
+        prev_side = side
+        i = exit_j   # the opposing divergence that closed this trade opens the next one
 
     return pd.DataFrame(trades)
 
