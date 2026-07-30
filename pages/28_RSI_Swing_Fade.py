@@ -1183,3 +1183,106 @@ with st.expander("🧪 Backtest Configuration & Results (Click to expand)", expa
                 traceback.print_exc()
         else:
             st.warning("Not enough historical data to run divergence impact analysis.")
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Backtest Divergence Trades Only
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    with st.expander("⚡ Backtest Divergence Trades Only (All Thresholds)", expanded=False):
+        st.markdown("""
+        **Test pure divergence-confirmed trades across all OB/OS thresholds.**
+
+        This backtest shows performance when taking ONLY trades that have:
+        - RSI crosses into extreme zone (overbought/oversold)
+        - **AND** divergence confirmation (price makes extreme but RSI doesn't confirm it)
+
+        No other filters, no additional rules — just divergence signals.
+        """)
+
+        if df_hist_30m is not None and not df_hist_30m.empty:
+            st.info("🔄 Running divergence-only threshold scan on 30m data...")
+
+            try:
+                # Divergence-only threshold scan
+                div_scan = rfb.threshold_scan(
+                    df_hist_30m,
+                    timeframe_label="30m (Divergence Only)",
+                    rsi_period=14,
+                    ob_os_pairs=((65, 35), (70, 30), (75, 25), (80, 20)),
+                    entry_mode="touch",
+                    max_bars=48,
+                    stop_pct=1.5,
+                    target_pct=2.5,
+                    midline_exit=True,
+                    require_divergence=True,
+                    div_lookback=20,
+                    div_min_gap=2.0
+                )
+
+                if not div_scan.empty:
+                    # Sort by expectancy (best first)
+                    div_scan_sorted = div_scan.sort_values('expectancy_pts', ascending=False)
+
+                    # Display summary metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    best_row = div_scan_sorted.iloc[0]
+
+                    with col1:
+                        st.metric("Best OB/OS", f"{best_row['ob']:.0f}/{best_row['os']:.0f}")
+                    with col2:
+                        st.metric("Trades", f"{best_row['n_trades']:.0f}")
+                    with col3:
+                        st.metric("Win Rate", f"{best_row['win_rate']:.1f}%")
+                    with col4:
+                        st.metric("Expectancy", f"{best_row['expectancy_pts']:.2f} pts")
+
+                    st.divider()
+
+                    # Full threshold table
+                    st.markdown("### Divergence Trade Performance by Threshold:")
+                    st.dataframe(
+                        div_scan_sorted[['ob', 'os', 'n_trades', 'win_rate', 'expectancy_pts',
+                                        'profit_factor', 'total_pnl_pts', 'max_drawdown_pts',
+                                        'avg_bars_held', 'avg_win_pts', 'avg_loss_pts']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # Download button
+                    st.download_button(
+                        "⬇ Download Divergence Backtest Results",
+                        div_scan_sorted.to_csv(index=False).encode('utf-8'),
+                        file_name="divergence_trades_only_backtest.csv",
+                        mime="text/csv",
+                        key="p28_div_backtest_download"
+                    )
+
+                    # Key insights
+                    st.divider()
+                    st.markdown("### Key Insights:")
+
+                    trades_total = div_scan_sorted['n_trades'].sum()
+                    avg_wr = div_scan_sorted['win_rate'].mean()
+                    best_wr = div_scan_sorted['win_rate'].max()
+                    best_exp = div_scan_sorted['expectancy_pts'].max()
+
+                    st.markdown(f"""
+                    - **Total divergence trades (all thresholds):** {trades_total:.0f}
+                    - **Average win rate:** {avg_wr:.1f}%
+                    - **Best threshold:** OB {best_row['ob']:.0f}/OS {best_row['os']:.0f} with {best_row['expectancy_pts']:.2f} pts/trade expectancy
+                    - **Highest win rate:** {best_wr:.1f}% (find in table above)
+                    - **Total P&L (best):** {best_row['total_pnl_pts']:.0f} pts on {best_row['n_trades']:.0f} trades
+
+                    ✅ **Recommendation:** Use **OB {best_row['ob']:.0f}/OS {best_row['os']:.0f}** for divergence-only trading
+                    (Best balance of trade frequency and expectancy)
+                    """)
+
+                else:
+                    st.warning("No divergence trades found in this period — insufficient data for reliable backtest.")
+
+            except Exception as e:
+                st.error(f"Backtest error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            st.warning("Not enough historical data to run divergence-only backtest.")
