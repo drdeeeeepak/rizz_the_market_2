@@ -418,12 +418,16 @@ if not hist_table.empty:
                 if col in ('60m', '30m', '15m'):
                     cell_val = row[col]
                     if cell_val:
-                        m = re.search(r'(\d+\.?\d*)', str(cell_val))
-                        if m:
-                            trend = _rsi_trend(row_loc, col, m.group(1))
-                            styles[i] = _rsi_css(m.group(1), trend)
-                        elif "Bull" in str(cell_val) or "Bear" in str(cell_val):
+                        # Divergence marker takes priority over the RSI-zone background —
+                        # a cell can carry both (e.g. "35.4 ▲ Bull"), and the whole point
+                        # of the marker is to stand out regardless of which zone RSI is in.
+                        if "Bull" in str(cell_val) or "Bear" in str(cell_val):
                             styles[i] = _div_css(cell_val)
+                        else:
+                            m = re.search(r'(\d+\.?\d*)', str(cell_val))
+                            if m:
+                                trend = _rsi_trend(row_loc, col, m.group(1))
+                                styles[i] = _rsi_css(m.group(1), trend)
                     else:
                         styles[i] = ''
                 else:
