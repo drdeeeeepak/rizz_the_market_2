@@ -23,7 +23,9 @@ st.set_page_config(page_title="P31 · RSI Divergence Backtest", layout="wide")
 st.title("RSI Divergence-Only Backtest")
 st.caption(
     "Pure divergence trading: Price makes new extreme but RSI doesn't confirm. "
-    "LONG on bullish divergence, SHORT on bearish divergence."
+    "LONG on bullish divergence, SHORT on bearish divergence. "
+    "No stop loss, no target, no time stop — every trade is held until RSI crosses "
+    "the 50 midline."
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -74,242 +76,236 @@ with col2:
         min_value=0.5, max_value=5.0, value=2.0, step=0.5
     )
 
-# Internal defaults (not user-configurable)
-max_bars = 48
-stop_pct = 1.5
-target_pct = 2.5
-midline_exit = True
+st.caption(
+    f"30m: {len(df_hist_30m)} candles "
+    f"({df_hist_30m.index[0]:%d %b %Y} → {df_hist_30m.index[-1]:%d %b %Y})  ·  "
+    f"60m: {len(df_hist_60m)} candles "
+    f"({df_hist_60m.index[0]:%d %b %Y} → {df_hist_60m.index[-1]:%d %b %Y})"
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RUN BACKTEST
 # ══════════════════════════════════════════════════════════════════════════════
 
-run_backtest = st.button("▶ Run Divergence Backtest", type="primary", use_container_width=True)
+with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
+    try:
+        # 30m — divergence is the only entry rule
+        trades_30m = rfb.simulate_pure_divergence_trades(
+            df_hist_30m, rsi_period=14,
+            div_lookback=div_lookback, div_min_gap=div_min_gap
+        )
+        stats_30m = rfb.trade_stats(trades_30m)
 
-if run_backtest:
-    with st.spinner("Running divergence-only backtest on 30m & 60m data..."):
-        try:
-            # 30m backtest with divergence filter
-            trades_30m = rfb.simulate_fade_trades(
-                df_hist_30m, rsi_period=14, ob=75, os_=25,
-                entry_mode="touch", max_bars=max_bars, stop_pct=stop_pct, target_pct=target_pct,
-                midline_exit=midline_exit, require_divergence=True,
-                div_lookback=div_lookback, div_min_gap=div_min_gap
+        # 60m — divergence is the only entry rule
+        trades_60m = rfb.simulate_pure_divergence_trades(
+            df_hist_60m, rsi_period=14,
+            div_lookback=div_lookback, div_min_gap=div_min_gap
+        )
+        stats_60m = rfb.trade_stats(trades_60m)
+
+        # Combined
+        if not trades_30m.empty and not trades_60m.empty:
+            combined_trades = pd.concat([trades_30m, trades_60m], ignore_index=True)
+        elif not trades_30m.empty:
+            combined_trades = trades_30m.copy()
+        else:
+            combined_trades = trades_60m.copy()
+
+        combined_stats = rfb.trade_stats(combined_trades)
+
+        st.success("✅ Backtest complete!")
+
+        # ══════════════════════════════════════════════════════════════════════════════
+        # METRICS
+        # ══════════════════════════════════════════════════════════════════════════════
+
+        st.divider()
+        st.subheader("Results: 30m Timeframe")
+
+        m_30m_1, m_30m_2, m_30m_3, m_30m_4, m_30m_5 = st.columns(5)
+
+        with m_30m_1:
+            st.metric("Trades", stats_30m['n_trades'])
+
+        with m_30m_2:
+            st.metric("Win Rate", f"{stats_30m['win_rate']:.1f}%")
+
+        with m_30m_3:
+            st.metric("Expectancy", f"{stats_30m['expectancy_pts']:.2f} pts/trade")
+
+        with m_30m_4:
+            st.metric("Profit Factor", f"{stats_30m['profit_factor']:.2f}")
+
+        with m_30m_5:
+            st.metric("Total P&L", f"{stats_30m['total_pnl_pts']:.0f} pts")
+
+        m_30m_6, m_30m_7, m_30m_8 = st.columns(3)
+
+        with m_30m_6:
+            st.metric("Max Drawdown", f"{stats_30m['max_drawdown_pts']:.0f} pts")
+
+        with m_30m_7:
+            st.metric("Avg Win", f"{stats_30m['avg_win_pts']:.2f} pts")
+
+        with m_30m_8:
+            st.metric("Avg Loss", f"{stats_30m['avg_loss_pts']:.2f} pts")
+
+        # 60m metrics
+        st.divider()
+        st.subheader("Results: 60m Timeframe")
+
+        m_60m_1, m_60m_2, m_60m_3, m_60m_4, m_60m_5 = st.columns(5)
+
+        with m_60m_1:
+            st.metric("Trades", stats_60m['n_trades'])
+
+        with m_60m_2:
+            st.metric("Win Rate", f"{stats_60m['win_rate']:.1f}%")
+
+        with m_60m_3:
+            st.metric("Expectancy", f"{stats_60m['expectancy_pts']:.2f} pts/trade")
+
+        with m_60m_4:
+            st.metric("Profit Factor", f"{stats_60m['profit_factor']:.2f}")
+
+        with m_60m_5:
+            st.metric("Total P&L", f"{stats_60m['total_pnl_pts']:.0f} pts")
+
+        m_60m_6, m_60m_7, m_60m_8 = st.columns(3)
+
+        with m_60m_6:
+            st.metric("Max Drawdown", f"{stats_60m['max_drawdown_pts']:.0f} pts")
+
+        with m_60m_7:
+            st.metric("Avg Win", f"{stats_60m['avg_win_pts']:.2f} pts")
+
+        with m_60m_8:
+            st.metric("Avg Loss", f"{stats_60m['avg_loss_pts']:.2f} pts")
+
+        # Combined metrics
+        st.divider()
+        st.subheader("Results: Combined (30m + 60m)")
+
+        m_c_1, m_c_2, m_c_3, m_c_4, m_c_5 = st.columns(5)
+
+        with m_c_1:
+            st.metric("Total Trades", combined_stats['n_trades'])
+
+        with m_c_2:
+            st.metric("Win Rate", f"{combined_stats['win_rate']:.1f}%")
+
+        with m_c_3:
+            st.metric("Expectancy", f"{combined_stats['expectancy_pts']:.2f} pts/trade")
+
+        with m_c_4:
+            st.metric("Profit Factor", f"{combined_stats['profit_factor']:.2f}")
+
+        with m_c_5:
+            st.metric("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts")
+
+        # ══════════════════════════════════════════════════════════════════════════════
+        # RECENT TRADES TABLE
+        # ══════════════════════════════════════════════════════════════════════════════
+
+        st.divider()
+        st.subheader("Recent Divergence Trades (Last 20)")
+
+        if not combined_trades.empty:
+            display_df = combined_trades.sort_values('entry_time', ascending=False).head(20).copy()
+            display_df['entry_time'] = pd.to_datetime(display_df['entry_time']).dt.strftime('%Y-%m-%d %H:%M')
+            display_df['exit_time'] = pd.to_datetime(display_df['exit_time']).dt.strftime('%Y-%m-%d %H:%M')
+
+            cols_to_show = ['entry_time', 'side', 'entry_price', 'entry_rsi', 'exit_price', 'pnl_pts', 'pnl_pct', 'bars_held', 'exit_reason']
+            st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
+        else:
+            st.info("No trades generated")
+
+        # ══════════════════════════════════════════════════════════════════════════════
+        # EQUITY CURVE
+        # ══════════════════════════════════════════════════════════════════════════════
+
+        if not combined_trades.empty:
+            st.divider()
+            st.subheader("Equity Curve")
+
+            equity = combined_trades[["exit_time", "pnl_pts"]].copy()
+            equity["cum_pnl_pts"] = equity["pnl_pts"].cumsum()
+            equity["exit_time"] = pd.to_datetime(equity["exit_time"])
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=equity["exit_time"],
+                y=equity["cum_pnl_pts"],
+                mode="lines+markers",
+                line=dict(color="#3b82f6", width=2),
+                marker=dict(size=5),
+                name="Cumulative P&L"
+            ))
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+            fig.update_layout(
+                height=400,
+                xaxis_title="Exit Time",
+                yaxis_title="Cumulative P&L (pts)",
+                hovermode="x unified"
             )
-            stats_30m = rfb.trade_stats(trades_30m)
+            st.plotly_chart(fig, use_container_width=True)
 
-            # 60m backtest with divergence filter
-            trades_60m = rfb.simulate_fade_trades(
-                df_hist_60m, rsi_period=14, ob=75, os_=25,
-                entry_mode="touch", max_bars=max_bars, stop_pct=stop_pct, target_pct=target_pct,
-                midline_exit=midline_exit, require_divergence=True,
-                div_lookback=div_lookback, div_min_gap=div_min_gap
-            )
-            stats_60m = rfb.trade_stats(trades_60m)
+        # ══════════════════════════════════════════════════════════════════════════════
+        # CSV DOWNLOADS
+        # ══════════════════════════════════════════════════════════════════════════════
 
-            # Combined
-            if not trades_30m.empty and not trades_60m.empty:
-                combined_trades = pd.concat([trades_30m, trades_60m], ignore_index=True)
-            elif not trades_30m.empty:
-                combined_trades = trades_30m.copy()
-            else:
-                combined_trades = trades_60m.copy()
+        st.divider()
+        st.subheader("Download Results")
 
-            combined_stats = rfb.trade_stats(combined_trades)
+        col_30m, col_60m, col_combined = st.columns(3)
 
-            st.success("✅ Backtest complete!")
-
-            # ══════════════════════════════════════════════════════════════════════════════
-            # METRICS
-            # ══════════════════════════════════════════════════════════════════════════════
-
-            st.divider()
-            st.subheader("Results: 30m Timeframe")
-
-            m_30m_1, m_30m_2, m_30m_3, m_30m_4, m_30m_5 = st.columns(5)
-
-            with m_30m_1:
-                st.metric("Trades", stats_30m['n_trades'])
-
-            with m_30m_2:
-                st.metric("Win Rate", f"{stats_30m['win_rate']:.1f}%")
-
-            with m_30m_3:
-                st.metric("Expectancy", f"{stats_30m['expectancy_pts']:.2f} pts/trade")
-
-            with m_30m_4:
-                st.metric("Profit Factor", f"{stats_30m['profit_factor']:.2f}")
-
-            with m_30m_5:
-                st.metric("Total P&L", f"{stats_30m['total_pnl_pts']:.0f} pts")
-
-            m_30m_6, m_30m_7, m_30m_8 = st.columns(3)
-
-            with m_30m_6:
-                st.metric("Max Drawdown", f"{stats_30m['max_drawdown_pts']:.0f} pts")
-
-            with m_30m_7:
-                st.metric("Avg Win", f"{stats_30m['avg_win_pts']:.2f} pts")
-
-            with m_30m_8:
-                st.metric("Avg Loss", f"{stats_30m['avg_loss_pts']:.2f} pts")
-
-            # 60m metrics
-            st.divider()
-            st.subheader("Results: 60m Timeframe")
-
-            m_60m_1, m_60m_2, m_60m_3, m_60m_4, m_60m_5 = st.columns(5)
-
-            with m_60m_1:
-                st.metric("Trades", stats_60m['n_trades'])
-
-            with m_60m_2:
-                st.metric("Win Rate", f"{stats_60m['win_rate']:.1f}%")
-
-            with m_60m_3:
-                st.metric("Expectancy", f"{stats_60m['expectancy_pts']:.2f} pts/trade")
-
-            with m_60m_4:
-                st.metric("Profit Factor", f"{stats_60m['profit_factor']:.2f}")
-
-            with m_60m_5:
-                st.metric("Total P&L", f"{stats_60m['total_pnl_pts']:.0f} pts")
-
-            m_60m_6, m_60m_7, m_60m_8 = st.columns(3)
-
-            with m_60m_6:
-                st.metric("Max Drawdown", f"{stats_60m['max_drawdown_pts']:.0f} pts")
-
-            with m_60m_7:
-                st.metric("Avg Win", f"{stats_60m['avg_win_pts']:.2f} pts")
-
-            with m_60m_8:
-                st.metric("Avg Loss", f"{stats_60m['avg_loss_pts']:.2f} pts")
-
-            # Combined metrics
-            st.divider()
-            st.subheader("Results: Combined (30m + 60m)")
-
-            m_c_1, m_c_2, m_c_3, m_c_4, m_c_5 = st.columns(5)
-
-            with m_c_1:
-                st.metric("Total Trades", combined_stats['n_trades'])
-
-            with m_c_2:
-                st.metric("Win Rate", f"{combined_stats['win_rate']:.1f}%")
-
-            with m_c_3:
-                st.metric("Expectancy", f"{combined_stats['expectancy_pts']:.2f} pts/trade")
-
-            with m_c_4:
-                st.metric("Profit Factor", f"{combined_stats['profit_factor']:.2f}")
-
-            with m_c_5:
-                st.metric("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts")
-
-            # ══════════════════════════════════════════════════════════════════════════════
-            # RECENT TRADES TABLE
-            # ══════════════════════════════════════════════════════════════════════════════
-
-            st.divider()
-            st.subheader("Recent Divergence Trades (Last 20)")
-
-            if not combined_trades.empty:
-                display_df = combined_trades.sort_values('entry_time', ascending=False).head(20).copy()
-                display_df['entry_time'] = pd.to_datetime(display_df['entry_time']).dt.strftime('%Y-%m-%d %H:%M')
-                display_df['exit_time'] = pd.to_datetime(display_df['exit_time']).dt.strftime('%Y-%m-%d %H:%M')
-
-                cols_to_show = ['entry_time', 'side', 'entry_price', 'entry_rsi', 'exit_price', 'pnl_pts', 'pnl_pct', 'bars_held', 'exit_reason']
-                st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
-            else:
-                st.info("No trades generated")
-
-            # ══════════════════════════════════════════════════════════════════════════════
-            # EQUITY CURVE
-            # ══════════════════════════════════════════════════════════════════════════════
-
-            if not combined_trades.empty:
-                st.divider()
-                st.subheader("Equity Curve")
-
-                equity = combined_trades[["exit_time", "pnl_pts"]].copy()
-                equity["cum_pnl_pts"] = equity["pnl_pts"].cumsum()
-                equity["exit_time"] = pd.to_datetime(equity["exit_time"])
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=equity["exit_time"],
-                    y=equity["cum_pnl_pts"],
-                    mode="lines+markers",
-                    line=dict(color="#3b82f6", width=2),
-                    marker=dict(size=5),
-                    name="Cumulative P&L"
-                ))
-                fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-                fig.update_layout(
-                    height=400,
-                    xaxis_title="Exit Time",
-                    yaxis_title="Cumulative P&L (pts)",
-                    hovermode="x unified"
+        with col_30m:
+            if not trades_30m.empty:
+                csv_30m = trades_30m.to_csv(index=False)
+                st.download_button(
+                    "⬇ 30m Divergence Trades CSV",
+                    csv_30m.encode('utf-8'),
+                    file_name="divergence_30m_trades.csv",
+                    mime="text/csv",
+                    key="div_30m_csv"
                 )
-                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No 30m trades")
 
-            # ══════════════════════════════════════════════════════════════════════════════
-            # CSV DOWNLOADS
-            # ══════════════════════════════════════════════════════════════════════════════
+        with col_60m:
+            if not trades_60m.empty:
+                csv_60m = trades_60m.to_csv(index=False)
+                st.download_button(
+                    "⬇ 60m Divergence Trades CSV",
+                    csv_60m.encode('utf-8'),
+                    file_name="divergence_60m_trades.csv",
+                    mime="text/csv",
+                    key="div_60m_csv"
+                )
+            else:
+                st.info("No 60m trades")
 
-            st.divider()
-            st.subheader("Download Results")
+        with col_combined:
+            if not combined_trades.empty:
+                csv_combined = combined_trades.to_csv(index=False)
+                st.download_button(
+                    "⬇ All Divergence Trades CSV",
+                    csv_combined.encode('utf-8'),
+                    file_name="divergence_all_trades.csv",
+                    mime="text/csv",
+                    key="div_all_csv"
+                )
+            else:
+                st.info("No combined trades")
 
-            col_30m, col_60m, col_combined = st.columns(3)
+        # ══════════════════════════════════════════════════════════════════════════════
+        # SUMMARY STATISTICS
+        # ══════════════════════════════════════════════════════════════════════════════
 
-            with col_30m:
-                if not trades_30m.empty:
-                    csv_30m = trades_30m.to_csv(index=False)
-                    st.download_button(
-                        "⬇ 30m Divergence Trades CSV",
-                        csv_30m.encode('utf-8'),
-                        file_name="divergence_30m_trades.csv",
-                        mime="text/csv",
-                        key="div_30m_csv"
-                    )
-                else:
-                    st.info("No 30m trades")
+        st.divider()
+        st.subheader("Summary Statistics")
 
-            with col_60m:
-                if not trades_60m.empty:
-                    csv_60m = trades_60m.to_csv(index=False)
-                    st.download_button(
-                        "⬇ 60m Divergence Trades CSV",
-                        csv_60m.encode('utf-8'),
-                        file_name="divergence_60m_trades.csv",
-                        mime="text/csv",
-                        key="div_60m_csv"
-                    )
-                else:
-                    st.info("No 60m trades")
-
-            with col_combined:
-                if not combined_trades.empty:
-                    csv_combined = combined_trades.to_csv(index=False)
-                    st.download_button(
-                        "⬇ All Divergence Trades CSV",
-                        csv_combined.encode('utf-8'),
-                        file_name="divergence_all_trades.csv",
-                        mime="text/csv",
-                        key="div_all_csv"
-                    )
-                else:
-                    st.info("No combined trades")
-
-            # ══════════════════════════════════════════════════════════════════════════════
-            # SUMMARY STATISTICS
-            # ══════════════════════════════════════════════════════════════════════════════
-
-            st.divider()
-            st.subheader("Summary Statistics")
-
-            summary_text = f"""
+        summary_text = f"""
 ### 30m Trades
 - **Total Trades:** {stats_30m['n_trades']} (LONG {stats_30m['long_trades']} | SHORT {stats_30m['short_trades']})
 - **Win Rate:** {stats_30m['win_rate']:.1f}%
@@ -337,10 +333,10 @@ if run_backtest:
 - **Expectancy:** {combined_stats['expectancy_pts']:.2f} pts/trade
 - **Total P&L:** {combined_stats['total_pnl_pts']:.0f} pts
 - **Max Drawdown:** {combined_stats['max_drawdown_pts']:.0f} pts
-            """
-            st.markdown(summary_text)
+        """
+        st.markdown(summary_text)
 
-        except Exception as e:
-            st.error(f"❌ Backtest failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
+    except Exception as e:
+        st.error(f"❌ Backtest failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
