@@ -97,6 +97,21 @@ with col5:
 with col6:
     midline_exit = st.checkbox("Exit on RSI midline (50) cross?", value=True)
 
+# Display options
+st.divider()
+st.subheader("Display Options")
+
+disp_col1, disp_col2, disp_col3 = st.columns(3)
+
+with disp_col1:
+    show_pnl = st.checkbox("Show P&L metrics?", value=True)
+
+with disp_col2:
+    show_bars = st.checkbox("Show bars held?", value=True)
+
+with disp_col3:
+    pass
+
 # ══════════════════════════════════════════════════════════════════════════════
 # RUN BACKTEST
 # ══════════════════════════════════════════════════════════════════════════════
@@ -143,86 +158,85 @@ if run_backtest:
             st.divider()
             st.subheader("Results: 30m Timeframe")
 
-            m_30m_1, m_30m_2, m_30m_3, m_30m_4, m_30m_5 = st.columns(5)
+            # Build flexible column layout based on display options
+            metrics_30m = [
+                ("Trades", stats_30m['n_trades']),
+                ("Win Rate", f"{stats_30m['win_rate']:.1f}%"),
+                ("Expectancy", f"{stats_30m['expectancy_pts']:.2f} pts/trade"),
+                ("Profit Factor", f"{stats_30m['profit_factor']:.2f}"),
+            ]
 
-            with m_30m_1:
-                st.metric("Trades", stats_30m['n_trades'])
+            if show_pnl:
+                metrics_30m.append(("Total P&L", f"{stats_30m['total_pnl_pts']:.0f} pts"))
+                metrics_30m.append(("Max Drawdown", f"{stats_30m['max_drawdown_pts']:.0f} pts"))
+                metrics_30m.append(("Avg Win", f"{stats_30m['avg_win_pts']:.2f} pts"))
+                metrics_30m.append(("Avg Loss", f"{stats_30m['avg_loss_pts']:.2f} pts"))
 
-            with m_30m_2:
-                st.metric("Win Rate", f"{stats_30m['win_rate']:.1f}%")
+            if show_bars:
+                metrics_30m.append(("Avg Hold", f"{stats_30m['avg_bars_held']:.1f} candles"))
 
-            with m_30m_3:
-                st.metric("Expectancy", f"{stats_30m['expectancy_pts']:.2f} pts/trade")
-
-            with m_30m_4:
-                st.metric("Profit Factor", f"{stats_30m['profit_factor']:.2f}")
-
-            with m_30m_5:
-                st.metric("Total P&L", f"{stats_30m['total_pnl_pts']:.0f} pts")
-
-            m_30m_6, m_30m_7, m_30m_8 = st.columns(3)
-
-            with m_30m_6:
-                st.metric("Max Drawdown", f"{stats_30m['max_drawdown_pts']:.0f} pts")
-
-            with m_30m_7:
-                st.metric("Avg Win", f"{stats_30m['avg_win_pts']:.2f} pts")
-
-            with m_30m_8:
-                st.metric("Avg Loss", f"{stats_30m['avg_loss_pts']:.2f} pts")
+            # Display metrics in rows of 4
+            for i in range(0, len(metrics_30m), 4):
+                cols = st.columns(min(4, len(metrics_30m) - i))
+                for j, col in enumerate(cols):
+                    if i + j < len(metrics_30m):
+                        label, value = metrics_30m[i + j]
+                        with col:
+                            st.metric(label, value)
 
             # 60m metrics
             st.divider()
             st.subheader("Results: 60m Timeframe")
 
-            m_60m_1, m_60m_2, m_60m_3, m_60m_4, m_60m_5 = st.columns(5)
+            metrics_60m = [
+                ("Trades", stats_60m['n_trades']),
+                ("Win Rate", f"{stats_60m['win_rate']:.1f}%"),
+                ("Expectancy", f"{stats_60m['expectancy_pts']:.2f} pts/trade"),
+                ("Profit Factor", f"{stats_60m['profit_factor']:.2f}"),
+            ]
 
-            with m_60m_1:
-                st.metric("Trades", stats_60m['n_trades'])
+            if show_pnl:
+                metrics_60m.append(("Total P&L", f"{stats_60m['total_pnl_pts']:.0f} pts"))
+                metrics_60m.append(("Max Drawdown", f"{stats_60m['max_drawdown_pts']:.0f} pts"))
+                metrics_60m.append(("Avg Win", f"{stats_60m['avg_win_pts']:.2f} pts"))
+                metrics_60m.append(("Avg Loss", f"{stats_60m['avg_loss_pts']:.2f} pts"))
 
-            with m_60m_2:
-                st.metric("Win Rate", f"{stats_60m['win_rate']:.1f}%")
+            if show_bars:
+                metrics_60m.append(("Avg Hold", f"{stats_60m['avg_bars_held']:.1f} candles"))
 
-            with m_60m_3:
-                st.metric("Expectancy", f"{stats_60m['expectancy_pts']:.2f} pts/trade")
-
-            with m_60m_4:
-                st.metric("Profit Factor", f"{stats_60m['profit_factor']:.2f}")
-
-            with m_60m_5:
-                st.metric("Total P&L", f"{stats_60m['total_pnl_pts']:.0f} pts")
-
-            m_60m_6, m_60m_7, m_60m_8 = st.columns(3)
-
-            with m_60m_6:
-                st.metric("Max Drawdown", f"{stats_60m['max_drawdown_pts']:.0f} pts")
-
-            with m_60m_7:
-                st.metric("Avg Win", f"{stats_60m['avg_win_pts']:.2f} pts")
-
-            with m_60m_8:
-                st.metric("Avg Loss", f"{stats_60m['avg_loss_pts']:.2f} pts")
+            for i in range(0, len(metrics_60m), 4):
+                cols = st.columns(min(4, len(metrics_60m) - i))
+                for j, col in enumerate(cols):
+                    if i + j < len(metrics_60m):
+                        label, value = metrics_60m[i + j]
+                        with col:
+                            st.metric(label, value)
 
             # Combined metrics
             st.divider()
             st.subheader("Results: Combined (30m + 60m)")
 
-            m_c_1, m_c_2, m_c_3, m_c_4, m_c_5 = st.columns(5)
+            metrics_combined = [
+                ("Total Trades", combined_stats['n_trades']),
+                ("Win Rate", f"{combined_stats['win_rate']:.1f}%"),
+                ("Expectancy", f"{combined_stats['expectancy_pts']:.2f} pts/trade"),
+                ("Profit Factor", f"{combined_stats['profit_factor']:.2f}"),
+            ]
 
-            with m_c_1:
-                st.metric("Total Trades", combined_stats['n_trades'])
+            if show_pnl:
+                metrics_combined.append(("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts"))
+                metrics_combined.append(("Max Drawdown", f"{combined_stats['max_drawdown_pts']:.0f} pts"))
 
-            with m_c_2:
-                st.metric("Win Rate", f"{combined_stats['win_rate']:.1f}%")
+            if show_bars:
+                metrics_combined.append(("Avg Hold", f"{combined_stats['avg_bars_held']:.1f} candles"))
 
-            with m_c_3:
-                st.metric("Expectancy", f"{combined_stats['expectancy_pts']:.2f} pts/trade")
-
-            with m_c_4:
-                st.metric("Profit Factor", f"{combined_stats['profit_factor']:.2f}")
-
-            with m_c_5:
-                st.metric("Total P&L", f"{combined_stats['total_pnl_pts']:.0f} pts")
+            for i in range(0, len(metrics_combined), 4):
+                cols = st.columns(min(4, len(metrics_combined) - i))
+                for j, col in enumerate(cols):
+                    if i + j < len(metrics_combined):
+                        label, value = metrics_combined[i + j]
+                        with col:
+                            st.metric(label, value)
 
             # ══════════════════════════════════════════════════════════════════════════════
             # RECENT TRADES TABLE
