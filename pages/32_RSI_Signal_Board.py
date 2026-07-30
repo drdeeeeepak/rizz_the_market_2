@@ -81,11 +81,14 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
                     marker_times=None, marker_rsi=None, marker_labels=None, marker_colors=None,
                     min_candles=40):
     """
-    Same look as the 'RSI Trend (last 5 trading days)' mini-chart: candle-number
-    x-axis, date-boundary vlines, OB/OS + extreme reference lines. Window widens
-    beyond 5 days automatically when needed so all 5 signal markers stay on-chart —
-    Divergence/Breakout signals fire roughly weekly, far less often than the
-    Fade zone-cross, so a fixed 5-day window would cut most of them off.
+    Real date/time on the x-axis. Axis type is 'category' (not 'date') on purpose —
+    a true date axis leaves visible gaps for closed market hours (evenings, weekends),
+    which flattens and distorts an intraday RSI line; category type keeps candles
+    evenly spaced like a trading platform while still labeling real timestamps.
+
+    Window widens beyond 5 days automatically when needed so all 5 signal markers
+    stay on-chart — Divergence/Breakout signals fire roughly weekly, far less often
+    than the Fade zone-cross, so a fixed 5-day window would cut most of them off.
     """
     marker_times = marker_times or []
     n_candles = min_candles
@@ -96,22 +99,12 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
     n_candles = min(n_candles, len(df_rsi))
 
     chart_slice = df_rsi.tail(n_candles)
-    chart_data = chart_slice.reset_index(drop=True)
+    x_labels = [ts.strftime("%d %b %H:%M") for ts in chart_slice.index]
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=list(range(len(chart_data))), y=chart_data["rsi"],
+        x=x_labels, y=chart_slice["rsi"].tolist(),
         mode="lines+markers", line=dict(color=line_color, width=2), name="RSI(14)"
     ))
-
-    current_date = None
-    for i, (idx, row) in enumerate(chart_slice.iterrows()):
-        row_date = idx.date()
-        if current_date is None:
-            current_date = row_date
-        elif row_date != current_date:
-            fig.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
-                         annotation_text=row_date.strftime("%b %d"), annotation_position="top")
-            current_date = row_date
 
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
@@ -119,11 +112,11 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
     fig.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
 
     if marker_times:
-        pos_of = {ts: i for i, ts in enumerate(chart_slice.index)}
+        label_of = {ts: lbl for ts, lbl in zip(chart_slice.index, x_labels)}
         xs, ys, texts, colors = [], [], [], []
         for t, r, lbl, c in zip(marker_times, marker_rsi, marker_labels, marker_colors):
-            if t in pos_of:
-                xs.append(pos_of[t]); ys.append(r); texts.append(lbl); colors.append(c)
+            if t in label_of:
+                xs.append(label_of[t]); ys.append(r); texts.append(lbl); colors.append(c)
         if xs:
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode="markers+text", name="Signal",
@@ -133,7 +126,8 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
             ))
 
     fig.update_layout(title=title, height=320, margin=dict(l=10, r=10, t=40, b=10),
-                      xaxis_title="Candle #", yaxis_title="RSI")
+                      xaxis=dict(type="category", title="", tickangle=-45, nticks=12),
+                      yaxis_title="RSI")
     return fig
 
 
@@ -397,54 +391,12 @@ st.divider()
 mini_col1, mini_col2 = st.columns(2)
 
 with mini_col1:
-    st.subheader("60m RSI Trend (last 5 trading days)")
-    chart_data_60m = df_fade.tail(40).reset_index(drop=True)
-    fig_60m = go.Figure()
-    fig_60m.add_trace(go.Scatter(
-        x=list(range(len(chart_data_60m))), y=chart_data_60m["rsi"],
-        mode="lines+markers", line=dict(color="#3b82f6", width=2), name="RSI(14)"
-    ))
-    last_40 = df_fade.tail(40)
-    current_date = None
-    for i, (idx, row) in enumerate(last_40.iterrows()):
-        row_date = idx.date()
-        if current_date is None:
-            current_date = row_date
-        elif row_date != current_date:
-            fig_60m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
-                             annotation_text=row_date.strftime("%b %d"), annotation_position="top")
-            current_date = row_date
-    fig_60m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
-    fig_60m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
-    fig_60m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
-    fig_60m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
-    fig_60m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+    fig_60m = _mini_rsi_chart(df_fade, "60m RSI Trend (last 5 trading days)", line_color="#3b82f6")
     st.plotly_chart(fig_60m, use_container_width=True, key="chart_60m_trend")
 
 with mini_col2:
     if df_30m_hist is not None and len(df_30m_hist) > 1:
-        st.subheader("30m RSI Trend (last 5 trading days)")
-        chart_data_30m = df_30m_hist.tail(80).reset_index(drop=True)
-        fig_30m = go.Figure()
-        fig_30m.add_trace(go.Scatter(
-            x=list(range(len(chart_data_30m))), y=chart_data_30m["rsi"],
-            mode="lines+markers", line=dict(color="#f59e0b", width=2), name="RSI(14)"
-        ))
-        last_80 = df_30m_hist.tail(80)
-        current_date = None
-        for i, (idx, row) in enumerate(last_80.iterrows()):
-            row_date = idx.date()
-            if current_date is None:
-                current_date = row_date
-            elif row_date != current_date:
-                fig_30m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
-                                 annotation_text=row_date.strftime("%b %d"), annotation_position="top")
-                current_date = row_date
-        fig_30m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
-        fig_30m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
-        fig_30m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
-        fig_30m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
-        fig_30m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+        fig_30m = _mini_rsi_chart(df_30m_hist, "30m RSI Trend (last 5 trading days)", line_color="#f59e0b")
         st.plotly_chart(fig_30m, use_container_width=True, key="chart_30m_trend")
     else:
         st.warning("30m data unavailable")
