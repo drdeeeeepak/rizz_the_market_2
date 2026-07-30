@@ -116,12 +116,9 @@ def _last5_table(rows):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. RSI FADE — 75/25 zone cross (contrarian)
+# Signal computation — done once here, reused by the dashboard below AND by
+# each system's own section further down (single source of truth).
 # ══════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-st.header("1. RSI Fade — 75/25 Zone Cross")
-st.caption("Contrarian: RSI crossing INTO overbought (≥75) → SHORT. RSI crossing INTO oversold (≤25) → LONG.")
 
 df_fade = rfb.compute_rsi(df_hourly, RSI_PERIOD)
 prev_rsi = df_fade["rsi"].shift(1)
@@ -129,6 +126,137 @@ fade_short = (prev_rsi < 75) & (df_fade["rsi"] >= 75)
 fade_long = (prev_rsi > 25) & (df_fade["rsi"] <= 25)
 fade_sig = df_fade[fade_short.fillna(False) | fade_long.fillna(False)].copy()
 fade_sig["side"] = ["SHORT" if fade_short.loc[i] else "LONG" for i in fade_sig.index]
+
+df_div = rfb.detect_divergence_signals(df_hourly, RSI_PERIOD, div_lookback=20, div_min_gap=2.0)
+div_sig = df_div[df_div["bullish"] | df_div["bearish"]].copy()
+div_sig["side"] = ["Bullish" if b else "Bearish" for b in div_sig["bullish"]]
+
+df_piv, piv_signals = analyze_hourly_rsi(df_hourly, rsi_period=RSI_PERIOD, lookback=3)
+
+
+def _rsi_zone(rsi_val):
+    """Same zone thresholds as the RSI Fade system (75/25 extreme, 70/30 caution)."""
+    if rsi_val < 25:
+        return "🟢", "OVERSOLD"
+    elif rsi_val < 30:
+        return "🟡", "CAUTION"
+    elif rsi_val > 75:
+        return "🟢", "OVERBOUGHT"
+    elif rsi_val > 70:
+        return "🟡", "CAUTION"
+    else:
+        return "⚫", "NEUTRAL"
+
+
+def _trend_arrow(prev, curr):
+    if curr > prev + 2:
+        return "↗ Rising"
+    elif curr < prev - 2:
+        return "↘ Falling"
+    else:
+        return "→ Flat"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LIVE RSI DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.header("📊 Live RSI Dashboard")
+st.caption("Real-time 60-minute & 30-minute RSI, plus the current read from each of the 3 signal systems below.")
+
+rsi_60m_current = df_fade["rsi"].iloc[-1]
+rsi_60m_prev = df_fade["rsi"].iloc[-2] if len(df_fade) > 1 else rsi_60m_current
+price_60m = df_fade["close"].iloc[-1]
+
+if df_30m_hist is not None and len(df_30m_hist) > 1:
+    rsi_30m_current = df_30m_hist["rsi"].iloc[-1]
+    rsi_30m_prev = df_30m_hist["rsi"].iloc[-2]
+    price_30m = df_30m_hist["close"].iloc[-1]
+else:
+    rsi_30m_current = rsi_30m_prev = price_30m = None
+
+dash_col1, dash_col2 = st.columns(2)
+with dash_col1:
+    zone_emoji, zone_label = _rsi_zone(rsi_60m_current)
+    trend = _trend_arrow(rsi_60m_prev, rsi_60m_current)
+    st.metric(f"{zone_emoji} 60-MINUTE RSI", f"{rsi_60m_current:.1f}",
+             delta=f"{rsi_60m_current - rsi_60m_prev:.1f} — {trend}", delta_color="off")
+    st.caption(f"Zone: {zone_label} | Spot: {price_60m:.0f}")
+
+with dash_col2:
+    if rsi_30m_current is not None:
+        zone_emoji, zone_label = _rsi_zone(rsi_30m_current)
+        trend = _trend_arrow(rsi_30m_prev, rsi_30m_current)
+        st.metric(f"{zone_emoji} 30-MINUTE RSI", f"{rsi_30m_current:.1f}",
+                 delta=f"{rsi_30m_current - rsi_30m_prev:.1f} — {trend}", delta_color="off")
+        st.caption(f"Zone: {zone_label} | Spot: {price_30m:.0f}")
+    else:
+        st.warning("30m data unavailable")
+
+# ── Combined read: current stance of each of the 3 systems ─────────────────────
+st.markdown("**Combined signal read — current stance of all 3 systems**")
+
+fade_zone_emoji, fade_zone_label = _rsi_zone(rsi_60m_current)
+fade_stance = "LONG-leaning" if rsi_60m_current <= 30 else "SHORT-leaning" if rsi_60m_current >= 70 else "Neutral"
+div_stance = div_sig["side"].iloc[-1] if not div_sig.empty else "No signal yet"
+piv_stance = piv_signals[-1]["signal"] if piv_signals else "No signal yet"
+
+bull_words = ("LONG-leaning", "Bullish", "BUY")
+bear_words = ("SHORT-leaning", "Bearish", "SELL")
+n_bull = sum(s in bull_words for s in (fade_stance, div_stance, piv_stance))
+n_bear = sum(s in bear_words for s in (fade_stance, div_stance, piv_stance))
+
+combo_col1, combo_col2, combo_col3 = st.columns(3)
+for col, label, stance in [
+    (combo_col1, "1. RSI Fade (zone)", fade_stance),
+    (combo_col2, "2. Pure Divergence (last signal)", div_stance),
+    (combo_col3, "3. Pivot Breakout (last signal)", piv_stance),
+]:
+    with col:
+        color = "#10b981" if stance in bull_words else "#ef4444" if stance in bear_words else "#94a3b8"
+        st.markdown(
+            f"<div style='padding:10px;border-radius:6px;background-color:{color};"
+            f"color:white;text-align:center;font-weight:700;'>{label}<br>{stance}</div>",
+            unsafe_allow_html=True,
+        )
+
+if n_bull > n_bear:
+    st.success(f"✅ **{n_bull} of 3 systems bullish** — {fade_stance} / {div_stance} / {piv_stance}")
+elif n_bear > n_bull:
+    st.error(f"🔻 **{n_bear} of 3 systems bearish** — {fade_stance} / {div_stance} / {piv_stance}")
+else:
+    st.info(f"⭕ **No majority** — {fade_stance} / {div_stance} / {piv_stance}")
+
+with st.expander("ℹ️ Reference — what these 3 read-outs mean", expanded=False):
+    st.markdown("""
+The 3 systems are not measuring the same kind of thing, so read the combined tally
+as "3 different lenses on the same market," not a single unified signal:
+
+- **RSI Fade (zone)** is a *momentary* read — where hourly RSI sits right now.
+  LONG-leaning below 30, SHORT-leaning above 70, Neutral in between. This can flip
+  every candle as RSI moves; it does not "hold a position."
+- **Pure Divergence (last signal)** is a *persistent* read — the direction of the
+  most recent bullish/bearish divergence, which (per that system's own backtest
+  logic) is treated as still "held" until an opposite divergence fires. It can stay
+  the same stance for days.
+- **Pivot Breakout (last signal)** is the same persistent style — the direction of
+  the most recent BUY/SELL pivot break, held until reversed.
+
+Because two of the three are "sticky" (persistent) and one is momentary, 3/3 or 0/3
+agreement is more meaningful than a 2/1 split — a 2/1 can just mean the momentary
+Fade read hasn't caught up yet with the other two, or is passing through on its way
+to agreeing or disagreeing. Treat this as context, not a trade trigger on its own.
+""")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. RSI FADE — 75/25 zone cross (contrarian)
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.header("1. RSI Fade — 75/25 Zone Cross")
+st.caption("Contrarian: RSI crossing INTO overbought (≥75) → SHORT. RSI crossing INTO oversold (≤25) → LONG.")
 
 fade_last5 = fade_sig.tail(5).iloc[::-1]
 fade_rows = [
@@ -161,10 +289,6 @@ st.caption(
     "→ LONG. Bearish divergence → SHORT. No RSI zone gate."
 )
 
-df_div = rfb.detect_divergence_signals(df_hourly, RSI_PERIOD, div_lookback=20, div_min_gap=2.0)
-div_sig = df_div[df_div["bullish"] | df_div["bearish"]].copy()
-div_sig["side"] = ["Bullish" if b else "Bearish" for b in div_sig["bullish"]]
-
 div_last5 = div_sig.tail(5).iloc[::-1]
 div_rows = [
     {"Time": ts.strftime("%d %b %H:%M"), "Side": r["side"], "RSI": f"{r['rsi']:.1f}", "Price": f"{r['close']:.0f}"}
@@ -193,7 +317,6 @@ st.divider()
 st.header("3. HL/LH Pivot Breakout")
 st.caption("RSI breaks above the last Lower High (LH) → BUY. RSI breaks below the last Higher Low (HL) → SELL.")
 
-df_piv, piv_signals = analyze_hourly_rsi(df_hourly, rsi_period=RSI_PERIOD, lookback=3)
 piv_last5 = piv_signals[-5:][::-1] if piv_signals else []
 piv_rows = [
     {
