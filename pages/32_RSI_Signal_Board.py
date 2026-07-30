@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-from data.live_fetcher import get_nifty_1h_phase, get_nifty_spot
+from data.live_fetcher import get_nifty_1h_phase, get_nifty_spot, get_nifty_30m, get_nifty_15m
 from analytics import rsi_fade_backtest as rfb
 from analytics.hourly_rsi_pivot import analyze_hourly_rsi
 
@@ -57,6 +57,24 @@ st.caption(
     f"{len(df_hourly)} hourly candles · {df_hourly.index[0]:%d %b %Y} → "
     f"{df_hourly.index[-1]:%d %b %Y}" + (f" · Spot {spot:.0f}" if spot else "")
 )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_30m(days=60):
+    df = get_nifty_30m(days=days)
+    return df if df is not None and not df.empty else None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_15m(days=40):
+    df = get_nifty_15m(days=days)
+    return df if df is not None and not df.empty else None
+
+
+df_30m_raw = _load_30m()
+df_15m_raw = _load_15m()
+df_30m_hist = rfb.compute_rsi(df_30m_raw, RSI_PERIOD) if df_30m_raw is not None else None
+df_15m_hist = rfb.compute_rsi(df_15m_raw, RSI_PERIOD) if df_15m_raw is not None else None
 
 
 def _rsi_chart(df_rsi, title, marker_times, marker_rsi, marker_labels, marker_colors, days_shown=10):
@@ -130,6 +148,310 @@ with col_b:
         ["#ef4444" if s == "SHORT" else "#10b981" for s in fade_last5["side"]],
     )
     st.plotly_chart(fig, use_container_width=True, key="chart_fade")
+
+# ── RSI Trend mini-charts (last 5 trading days) ────────────────────────────────
+st.divider()
+mini_col1, mini_col2 = st.columns(2)
+
+with mini_col1:
+    st.subheader("60m RSI Trend (last 5 trading days)")
+    chart_data_60m = df_fade.tail(40).reset_index(drop=True)
+    fig_60m = go.Figure()
+    fig_60m.add_trace(go.Scatter(
+        x=list(range(len(chart_data_60m))), y=chart_data_60m["rsi"],
+        mode="lines+markers", line=dict(color="#3b82f6", width=2), name="RSI(14)"
+    ))
+    last_40 = df_fade.tail(40)
+    current_date = None
+    for i, (idx, row) in enumerate(last_40.iterrows()):
+        row_date = idx.date()
+        if current_date is None:
+            current_date = row_date
+        elif row_date != current_date:
+            fig_60m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
+                             annotation_text=row_date.strftime("%b %d"), annotation_position="top")
+            current_date = row_date
+    fig_60m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
+    fig_60m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
+    fig_60m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
+    fig_60m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
+    fig_60m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+    st.plotly_chart(fig_60m, use_container_width=True, key="chart_60m_trend")
+
+with mini_col2:
+    if df_30m_hist is not None and len(df_30m_hist) > 1:
+        st.subheader("30m RSI Trend (last 5 trading days)")
+        chart_data_30m = df_30m_hist.tail(80).reset_index(drop=True)
+        fig_30m = go.Figure()
+        fig_30m.add_trace(go.Scatter(
+            x=list(range(len(chart_data_30m))), y=chart_data_30m["rsi"],
+            mode="lines+markers", line=dict(color="#f59e0b", width=2), name="RSI(14)"
+        ))
+        last_80 = df_30m_hist.tail(80)
+        current_date = None
+        for i, (idx, row) in enumerate(last_80.iterrows()):
+            row_date = idx.date()
+            if current_date is None:
+                current_date = row_date
+            elif row_date != current_date:
+                fig_30m.add_vline(x=i, line_dash="solid", line_color="lightgrey", opacity=0.5,
+                                 annotation_text=row_date.strftime("%b %d"), annotation_position="top")
+                current_date = row_date
+        fig_30m.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
+        fig_30m.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
+        fig_30m.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
+        fig_30m.add_hline(y=25, line_dash="dot", line_color="darkgreen", annotation_text="Extreme 25")
+        fig_30m.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Candle #", yaxis_title="RSI")
+        st.plotly_chart(fig_30m, use_container_width=True, key="chart_30m_trend")
+    else:
+        st.warning("30m data unavailable")
+
+# ── Historical RSI Status table (finalized styling — see CLAUDE.md) ────────────
+st.divider()
+st.subheader("Historical RSI Status (Last 5 Trading Days)")
+st.caption("60m/30m/15m RSI with Divergence")
+
+
+def _rsi_css(val, trend=0):
+    """
+    RSI styling.
+    Background by zone: RED ≥70 (overbought), GREEN ≤30 (oversold), GRAY neutral.
+    Text by trend vs previous candle: RED if lower (trend=-1), GREEN if higher
+    (trend=+1), dark slate if flat/first candle (trend=0).
+    """
+    try:
+        rsi = float(val)
+        if rsi >= 70:
+            bg_color = "#fca5a5"
+        elif rsi <= 30:
+            bg_color = "#86efac"
+        else:
+            bg_color = "#e2e8f0"
+        if trend < 0:
+            text_color, text_weight = "#dc2626", "800"
+        elif trend > 0:
+            text_color, text_weight = "#15803d", "800"
+        else:
+            text_color, text_weight = "#334155", "600"
+        return f"background-color:{bg_color};color:{text_color};font-weight:{text_weight};"
+    except Exception:
+        return ""
+
+
+def _div_css(val):
+    """Color divergence cells: Green=Bullish (LONG), Red=Bearish (SHORT)"""
+    s = str(val)
+    if "Bull" in s:
+        return "background-color:#10b981;color:#ffffff;font-weight:800;"
+    elif "Bear" in s:
+        return "background-color:#ef4444;color:#ffffff;font-weight:800;"
+    return ""
+
+
+def _signal_css(val):
+    """Color signal column: Green for LONG, Red for SHORT"""
+    s = str(val)
+    if "LONG" in s:
+        return "background-color:#d1fae5;color:#065f46;font-weight:800;"
+    elif "SHORT" in s:
+        return "background-color:#fee2e2;color:#7f1d1d;font-weight:800;"
+    return ""
+
+
+def _detect_divergence(df, lookback=20, min_gap=2.0):
+    """Detect bullish/bearish divergence: price extreme not confirmed by RSI"""
+    if df is None or df.empty or 'rsi' not in df.columns:
+        return pd.Series("", index=df.index if df is not None and not df.empty else pd.Index([]))
+    d = df.copy()
+    rsi = d['rsi'].fillna(0)
+    prior_low_price = d['low'].shift(1).rolling(lookback).min()
+    prior_low_rsi = rsi.shift(1).rolling(lookback).min()
+    prior_high_price = d['high'].shift(1).rolling(lookback).max()
+    prior_high_rsi = rsi.shift(1).rolling(lookback).max()
+    bullish_div = (d['low'] <= prior_low_price) & (rsi > prior_low_rsi + min_gap)
+    bearish_div = (d['high'] >= prior_high_price) & (rsi < prior_high_rsi - min_gap)
+    div_signal = pd.Series("", index=d.index, dtype=str)
+    div_signal[bullish_div] = "▲ Bull"
+    div_signal[bearish_div] = "▼ Bear"
+    return div_signal
+
+
+def _build_hist_table(df_60m, df_30m, df_15m):
+    """Build historical RSI table with combined RSI+Div columns for 60m, 30m, 15m"""
+    if df_60m is None or df_60m.empty:
+        df_60m = pd.DataFrame()
+    if df_30m is None or df_30m.empty:
+        df_30m = pd.DataFrame()
+    if df_15m is None or df_15m.empty:
+        df_15m = pd.DataFrame()
+
+    rows = []
+    for df in [df_60m, df_30m, df_15m]:
+        if not df.empty and not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+
+    div_60m = _detect_divergence(df_60m) if not df_60m.empty else pd.Series()
+    div_30m = _detect_divergence(df_30m) if not df_30m.empty else pd.Series()
+    div_15m = _detect_divergence(df_15m) if not df_15m.empty else pd.Series()
+
+    if not df_30m.empty:
+        unique_dates = sorted(set(df_30m.index.date), reverse=True)[:5]
+    elif not df_60m.empty:
+        unique_dates = sorted(set(df_60m.index.date), reverse=True)[:5]
+    else:
+        return pd.DataFrame()
+
+    for date in sorted(unique_dates, reverse=True):
+        rows.append({'Time': f"📅 {date.strftime('%A, %B %d, %Y')}",
+                     '60m': '', '30m': '', '15m': '', 'Signal': ''})
+
+        if not df_15m.empty:
+            day_15m = df_15m[df_15m.index.date == date]
+            day_30m = df_30m[df_30m.index.date == date] if not df_30m.empty else pd.DataFrame()
+            day_60m = df_60m[df_60m.index.date == date] if not df_60m.empty else pd.DataFrame()
+            day_div_15m = div_15m[div_15m.index.date == date] if not div_15m.empty else pd.Series()
+            day_div_30m = div_30m[div_30m.index.date == date] if not div_30m.empty else pd.Series()
+            day_div_60m = div_60m[div_60m.index.date == date] if not div_60m.empty else pd.Series()
+
+            shown_60m_hours = set()
+            shown_30m_times = set()
+
+            day_15m_reversed = day_15m.iloc[::-1]
+            for idx_in_reversed, (idx_15m, row_15m) in enumerate(day_15m_reversed.iterrows()):
+                rsi_15m = row_15m['rsi']
+                if pd.isna(rsi_15m):
+                    continue
+
+                time_str = idx_15m.strftime('%H:%M')
+                div_15m_str = day_div_15m.get(idx_15m, "") if not day_div_15m.empty else ""
+                col_15m = f"{rsi_15m:.1f}" + (f" {div_15m_str}" if div_15m_str else "")
+
+                hour_15m = idx_15m.hour
+                minute_15m = idx_15m.minute
+                target_30m_minute = 15 if minute_15m < 30 else 45
+                time_key_30m = f"{hour_15m}:{target_30m_minute:02d}"
+                col_30m = ""
+                if time_key_30m not in shown_30m_times and not day_30m.empty:
+                    shown_30m_times.add(time_key_30m)
+                    for idx_30m, row_30m in day_30m.iterrows():
+                        if idx_30m.hour == hour_15m and idx_30m.minute == target_30m_minute:
+                            try:
+                                rsi_30m = row_30m['rsi'] if 'rsi' in row_30m.index else None
+                            except (KeyError, AttributeError):
+                                rsi_30m = None
+                            if rsi_30m is not None and not pd.isna(rsi_30m):
+                                div_30m_str = day_div_30m.get(idx_30m, "") if not day_div_30m.empty else ""
+                                col_30m = f"{rsi_30m:.1f}" + (f" {div_30m_str}" if div_30m_str else "")
+                            break
+
+                col_60m = ""
+                if hour_15m not in shown_60m_hours and not day_60m.empty:
+                    shown_60m_hours.add(hour_15m)
+                    for idx_60m, row_60m in day_60m.iterrows():
+                        if idx_60m.hour == hour_15m:
+                            rsi_60m = row_60m.get('rsi') if isinstance(row_60m, dict) else row_60m['rsi']
+                            if not pd.isna(rsi_60m):
+                                div_60m_str = day_div_60m.get(idx_60m, "") if not day_div_60m.empty else ""
+                                col_60m = f"{rsi_60m:.1f}" + (f" {div_60m_str}" if div_60m_str else "")
+                            break
+
+                signal = ""
+                if minute_15m % 30 == 0 and not day_30m.empty:
+                    matching_30m = day_30m[(day_30m.index.hour == hour_15m) & (day_30m.index.minute == minute_15m)]
+                    if len(matching_30m) > 0:
+                        rsi_30m_sig = matching_30m['rsi'].iloc[-1]
+                        if not pd.isna(rsi_30m_sig):
+                            prev_30m_idx = day_30m.index.get_loc(matching_30m.index[-1])
+                            prev_rsi_30m = day_30m['rsi'].iloc[prev_30m_idx - 1] if prev_30m_idx > 0 else rsi_30m_sig
+                            if rsi_30m_sig < 25 and prev_rsi_30m > 30:
+                                signal = f"🟢 LONG {time_str}"
+                            elif rsi_30m_sig > 75 and prev_rsi_30m < 70:
+                                signal = f"🔴 SHORT {time_str}"
+                            elif rsi_30m_sig < 22 and prev_rsi_30m > 25:
+                                signal = f"↓ ROLL DOWN {time_str}"
+                            elif rsi_30m_sig > 78 and prev_rsi_30m < 75:
+                                signal = f"↑ ROLL UP {time_str}"
+
+                rows.append({'Time': time_str, '60m': col_60m, '30m': col_30m, '15m': col_15m, 'Signal': signal})
+
+    return pd.DataFrame(rows)
+
+
+hist_table = _build_hist_table(df_fade, df_30m_hist, df_15m_hist)
+
+if not hist_table.empty:
+    def _style_rsi_table(df):
+        styler = df.style
+
+        def _prev_rsi_below(row_loc, col):
+            import re
+            for j in range(row_loc + 1, len(df)):
+                v = df.iloc[j][col]
+                if v:
+                    m = re.search(r'(\d+\.?\d*)', str(v))
+                    if m:
+                        try:
+                            return float(m.group(1))
+                        except ValueError:
+                            continue
+            return None
+
+        def _rsi_trend(row_loc, col, curr_val):
+            try:
+                curr = float(curr_val)
+            except (TypeError, ValueError):
+                return 0
+            prev = _prev_rsi_below(row_loc, col)
+            if prev is None:
+                return 0
+            if curr < prev:
+                return -1
+            if curr > prev:
+                return 1
+            return 0
+
+        def _combined_rsi_div_row(row):
+            import re
+            styles = [''] * len(row)
+            row_loc = df.index.get_loc(row.name)
+            for i, col in enumerate(row.index):
+                if col in ('60m', '30m', '15m'):
+                    cell_val = row[col]
+                    if cell_val:
+                        # Divergence marker takes priority over the RSI-zone background —
+                        # a cell can carry both (e.g. "35.4 ▲ Bull"), and the whole point
+                        # of the marker is to stand out regardless of which zone RSI is in.
+                        if "Bull" in str(cell_val) or "Bear" in str(cell_val):
+                            styles[i] = _div_css(cell_val)
+                        else:
+                            m = re.search(r'(\d+\.?\d*)', str(cell_val))
+                            if m:
+                                trend = _rsi_trend(row_loc, col, m.group(1))
+                                styles[i] = _rsi_css(m.group(1), trend)
+                    else:
+                        styles[i] = ''
+                else:
+                    styles[i] = ''
+            return styles
+
+        def _signal_row(row):
+            styles = [''] * len(row)
+            for i, col in enumerate(row.index):
+                styles[i] = _signal_css(row[col]) if col == 'Signal' else ''
+            return styles
+
+        styler = styler.apply(_combined_rsi_div_row, axis=1)
+        styler = styler.apply(_signal_row, axis=1)
+        return styler
+
+    styled_table = _style_rsi_table(hist_table)
+    st.dataframe(styled_table, use_container_width=True, height=600, hide_index=True)
+    st.download_button(
+        "⬇ Download Historical RSI as CSV", hist_table.to_csv(index=False).encode('utf-8'),
+        file_name="nifty_rsi_historical_5days.csv", mime="text/csv", key="hist_rsi_download",
+    )
+else:
+    st.warning("Not enough historical data to display table.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -243,7 +565,7 @@ do it (`analytics/rsi_fade_backtest.py: simulate_fade_trades` /
 `threshold_scan` / `compare_timeframes`) is unchanged and still callable.
 """)
 
-with st.expander("2. Pure Divergence — findings", expanded=True):
+with st.expander("2. Pure Divergence — findings", expanded=False):
     st.markdown("""
 Divergence alone as the entry (no RSI zone gate), holding until the opposite
 divergence fires (no midline exit, no time stop) — tested with and without a fixed
