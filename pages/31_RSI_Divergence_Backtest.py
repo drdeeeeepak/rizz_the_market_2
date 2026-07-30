@@ -32,13 +32,15 @@ st.caption(
 
 @st.cache_data(ttl=3600)
 def fetch_historical_data():
-    """Fetch 6+ months of 30m and 60m OHLC data"""
+    """Fetch 30m and 60m (hourly) OHLC data from Kite"""
     try:
-        df_30m = _lf.get_historical_ohlcv("NIFTY50-INDEX", "30minute", days=180)
-        df_60m = _lf.get_historical_ohlcv("NIFTY50-INDEX", "60minute", days=180)
+        df_30m = _lf.get_nifty_30m(days=180)
+        df_60m = _lf.get_nifty_1h_phase(days=180)
         return df_30m, df_60m
     except Exception as e:
         st.error(f"Failed to fetch data: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 df_hist_30m, df_hist_60m = fetch_historical_data()
