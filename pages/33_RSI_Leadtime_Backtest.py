@@ -90,8 +90,12 @@ q1a, q1b = st.columns(2)
 with q1a:
     q1_days = st.slider("History (calendar days)", 180, 1460, 1460, 30, key="p33_q1_days")
 with q1b:
-    q1_call = st.number_input("Routine CALL % OTM", 1.0, 8.0, 3.5, 0.25, key="p33_q1_call")
-    q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 4.0, 0.25, key="p33_q1_put")
+    # Defaults are what is actually TRADED (CALL 3.0 / PUT 3.5), which is not what
+    # rolled_positions.py computes for pg02 (3.5 / 4.0 via anchor x 1.035 / x 0.960).
+    # Deliberate: this scan must be scored against the real position, and pg02 is
+    # a separate open question the user has parked.
+    q1_call = st.number_input("Routine CALL % OTM", 1.0, 8.0, 3.0, 0.25, key="p33_q1_call")
+    q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 3.5, 0.25, key="p33_q1_put")
 
 st.caption(
     "Entry on the signal day, exit **at Tuesday expiry** — near (next Tuesday) and biweekly "
