@@ -105,7 +105,8 @@ comfortable single-digit breach rate at 3% becomes ~20% at 2% and ~48% at 1%.
 - **Don't go 0.5% nearer.** At 2.5% CALL / 3.0% PUT the edge is gone and you carry *more* risk than your normal position. 0.25% is the whole edge.
 - **Don't tighten both legs on the same day.** Each rule fires on the opposite signal, so they can never both apply. A day is bearish or bullish, not both.
 - **Don't sell at 1–2% OTM on a signal.** Breach runs 19–48%. A low breach rate is a property of *distance*, not of the signal.
-- **Don't use Pivot Breakout or RSI Fade for this.** Tested, did not hold (see the grid below).
+- **Don't use Pivot Breakout.** On the CALL side it points the *wrong way* — 9.4% vs 7.7% near, 24.6% vs 20.1% biweekly. Tightening on its signal leaves you less safe than doing nothing.
+- **Don't use RSI Fade either — but for the opposite reason.** It leans the right way on all four cells, some by more than Pure Divergence. It fails on sample size, not direction. See "the two rejections are not alike" below.
 - **Don't apply this to a position you already hold.** Every result comes from opening a *new* position on the signal day. Shifting a leg you already sold means buying it back, and that cost is in none of these numbers.
 
 ## Why the PUT rule is weaker
@@ -129,6 +130,39 @@ All 3 systems plus 2 composites, both sides, both expiries — **20 tests**. Wee
 | Pivot Breakout | 0.701 | 0.865 | 0.084 | 0.170 |
 
 **Pure Divergence CALL is the only cell that passed at both horizons.** MAJORITY CALL and ANY-of-3 PUT passed near but failed biweekly — read those as unconfirmed.
+
+## The two rejections are not alike
+
+Both Pivot Breakout and RSI Fade were rejected, for opposite reasons. Worth keeping straight,
+because one is finished and the other is only unproven.
+
+**Pivot Breakout — genuinely wrong.** On the CALL side it is not merely useless, it is
+inverted, at both horizons, and the harm grows as you move closer:
+
+| OTM | Bearish-signal day | Normal day |
+|---|---|---|
+| 2.0% | 26.6% | 23.1% |
+| 2.5% | **18.2%** | 13.3% |
+| 3.0% | 9.4% | 7.7% |
+
+Its PUT side leans right (4.3% vs 7.4% near) but never reaches significance. Treat this
+system as closed for strike-tightening.
+
+**RSI Fade — right direction, not enough data.** All four cells favour the signal, some by
+more than Pure Divergence manages. Biweekly CALL:
+
+| OTM | Bearish-signal day | Normal day |
+|---|---|---|
+| 2.0% | 29.8% | 40.7% |
+| 2.5% | 21.3% | 30.0% |
+| 3.0% | **14.9%** | **21.2%** |
+| 3.5% | 6.4% | 14.6% |
+
+Every row favours the signal, several by 9–11 points. It fails only because RSI reaching
+75/25 on the hourly is rare — **47 signals in 4 years**. That gap would need ~141 signals to
+clear p<0.05, i.e. roughly **12 years** at the current rate, so waiting will not settle it.
+If this system is ever worth revisiting, the route is loosening the threshold to 70/30 so it
+fires often enough to test — a fresh backtest, not a tweak.
 
 ## Why it works — direction, not volatility
 
