@@ -229,6 +229,152 @@ def drift(side: str = "far", col: str = "max_pain", lookback: int = 10) -> dict:
     }
 
 
+# ── Per-strike history (from the committed parquet chains) ───────────────────
+#
+# The daily summary keeps ONE wall level per day. That answers "where is the
+# wall" but not "how did it get there" — whether it migrated smoothly strike by
+# strike (a real, defended level moving) or jumped (the old wall abandoned and a
+# new one built elsewhere). Those look identical in a single number per day and
+# mean opposite things for a short leg sitting between them.
+#
+# IMPORTANT: the far expiry ROLLS. The same strike on two dates either side of a
+# roll is a different contract, and its OI is not comparable across that boundary.
+# Every function here reports the expiry per date so the break is visible rather
+# than silently smoothed over.
+
+def _expiry_by_date(side: str = "far") -> dict:
+    """{date_str: expiry_str} from the daily summary, for marking roll boundaries."""
+    try:
+        from data.oi_history import load_daily_history
+        return {r.get("date"): r.get(f"{side}_expiry") for r in load_daily_history()
+                if r.get("date")}
+    except Exception:
+        return {}
+
+
+def chain_history_matrix(side: str = "far", days: int = 30,
+                         col: str = "ce_oi") -> pd.DataFrame:
+    """
+    Strikes (rows) × dates (columns) of one OI column, from the parquet snapshots.
+
+    Strikes absent on a given day stay NaN — the fetch window follows spot, so a
+    strike simply out of range that day is missing data, not zero open interest.
+    Empty frame until the EOD job has written at least one chain.
+    """
+    try:
+        from data.oi_history import load_chain_history
+        chains = load_chain_history(side=side, days=days)
+    except Exception:
+        return pd.DataFrame()
+    if not chains:
+        return pd.DataFrame()
+
+    series = {}
+    for date_str, df in sorted(chains.items()):
+        if df is None or df.empty or col not in df.columns:
+            continue
+        series[date_str] = pd.to_numeric(df[col], errors="coerce")
+    if not series:
+        return pd.DataFrame()
+    return pd.DataFrame(series).sort_index()
+
+
+def wall_migration(side: str = "far", days: int = 30) -> pd.DataFrame:
+    """
+    Per-date wall levels and their OI, straight from the per-strike chains, plus
+    the expiry each row belongs to and a flag on the rows where the expiry rolled.
+    """
+    try:
+        from data.oi_history import load_chain_history
+        chains = load_chain_history(side=side, days=days)
+    except Exception:
+        return pd.DataFrame()
+    if not chains:
+        return pd.DataFrame()
+
+    exp_map = _expiry_by_date(side)
+    rows = []
+    for date_str, df in sorted(chains.items()):
+        if df is None or df.empty or "ce_oi" not in df.columns:
+            continue
+        ce, pe = pd.to_numeric(df["ce_oi"], errors="coerce"), pd.to_numeric(df["pe_oi"], errors="coerce")
+        if not (ce.max() > 0 or pe.max() > 0):
+            continue
+        rows.append({
+            "date":         date_str,
+            "expiry":       exp_map.get(date_str),
+            "call_wall":    int(ce.idxmax()) if ce.max() > 0 else None,
+            "put_wall":     int(pe.idxmax()) if pe.max() > 0 else None,
+            "call_wall_oi": int(ce.max()) if ce.max() > 0 else 0,
+            "put_wall_oi":  int(pe.max()) if pe.max() > 0 else 0,
+            "strikes":      int(len(df)),
+        })
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).set_index("date").sort_index()
+    # True on the first row of a new expiry — OI is not comparable across it.
+    out["expiry_rolled"] = out["expiry"].ne(out["expiry"].shift()).fillna(False)
+    out.loc[out.index[0], "expiry_rolled"] = False
+    return out
+
+
+def wall_migration_summary(mig: pd.DataFrame) -> dict:
+    """
+    Did the wall MIGRATE (moved in small steps — a real level being defended and
+    dragged) or JUMP (abandoned here, rebuilt there)? Only compares within a
+    single expiry; rows where the expiry rolled are excluded from the step stats.
+    """
+    if mig is None or mig.empty or len(mig) < 2:
+        return {"available": False, "days": int(len(mig)) if mig is not None else 0}
+
+    out = {"available": True, "days": int(len(mig))}
+    for side_col, key in (("call_wall", "call"), ("put_wall", "put")):
+        s = pd.to_numeric(mig[side_col], errors="coerce")
+        steps = s.diff()
+        # Drop steps that straddle an expiry roll — different contract, not a move.
+        steps = steps[~mig["expiry_rolled"].astype(bool)]
+        steps = steps.dropna()
+        if steps.empty:
+            out[key] = {"net": None, "biggest_step": None, "behaviour": "unknown"}
+            continue
+        biggest = float(steps.abs().max())
+        net = float(s.dropna().iloc[-1] - s.dropna().iloc[0]) if s.notna().sum() >= 2 else 0.0
+        # One jump larger than the whole net drift means the level was relocated,
+        # not dragged — the wall was abandoned and rebuilt somewhere else.
+        behaviour = ("jumped" if biggest > max(abs(net), 1) * 0.9 and biggest >= 150 else
+                     "migrated" if abs(net) >= 50 else "held")
+        out[key] = {
+            "net": net, "biggest_step": biggest, "behaviour": behaviour,
+            "from": float(s.dropna().iloc[0]), "to": float(s.dropna().iloc[-1]),
+        }
+    return out
+
+
+def strike_oi_growth(side: str = "far", days: int = 30,
+                     col: str = "ce_oi", top: int = 8) -> pd.DataFrame:
+    """
+    Which individual strikes gained or lost the most OI across the window.
+    Compares each strike's last recorded value against its first, using only
+    strikes present on both ends so a strike that drifted into range is not
+    reported as pure growth.
+    """
+    m = chain_history_matrix(side, days, col)
+    if m.empty or m.shape[1] < 2:
+        return pd.DataFrame()
+    first_col, last_col = m.columns[0], m.columns[-1]
+    both = m[[first_col, last_col]].dropna()
+    if both.empty:
+        return pd.DataFrame()
+    out = pd.DataFrame({
+        "first": both[first_col].astype(float),
+        "last":  both[last_col].astype(float),
+    })
+    out["change"] = out["last"] - out["first"]
+    out["pct"] = np.where(out["first"] > 0, out["change"] / out["first"] * 100, np.nan)
+    out = out.reindex(out["change"].abs().sort_values(ascending=False).index)
+    return out.head(top)
+
+
 def intraday_frame() -> pd.DataFrame:
     """Today's intraday OI points, flattened. Empty before the first page load."""
     try:

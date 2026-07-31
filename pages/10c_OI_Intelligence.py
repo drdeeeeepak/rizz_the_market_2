@@ -30,6 +30,7 @@ from data.live_fetcher import get_nifty_spot, get_dual_expiry_chains
 from analytics.oi_analytics import (
     buildup_table, buildup_summary, volume_oi_table, concentration,
     history_series, pcr_percentile, drift, intraday_frame,
+    chain_history_matrix, wall_migration, wall_migration_summary, strike_oi_growth,
     LONG_BUILDUP, SHORT_BUILDUP, LONG_UNWIND, SHORT_COVER, FLAT,
 )
 
@@ -375,6 +376,124 @@ else:
                             "ce_top3", "pe_top3", "atm_iv", "iv_skew", "straddle",
                             "rollover_pct", "iv_term"] if c in hist.columns]
         st.dataframe(hist[cols].sort_index(ascending=False), width="stretch", height=320)
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5 — Per-strike history
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 5 — Per-strike history",
+                  "Did the wall migrate strike by strike, or get abandoned and rebuilt elsewhere?")
+
+ui.simple_technical(
+    "Section 4 keeps one wall level per day. That tells you WHERE the wall is, but not how "
+    "it got there — and two very different things look identical in a single number.\n\n"
+    "A wall that MIGRATES moves in small steps: the same writers are defending a level and "
+    "dragging it along with price. It is a real level and it tends to keep holding.\n\n"
+    "A wall that JUMPS was abandoned. Writers closed out at the old strike and rebuilt "
+    "somewhere else entirely. Anything sitting between the old and new level just lost its "
+    "protection — and if your short strike is in that gap, that is the moment to act.",
+    "Reads the per-strike chains the EOD job commits to data/parquet/\n"
+    "Heat = open interest at that strike on that day; blank = strike outside the window\n"
+    "'jumped' = biggest single-day step ≈ the whole net drift, and ≥ 150 pts\n"
+    "The far expiry ROLLS — steps across a roll are excluded, since the same strike\n"
+    "on either side is a different contract"
+)
+st.markdown("")
+
+mig = wall_migration(side_key, days=30)
+
+if mig.empty:
+    ui.alert_box(
+        "Per-strike history is still being built",
+        "This section reads the full option chain that the EOD job saves each day to "
+        "data/parquet/. Nothing has been written yet — the snapshot job could not read the "
+        "chain before the symbol fix, so there is no back history to show, and Kite serves "
+        "no historical option OI to backfill from.\n\n"
+        "It starts filling from the next EOD run, and needs about a week before the migrate-"
+        "vs-jump reading means anything.",
+        level="info")
+else:
+    summ = wall_migration_summary(mig)
+    st.caption(f"📈 {len(mig)} day(s) of per-strike chains — {mig.index[0]} → {mig.index[-1]}")
+
+    if summ.get("available"):
+        _BEHAV = {"migrated": ("green", "Level defended and dragged along"),
+                  "jumped":   ("red",   "Abandoned here, rebuilt elsewhere"),
+                  "held":     ("green", "Barely moved"),
+                  "unknown":  ("default", "Not enough data")}
+        c1, c2 = st.columns(2)
+        for colobj, key, lbl in ((c1, "call", "CALL WALL"), (c2, "put", "PUT WALL")):
+            d = summ.get(key, {})
+            beh = d.get("behaviour", "unknown")
+            colr, note = _BEHAV.get(beh, ("default", ""))
+            with colobj:
+                if d.get("from") is not None:
+                    ui.metric_card(
+                        f"{lbl} — {beh.upper()}",
+                        f"{d['from']:,.0f} → {d['to']:,.0f}",
+                        sub=f"{note} · net {d['net']:+,.0f}, biggest step {d['biggest_step']:,.0f}",
+                        color=colr)
+                else:
+                    ui.metric_card(f"{lbl}", "—", sub="Not enough data")
+
+        for key, lbl in (("call", "Call"), ("put", "Put")):
+            if summ.get(key, {}).get("behaviour") == "jumped":
+                d = summ[key]
+                ui.alert_box(
+                    f"{lbl} wall was RELOCATED, not dragged",
+                    f"Biggest single-day move was {d['biggest_step']:,.0f} pts against a net "
+                    f"drift of {d['net']:+,.0f}. Writers closed at the old level and rebuilt "
+                    f"elsewhere rather than defending it. Any strike between "
+                    f"{min(d['from'], d['to']):,.0f} and {max(d['from'], d['to']):,.0f} lost "
+                    "its cover when that happened.",
+                    level="warning")
+
+    if mig["expiry_rolled"].astype(bool).any():
+        _rolls = list(mig.index[mig["expiry_rolled"].astype(bool)])
+        st.caption(f"⚠️ Expiry rolled on {', '.join(_rolls)} — OI is not comparable across "
+                   "those dates (different contract), so those steps are excluded above.")
+
+    _hm_col = st.radio("Heatmap side", ["Call OI", "Put OI"], horizontal=True)
+    _col = "ce_oi" if _hm_col == "Call OI" else "pe_oi"
+    matrix = chain_history_matrix(side_key, days=30, col=_col)
+
+    if matrix.empty or matrix.shape[1] < 2:
+        st.info("Heatmap needs at least two recorded days.")
+    else:
+        figh = go.Figure(go.Heatmap(
+            z=matrix.values, x=list(matrix.columns), y=list(matrix.index),
+            colorscale="YlOrRd", hoverongaps=False,
+            colorbar=dict(title="OI"),
+            hovertemplate="%{x}<br>strike %{y:,}<br>OI %{z:,.0f}<extra></extra>"))
+        # Overlay the wall path so migration vs relocation is visible directly.
+        wall_col = "call_wall" if _col == "ce_oi" else "put_wall"
+        wl = mig[wall_col].dropna()
+        if not wl.empty:
+            figh.add_trace(go.Scatter(
+                x=list(wl.index), y=list(wl.values), mode="lines+markers",
+                name="Wall", line=dict(color="#0ea5e9", width=2),
+                marker=dict(size=7, symbol="diamond")))
+        figh.update_layout(height=460, margin=dict(l=10, r=10, t=30, b=10),
+                           title=f"{_hm_col} by strike and day (blue = the wall)",
+                           xaxis_title="date", yaxis_title="strike")
+        st.plotly_chart(figh, width="stretch")
+        st.caption("Blank cells are strikes outside that day's fetch window — missing data, "
+                   "not zero open interest.")
+
+    growth = strike_oi_growth(side_key, days=30, col=_col, top=8)
+    if not growth.empty:
+        with st.expander(f"Strikes that gained or lost the most {_hm_col.lower()}"):
+            g = growth.copy()
+            g.index.name = "Strike"
+            g = g.rename(columns={"first": "First day", "last": "Last day",
+                                  "change": "Change", "pct": "Change %"})
+            st.dataframe(
+                g.style.format({"First day": "{:,.0f}", "Last day": "{:,.0f}",
+                                "Change": "{:+,.0f}", "Change %": "{:+.1f}%"}),
+                width="stretch")
+            st.caption("Only strikes present on BOTH the first and last recorded day — a "
+                       "strike that drifted into the window mid-period is not counted as growth.")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
