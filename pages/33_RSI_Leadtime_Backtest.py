@@ -15,9 +15,14 @@
 # analytics/strike_survival_backtest.py for the actual backtest logic.
 
 import importlib
+import importlib.util
 
 import pandas as pd
 import streamlit as st
+
+# Styler.background_gradient needs matplotlib. Resolve once here rather than
+# per-render — see the note at the key-distances table for why try/except fails.
+_HAS_MPL = importlib.util.find_spec("matplotlib") is not None
 
 import data.live_fetcher as _lf
 from analytics import strike_survival_backtest as ssb
@@ -155,13 +160,43 @@ if _q1all:
                       "part of any raw breach advantage is just less time at risk.")
             st.dataframe(_q1["hold_profile"], use_container_width=True, hide_index=True)
 
-            st.markdown("**Breach rate by strike distance** — signal day vs non-signal day")
+            st.markdown("**How close can I actually sell? — breach % at every distance**")
+            st.caption("This is the sizing table. Breach % rises steeply as you move "
+                      "closer, so a low breach rate at 3% is NOT a licence to sell at 1% — "
+                      "read the number at the distance you're actually considering.")
             _b = _q1["breach"]
             _sys = st.selectbox("System", sorted(_b["system"].unique()), key=f"p33_q1_sys_{_m}")
             _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key=f"p33_q1_side_{_m}")
             _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
                 index="condition", columns="distance_pct", values="breach_pct")
-            st.dataframe(_piv, use_container_width=True)
+            _key_d = [c for c in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5) if c in _piv.columns]
+            st.markdown("*Key distances*")
+            # background_gradient needs matplotlib (declared in requirements.txt).
+            # It is LAZY — calling it never raises; the ImportError surfaces later
+            # when the Styler renders inside st.dataframe, so a try/except around
+            # the call is useless. Check the module is importable up front instead.
+            _styled = _piv[_key_d].style.format("{:.1f}%")
+            if _HAS_MPL:
+                _styled = _styled.background_gradient(cmap="RdYlGn_r", axis=None)
+            st.dataframe(_styled, use_container_width=True)
+            with st.expander("Full distance ladder (1.00% → 4.50%)"):
+                st.dataframe(_piv.style.format("{:.1f}%"), use_container_width=True)
+
+            st.markdown("**Cross-test — direction signal, or volatility signal?**")
+            st.caption("Every other table pairs a bearish signal only with the CALL side. "
+                      "This scores all four pairings. If a bearish signal makes the CALL "
+                      "safer but leaves the PUT no better (or worse), it reads DIRECTION — "
+                      "tighten one leg. If BOTH sides get safer, it reads VOLATILITY — the "
+                      "right move is tightening the whole condor. `delta_pct` is signal minus "
+                      "non-signal breach: negative = safer on signal days.")
+            _c = _q1["cross"]
+            if _c.empty:
+                st.info("No cross-test rows.")
+            else:
+                _cr = _c[(_c.system == _sys) & _c.at_routine][
+                    ["signal", "side", "pairing", "n_signal_on", "breach_on_pct",
+                     "breach_off_pct", "delta_pct"]]
+                st.dataframe(_cr, use_container_width=True, hide_index=True)
 
             st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
             st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
@@ -191,6 +226,14 @@ if _q1all:
                                _hpc.to_csv(index=False).encode("utf-8"),
                                file_name="q1_hold_profile_both_expiries.csv", mime="text/csv",
                                key="p33_dl_q1_hold")
+        _cc = pd.concat([_q1all[m]["cross"].assign(expiry=m)
+                         for m, _ in Q1_MODES if not _q1all[m]["cross"].empty],
+                        ignore_index=True)
+        if not _cc.empty:
+            st.download_button("⬇ Download CROSS-TEST + full distance ladder (send this too)",
+                               _cc.to_csv(index=False).encode("utf-8"),
+                               file_name="q1_cross_test_both_expiries.csv", mime="text/csv",
+                               key="p33_dl_q1_cross", type="primary")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

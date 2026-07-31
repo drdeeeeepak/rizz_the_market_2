@@ -144,7 +144,7 @@ _CALL_SIGNAL_DIR = "DOWN"   # bearish signal → upside capped → tighten CALL
 _PUT_SIGNAL_DIR = "UP"      # bullish signal → downside capped → tighten PUT
 
 DEFAULT_DISTANCES = tuple(round(x, 2) for x in
-                          [1.5 + 0.25 * i for i in range(13)])   # 1.50% … 4.50%
+                          [1.0 + 0.25 * i for i in range(15)])   # 1.00% … 4.50%
 
 # Minimum trading sessions to expiry per mode. A position is never written into
 # an expiry closer than this — a 1-2 session Tuesday is not a trade worth having
@@ -216,7 +216,8 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
     if sigs.empty or len(d) < horizon_days + 2:
         return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
                    equal_risk=pd.DataFrame(), hold_profile=pd.DataFrame(),
-                   n_entries=0, horizon_days=horizon_days, expiry_mode=expiry_mode)
+                   cross=pd.DataFrame(), n_entries=0,
+                   horizon_days=horizon_days, expiry_mode=expiry_mode)
 
     # Days on which each system generated a signal, per direction.
     sig_days = {}
@@ -263,23 +264,35 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
         up_move = (fwd.max() - anchor) / anchor * 100     # worst case for a sold CALL
         down_move = (anchor - fwd.min()) / anchor * 100   # worst case for a sold PUT
 
+        # One rich row per (entry, system) carrying BOTH forward moves and BOTH
+        # signal states, so every pairing — matched and crossed — comes from the
+        # same single pass over the data.
         for system in systems:
-            records.append(dict(entry=entry_day, system=system, side="CALL",
-                               adverse_pct=up_move, sessions_held=held,
-                               entry_weekday=entry_day.day_name()[:3],
-                               signal_on=entry_day in sig_days.get((system, _CALL_SIGNAL_DIR), set())))
-            records.append(dict(entry=entry_day, system=system, side="PUT",
-                               adverse_pct=down_move, sessions_held=held,
-                               entry_weekday=entry_day.day_name()[:3],
-                               signal_on=entry_day in sig_days.get((system, _PUT_SIGNAL_DIR), set())))
+            records.append(dict(
+                entry=entry_day, system=system, sessions_held=held,
+                entry_weekday=entry_day.day_name()[:3],
+                up_pct=up_move, down_pct=down_move,
+                bearish_on=entry_day in sig_days.get((system, _CALL_SIGNAL_DIR), set()),
+                bullish_on=entry_day in sig_days.get((system, _PUT_SIGNAL_DIR), set())))
 
-    rec = pd.DataFrame(records)
-    if rec.empty:
+    rich = pd.DataFrame(records)
+    if rich.empty:
         return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
                    equal_risk=pd.DataFrame(), hold_profile=pd.DataFrame(),
-                   n_entries=0, horizon_days=horizon_days, expiry_mode=expiry_mode)
+                   cross=pd.DataFrame(), n_entries=0,
+                   horizon_days=horizon_days, expiry_mode=expiry_mode)
 
-    n_entries = rec["entry"].nunique()
+    # Side-matched view (CALL paired with bearish, PUT with bullish) — the
+    # pairing every table below the cross-test uses.
+    _keep = ["entry", "system", "sessions_held", "entry_weekday"]
+    rec = pd.concat([
+        rich[_keep].assign(side="CALL", adverse_pct=rich["up_pct"],
+                          signal_on=rich["bearish_on"]),
+        rich[_keep].assign(side="PUT", adverse_pct=rich["down_pct"],
+                          signal_on=rich["bullish_on"]),
+    ], ignore_index=True)
+
+    n_entries = rich["entry"].nunique()
 
     def _cond_slices(g):
         yield "signal ACTIVE", g[g["signal_on"]]
@@ -450,8 +463,38 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
                 pct_entries_Fri=round(float((sub["entry_weekday"] == "Fri").mean() * 100), 1)))
     hold_profile = pd.DataFrame(hold_rows)
 
+    # ── CROSS-TEST: direction signal, or volatility signal? ───────────────────
+    # Every table above pairs a bearish signal only with the CALL side and a
+    # bullish signal only with the PUT side, so it can never distinguish these:
+    #   DIRECTION  — a bearish signal caps the upside (CALL safer) but leaves or
+    #                worsens the downside (PUT no better).
+    #   VOLATILITY — a bearish signal precedes a quieter market, so BOTH sides
+    #                get safer, and the right response is to tighten the whole
+    #                condor rather than one leg.
+    # This scores all four pairings, so the two are finally separable.
+    cross_rows = []
+    for sig_dir, flag in (("bearish", "bearish_on"), ("bullish", "bullish_on")):
+        for side, move_col in (("CALL", "up_pct"), ("PUT", "down_pct")):
+            pairing = "matched" if ((sig_dir == "bearish") == (side == "CALL")) else "CROSSED"
+            for system, g in rich.groupby("system"):
+                on, off = g[g[flag]], g[~g[flag]]
+                if on.empty or off.empty:
+                    continue
+                routine = routine_call_pct if side == "CALL" else routine_put_pct
+                nearest_d = min(distances, key=lambda x: abs(x - routine))
+                for dist in distances:
+                    b_on = int((on[move_col] >= dist).sum())
+                    b_off = int((off[move_col] >= dist).sum())
+                    cross_rows.append(dict(
+                        system=system, signal=sig_dir, side=side, pairing=pairing,
+                        distance_pct=dist, at_routine=(dist == nearest_d),
+                        n_signal_on=len(on), breach_on_pct=round(b_on / len(on) * 100, 1),
+                        n_signal_off=len(off), breach_off_pct=round(b_off / len(off) * 100, 1),
+                        delta_pct=round(b_on / len(on) * 100 - b_off / len(off) * 100, 1)))
+    cross = pd.DataFrame(cross_rows)
+
     return dict(breach=breach, excursion=excursion, equal_risk=equal_risk,
-               hold_profile=hold_profile, n_entries=n_entries,
+               hold_profile=hold_profile, cross=cross, n_entries=n_entries,
                horizon_days=horizon_days, expiry_mode=expiry_mode)
 
 
