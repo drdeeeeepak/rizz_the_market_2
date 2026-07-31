@@ -137,10 +137,13 @@ if st.session_state.get("p33_q1_err"):
 
 _q1all = st.session_state.get("p33_q1")
 if _q1all:
-    _tabs = st.tabs([lbl for _, lbl in Q1_MODES])
-    for _tab, (_m, _lbl) in zip(_tabs, Q1_MODES):
+    # Both expiries rendered inline, one after the other — no tabs, no dropdowns,
+    # nothing to click to see a number.
+    for (_m, _lbl) in Q1_MODES:
         _q1 = _q1all[_m]
-        with _tab:
+        with st.container():
+            st.divider()
+            st.subheader(f"⏱️ {_lbl}")
             if _q1["equal_risk"].empty:
                 st.warning("Not enough data to score — try a longer history window.")
                 continue
@@ -160,43 +163,55 @@ if _q1all:
                       "part of any raw breach advantage is just less time at risk.")
             st.dataframe(_q1["hold_profile"], use_container_width=True, hide_index=True)
 
-            st.markdown("**How close can I actually sell? — breach % at every distance**")
-            st.caption("This is the sizing table. Breach % rises steeply as you move "
-                      "closer, so a low breach rate at 3% is NOT a licence to sell at 1% — "
-                      "read the number at the distance you're actually considering.")
+            st.markdown("### 📊 Breach % at every OTM distance — after a signal, both sides")
+            st.caption("The sizing table, laid out in full: every system, both sides, on "
+                      "signal days vs non-signal days, at every OTM distance. No controls to "
+                      "set — everything is shown at once. Breach % climbs steeply as you move "
+                      "closer, so a low rate at 3% is NOT a licence to sell at 1%; read the "
+                      "number at the distance you are actually considering.")
             _b = _q1["breach"]
-            _sys = st.selectbox("System", sorted(_b["system"].unique()), key=f"p33_q1_sys_{_m}")
-            _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key=f"p33_q1_side_{_m}")
-            _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
-                index="condition", columns="distance_pct", values="breach_pct")
-            _key_d = [c for c in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5) if c in _piv.columns]
-            st.markdown("*Key distances*")
+            _full = _b.pivot_table(index=["system", "side", "condition"],
+                                   columns="distance_pct", values="breach_pct")
+            _order = [s for s in ["Pure Divergence", "RSI Fade 75/25", "Pivot Breakout",
+                                 "ANY of 3", "MAJORITY (>=2 of 3)"]
+                      if s in _b["system"].unique()]
+            _full = _full.reindex(
+                [(s, sd, c) for s in _order for sd in ("CALL", "PUT")
+                 for c in ("signal ACTIVE", "no signal", "ALL days (baseline)")
+                 if (s, sd, c) in _full.index])
             # background_gradient needs matplotlib (declared in requirements.txt).
             # It is LAZY — calling it never raises; the ImportError surfaces later
             # when the Styler renders inside st.dataframe, so a try/except around
             # the call is useless. Check the module is importable up front instead.
-            _styled = _piv[_key_d].style.format("{:.1f}%")
+            _st_full = _full.style.format("{:.1f}%")
             if _HAS_MPL:
-                _styled = _styled.background_gradient(cmap="RdYlGn_r", axis=None)
-            st.dataframe(_styled, use_container_width=True)
-            with st.expander("Full distance ladder (1.00% → 4.50%)"):
-                st.dataframe(_piv.style.format("{:.1f}%"), use_container_width=True)
+                _st_full = _st_full.background_gradient(cmap="RdYlGn_r", axis=None)
+            st.dataframe(_st_full, use_container_width=True, height=560)
 
-            st.markdown("**Cross-test — direction signal, or volatility signal?**")
+            st.markdown("### 🔀 Cross-test — direction signal, or volatility signal?")
             st.caption("Every other table pairs a bearish signal only with the CALL side. "
-                      "This scores all four pairings. If a bearish signal makes the CALL "
-                      "safer but leaves the PUT no better (or worse), it reads DIRECTION — "
-                      "tighten one leg. If BOTH sides get safer, it reads VOLATILITY — the "
-                      "right move is tightening the whole condor. `delta_pct` is signal minus "
-                      "non-signal breach: negative = safer on signal days.")
+                      "This scores all four pairings at every distance. If a bearish signal "
+                      "makes the CALL safer but leaves the PUT no better (or worse), it reads "
+                      "DIRECTION — tighten one leg. If BOTH sides get safer, it reads "
+                      "VOLATILITY — tighten the whole condor. `delta` is signal minus "
+                      "non-signal breach: **negative = safer on signal days**.")
             _c = _q1["cross"]
             if _c.empty:
                 st.info("No cross-test rows.")
             else:
-                _cr = _c[(_c.system == _sys) & _c.at_routine][
-                    ["signal", "side", "pairing", "n_signal_on", "breach_on_pct",
-                     "breach_off_pct", "delta_pct"]]
-                st.dataframe(_cr, use_container_width=True, hide_index=True)
+                _cx = _c.copy()
+                _cx["signal → side"] = (_cx["signal"] + " → " + _cx["side"]
+                                       + " (" + _cx["pairing"] + ")")
+                _cxp = _cx.pivot_table(index=["system", "signal → side"],
+                                       columns="distance_pct", values="delta_pct")
+                _cxp = _cxp.reindex([i for s in _order for i in _cxp.index if i[0] == s])
+                _st_cx = _cxp.style.format("{:+.1f}")
+                if _HAS_MPL:
+                    _st_cx = _st_cx.background_gradient(cmap="RdYlGn_r", axis=None)
+                st.dataframe(_st_cx, use_container_width=True, height=460)
+                st.caption("Read a row across: all-negative = that pairing is safer on signal "
+                          "days at every distance. Compare the two rows of a system's bearish "
+                          "signal (→CALL and →PUT) to tell direction from volatility.")
 
             st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
             st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
