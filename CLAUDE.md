@@ -32,6 +32,22 @@ pushing there never changes the live app.
    ```
 4. **If the session is ending with commits not yet on main**, tell the user exactly
    what is pending and that the live app does not have it yet.
+5. **Leave NOTHING sitting on the feature branch at the end of a session.** Once work
+   is approved and merged, fast-forward the feature branch to main and push it, so
+   every ref points at the same commit:
+   ```bash
+   git checkout <feature-branch> && git merge main --ff-only
+   git push origin <feature-branch>
+   ```
+   Why: **multiple sessions run against this repo at once.** A stale feature branch
+   carrying unmerged commits gets discovered by the OTHER session mid-push, which
+   then asks the user to push work it knows nothing about. That happened (Jul 2026:
+   the OI session found this branch's commits and pushed them blind).
+6. **Main moves under you.** Another session may push between your last fetch and
+   your push. ALWAYS `git fetch origin main` and merge before pushing to main. If a
+   push is rejected as non-fast-forward, that is git protecting someone else's work —
+   **merge it in, never force-push.** Verify both sides survived the merge before
+   pushing, and report a rejected push as a failure, never as success.
 
 ## Key files
 | File | Purpose |

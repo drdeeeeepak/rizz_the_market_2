@@ -246,17 +246,18 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
     which flattens and distorts an intraday RSI line; category type keeps candles
     evenly spaced like a trading platform while still labeling real timestamps.
 
-    Window widens beyond 5 days automatically when needed so all 5 signal markers
-    stay on-chart — Divergence/Breakout signals fire roughly weekly, far less often
-    than the Fade zone-cross, so a fixed 5-day window would cut most of them off.
+    FIXED window — every chart on this page shows the same last ~5 trading days
+    (min_candles hourly bars), signals or no signals. An earlier version widened
+    the window so all 5 table signals stayed on-chart; because Divergence and
+    Breakout fire only ~weekly, that stretched those charts to a month or more and
+    squashed the RSI line into an unreadable ribbon. Readability of the recent line
+    wins: the TABLE is the complete record of the last 5 signals, the chart is a
+    recent-context view. Markers outside the window are simply not drawn (the
+    marker loop below only plots timestamps present in the visible slice), so a
+    chart may legitimately show fewer than 5 — or zero — markers.
     """
     marker_times = marker_times or []
-    n_candles = min_candles
-    if marker_times:
-        earliest_marker = min(marker_times)
-        n_since_marker = (df_rsi.index >= earliest_marker).sum() + 3   # +3 candles padding
-        n_candles = max(min_candles, n_since_marker)
-    n_candles = min(n_candles, len(df_rsi))
+    n_candles = min(min_candles, len(df_rsi))
 
     chart_slice = df_rsi.tail(n_candles)
     x_labels = [ts.strftime("%d %b %H:%M") for ts in chart_slice.index]
@@ -469,7 +470,7 @@ with col_a:
     _last5_table(fade_rows)
 with col_b:
     fig = _mini_rsi_chart(
-        df_fade, "RSI Fade — signals 1-5", line_color="#3b82f6",
+        df_fade, "RSI Fade — last 5 trading days", line_color="#3b82f6",
         marker_times=fade_last5.index.tolist(), marker_rsi=fade_last5["rsi"].tolist(),
         marker_labels=[str(n) for n in fade_last5["#"]],
         marker_colors=["#ef4444" if s == "SHORT" else "#10b981" for s in fade_last5["side"]],
@@ -501,7 +502,7 @@ with col_a:
     _last5_table(div_rows)
 with col_b:
     fig = _mini_rsi_chart(
-        df_div, "Pure Divergence — signals 1-5", line_color="#f59e0b",
+        df_div, "Pure Divergence — last 5 trading days", line_color="#f59e0b",
         marker_times=div_last5.index.tolist(), marker_rsi=div_last5["rsi"].tolist(),
         marker_labels=[str(n) for n in div_last5["#"]],
         marker_colors=["#10b981" if s == "Bullish" else "#ef4444" for s in div_last5["side"]],
@@ -538,7 +539,7 @@ with col_b:
     marker_rsi = [s["rsi_at_signal"] for s in piv_chrono5]
     marker_side = [s["signal"] for s in piv_chrono5]
     fig = _mini_rsi_chart(
-        df_piv, "Pivot Breakout — signals 1-5", line_color="#a855f7",
+        df_piv, "Pivot Breakout — last 5 trading days", line_color="#a855f7",
         marker_times=marker_times, marker_rsi=marker_rsi,
         marker_labels=[str(i + 1) for i in range(len(piv_chrono5))],
         marker_colors=["#10b981" if s == "BUY" else "#ef4444" for s in marker_side],
