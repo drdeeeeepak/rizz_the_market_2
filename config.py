@@ -120,6 +120,16 @@ WALL_RATIO_LOW=1.5; WALL_RATIO_MID=2.5
 WALL_INTRADAY_REINFORCE=0.15; WALL_INTRADAY_ABANDON=0.0
 DUAL_FORTRESS_BONUS=2; DUAL_FORTRESS_DIST_RED=100
 
+# ─── Page 10C: OI Intelligence ───────────────────────────────────────────────
+# Buildup quadrants: both the OI move and the premium move must clear these noise
+# bands before a strike is labelled, otherwise a barely-traded strike gets tagged
+# as if something happened. Premium is far more volatile than OI, hence the wider
+# band on price.
+BUILDUP_OI_NOISE_PCT=1.0; BUILDUP_PRICE_NOISE_PCT=2.0
+# Volume ÷ OI: at/above CHURN the day's volume rivals the whole standing position,
+# so contracts were opened and closed intraday rather than held.
+VOL_OI_CHURN=1.0; VOL_OI_CONVICTION=0.25
+
 # ─── Page 11: VIX / IV ───────────────────────────────────────────────────────
 VIX_COMPLACENT=11; VIX_LOW_NORMAL=12; VIX_TRADEABLE=17; VIX_SWEET_SPOT_HI=20
 IVP_AVOID=15; IVP_HALF=25; IVP_IDEAL_H=70; IVP_EXTREME=80

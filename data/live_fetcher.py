@@ -632,6 +632,17 @@ def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
         log.error("Chain %s: quote() returned nothing for %d symbols", expiry, len(syms))
         return pd.DataFrame()
 
+    def _prev_close(q: dict) -> float:
+        """Yesterday's settlement for this contract. Kite puts it in ohlc.close;
+        net_change is the fallback. Needed to tell fresh writing (premium down,
+        OI up) apart from fresh buying (premium up, OI up)."""
+        prev = float((q.get("ohlc") or {}).get("close", 0) or 0)
+        if prev > 0:
+            return prev
+        ltp = float(q.get("last_price", 0) or 0)
+        chg = float(q.get("net_change", 0) or 0)
+        return ltp - chg if ltp > 0 else 0.0
+
     records = []
     for s in strikes:
         s = int(s)
@@ -644,9 +655,11 @@ def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
             "ce_oi": ce.get("oi",0), "ce_vol": ce.get("volume",0),
             "ce_ltp": ce.get("last_price",0), "ce_iv": ce.get("implied_volatility",0),
             "ce_oi_change": ce.get("oi_day_change",0),
+            "ce_prev_close": _prev_close(ce),
             "pe_oi": pe.get("oi",0), "pe_vol": pe.get("volume",0),
             "pe_ltp": pe.get("last_price",0), "pe_iv": pe.get("implied_volatility",0),
             "pe_oi_change": pe.get("oi_day_change",0),
+            "pe_prev_close": _prev_close(pe),
         })
     if not records:
         return pd.DataFrame()
@@ -662,6 +675,12 @@ def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
     prev_pe = df["pe_oi"] - df["pe_oi_change"]
     df["ce_pct_change"] = np.where(prev_ce>0, df["ce_oi_change"]/prev_ce*100, 0.0)
     df["pe_pct_change"] = np.where(prev_pe>0, df["pe_oi_change"]/prev_pe*100, 0.0)
+    # Premium move since yesterday's settlement, % — the second axis of the
+    # buildup read (OI direction alone cannot tell writing from buying).
+    df["ce_price_pct"] = np.where(df["ce_prev_close"]>0,
+                                  (df["ce_ltp"]-df["ce_prev_close"])/df["ce_prev_close"]*100, 0.0)
+    df["pe_price_pct"] = np.where(df["pe_prev_close"]>0,
+                                  (df["pe_ltp"]-df["pe_prev_close"])/df["pe_prev_close"]*100, 0.0)
     log.info("Chain %s: %d strikes %s..%s (reach ±%d pts)",
              expiry, len(df), df.index.min(), df.index.max(), reach)
     return df
