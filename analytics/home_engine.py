@@ -217,10 +217,14 @@ class HomeEngine:
             })
 
         if oc_sig.get("gex", {}).get("total_gex", 0) > 0:
+            # No unit suffix: net GEX from gamma_exposure is a RELATIVE measure
+            # (gamma × OI × spot² × 0.01, no lot size), not rupees or crores.
+            # It was previously labelled "Cr", which it never was.
             alerts.append({
                 "level": 4, "color": "GREEN",
-                "title": f"GEX positive +{oc_sig['gex']['total_gex']:,.0f} Cr — pinning (P10)",
-                "body":  "Dealers long gamma. Range-bound bias confirmed.",
+                "title": "GEX positive — dealers pinning (P10)",
+                "body":  "Dealers long gamma: they sell rallies and buy dips. "
+                         "Range-bound bias confirmed.",
             })
 
         # Sort: kills first, then severity

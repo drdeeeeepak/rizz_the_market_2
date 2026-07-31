@@ -5,11 +5,12 @@
 
 import logging
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+import pytz
 
 try:
     import streamlit as st
@@ -38,24 +39,54 @@ log = logging.getLogger(__name__)
 
 
 # ─── Expiry helpers ───────────────────────────────────────────────────────────
+# All dates here are IST. Streamlit Cloud and GitHub Actions both run UTC, which
+# is behind IST — between 00:00 and 05:30 IST a bare date.today() still returns
+# YESTERDAY, which shifted every DTE by a day during that window.
+
+IST = pytz.timezone("Asia/Kolkata")
+_MKT_CLOSE_H, _MKT_CLOSE_M = 15, 30      # NSE close, 3:30 PM IST
+
+
+def today_ist() -> date:
+    """Today's date in IST — never the server's UTC date."""
+    return datetime.now(IST).date()
+
 
 def next_tuesday(from_date: Optional[date] = None) -> date:
-    d = from_date or date.today()
+    """
+    The next weekly expiry (Tuesday) on or after `from_date`.
+
+    On expiry day itself the contract is still live until 3:30 PM IST, so TODAY is
+    the near expiry right up to the close, and only rolls to next week afterwards.
+    The old version used `days_ahead <= 0`, which skipped the expiring chain the
+    moment Tuesday began: "near" jumped straight to 7 DTE, so DTE never reached
+    0 or 1 and the `dte <= 2` GAMMA_DANGER branch on page 10B could never fire on
+    the one day it matters most.
+
+    Passing an explicit `from_date` is a pure calendar lookup (no clock).
+    """
+    if from_date is None:
+        now = datetime.now(IST)
+        d = now.date()
+        past_close = (now.hour, now.minute) >= (_MKT_CLOSE_H, _MKT_CLOSE_M)
+    else:
+        d = from_date
+        past_close = False
+
     days_ahead = EXPIRY_WEEKDAY - d.weekday()
-    if days_ahead <= 0:
+    if days_ahead < 0 or (days_ahead == 0 and past_close):
         days_ahead += 7
     return d + timedelta(days=days_ahead)
 
 
 def get_near_far_expiries() -> tuple[date, date]:
-    today = date.today()
-    near  = next_tuesday(today)
-    far   = next_tuesday(near + timedelta(days=1))
+    near = next_tuesday()                          # clock-aware (see above)
+    far  = next_tuesday(near + timedelta(days=1))  # the Tuesday after that
     return near, far
 
 
 def get_dte(expiry: date) -> int:
-    return max(0, (expiry - date.today()).days)
+    return max(0, (expiry - today_ist()).days)
 
 
 # ─── Nifty spot ───────────────────────────────────────────────────────────────

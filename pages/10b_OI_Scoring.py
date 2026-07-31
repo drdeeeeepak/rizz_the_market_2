@@ -95,11 +95,14 @@ flip_lvl  = far_gex.get("flip_level", 0)
 total_gex = far_gex.get("total_gex", 0)
 
 c1,c2,c3,c4 = st.columns(4)
+_svf = far_gex.get("spot_vs_flip_pts")
 with c1: ui.metric_card("GEX (FAR)",  f"{total_gex:+,.0f}",
-                          sub="+ Pinning | − Amplifying",
+                          sub="Relative scale · + Pinning | − Amplifying",
                           color="green" if total_gex > 0 else "red")
-with c2: ui.metric_card("GEX FLIP",  f"{flip_lvl:,}" if flip_lvl else "—",
-                          sub="Dealers flip here")
+with c2: ui.metric_card("GAMMA FLIP",  f"{flip_lvl:,}" if flip_lvl else "—",
+                          sub=(f"Spot {_svf:+,} pts vs line" if _svf is not None
+                               else "Dealers flip here"),
+                          color="green" if (_svf or 0) >= 0 else "red")
 with c3: ui.metric_card("CALL WALL", f"{call_wall:,}" if call_wall else "—",
                           sub="CE must be above", color="red")
 with c4: ui.metric_card("PUT WALL",  f"{put_wall:,}" if put_wall else "—",
@@ -144,9 +147,15 @@ def _velocity_metrics(chain_df: pd.DataFrame, label: str):
                               sub="% put growth minus % call growth",
                               color="green" if velocity > 0 else "red")
     with c3:
-        direction = ("Floor building" if abs_mom > 500_000 else
-                     "Ceiling building" if abs_mom < -500_000 else "Balanced")
-        ui.metric_card(f"{label} DIRECTION", direction)
+        # Size the "meaningful" band against the chain's own OI rather than a flat
+        # 500,000 contracts — that constant read as "Balanced" on any thin weekly
+        # chain and as "building" on any heavy monthly one, regardless of the flow.
+        chain_oi = total_pe + total_ce
+        band     = max(chain_oi * 0.02, 1.0)     # 2% of standing OI in the chain
+        direction = ("Floor building" if abs_mom > band else
+                     "Ceiling building" if abs_mom < -band else "Balanced")
+        ui.metric_card(f"{label} DIRECTION", direction,
+                       sub=f"±{band:,.0f} = 2% of chain OI")
 
 st.markdown("**Near Expiry — Flow Scoring**")
 _velocity_metrics(chains["near"], "NEAR")
