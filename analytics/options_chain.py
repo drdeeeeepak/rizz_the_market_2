@@ -39,10 +39,32 @@ PCR_WIDEN_PE  = 1.3
 ATR_AGGR = 1.0
 ATR_BALC = 1.5
 ATR_CONS = 2.0
-THETA_IV_SELL   = 1.0
-THETA_IV_BORDER = 0.7
+# Theta/IV ratio = ATM premium decayed per day ÷ 1-day expected move, both in
+# index points. It answers "am I being paid enough per day for the risk I carry
+# overnight?" — higher is better for a seller.
+#
+# These were 1.0 / 0.7, which the ratio can NEVER reach: it decays roughly as
+# 1/(2·√DTE) and tops out near 0.20 on expiry day. Those thresholds were written
+# against the old formula, which multiplied theta by spot a second time and so read
+# ~2,500 instead of ~0.11 (see _theta_iv_ratio), leaving the card permanently green.
+#
+# Values below are MEASURED from this engine (ATM, ~13% IV), not idealised — the
+# ratio averages CE and PE theta, and put theta is smaller in magnitude because of
+# the positive carry term, so it runs below a single-leg textbook figure:
+#     DTE    1     2     3     5     7    10    14    21    30
+#     ratio 0.200 0.141 0.115 0.090 0.076 0.064 0.054 0.044 0.037
+#
+# The biweekly cycle runs 14 DTE entry → 5 DTE exit, so the thresholds are pinned to
+# those two points: you open the trade at "borderline", and decay earns its way to
+# "good" as the position approaches its exit.
+THETA_IV_SELL   = 0.090   # ≈ 5 DTE — the exit end; decay outpacing the daily move
+THETA_IV_BORDER = 0.052   # just under the 14 DTE reading, so entry shows amber not red
 
 RISK_FREE = 0.065   # India risk-free rate ~6.5%
+
+# OI migration trigger: today's net OI change on one side, as a fraction of that
+# side's standing OI. 12% of the book repositioning in a day is a real shift.
+MIGRATION_OI_SHARE = 0.12
 
 
 # ─── Black-Scholes Greeks approximations ─────────────────────────────────────
@@ -148,7 +170,13 @@ def _nearest_atm(df: pd.DataFrame, spot: float) -> int:
     """
     if df.empty:
         return int(round(spot / OI_STRIKE_STEP) * OI_STRIKE_STEP)
-    diffs = (df.index - spot).to_series().abs()
+    # NOTE: must build the Series from the INDEX, then subtract.
+    # (df.index - spot).to_series() makes the *differences* both the index and the
+    # values, so idxmin() returned the smallest difference (0.0) instead of the
+    # strike — i.e. this function returned 0 on every call. That silently zeroed
+    # ATM IV, IV skew, straddle, theta/IV, delta skew and the IV-expected-move and
+    # straddle strike models, because each of them bails on `atm not in df.index`.
+    diffs = (df.index.to_series() - spot).abs()
     return int(diffs.idxmin())
 
 
@@ -197,7 +225,7 @@ class OptionsChainEngine(BaseStrategy):
         synthesis = self._strike_synthesis(models)
 
         # ── Section 4: Wall and GEX analysis ─────────────────────────────────
-        gex          = self._gex(df, spot)
+        gex          = self._gex(df, spot, dte, atm_iv)
         wall_verdict = self._wall_verdict(df, call_wall, put_wall, gex)
 
         # ── Legacy fields ─────────────────────────────────────────────────────
@@ -249,8 +277,8 @@ class OptionsChainEngine(BaseStrategy):
         Filters out strikes with zero OI on both sides to avoid noise.
         """
         active = df[(df["pe_oi"] > 0) | (df["ce_oi"] > 0)]
-        total_pe = active["pe_oi"].sum()
-        total_ce = active["ce_oi"].sum()
+        total_pe = float(active["pe_oi"].sum())
+        total_ce = float(active["ce_oi"].sum())
         return round(total_pe / total_ce, 3) if total_ce > 0 else 0.0
 
     def _max_pain(self, df: pd.DataFrame) -> float:
@@ -376,13 +404,13 @@ class OptionsChainEngine(BaseStrategy):
         else:
             return 0.0
 
-        # Theta from BS is in fractional terms (fraction of spot per day)
-        # Convert to points: theta_pts = avg_theta * spot
-        # Ratio: theta_pts / (iv / 100 * spot / sqrt(365))
-        # Simplified: theta_pts * sqrt(365) / (iv_decimal * spot)
-        # Even simpler approach: straddle daily decay / straddle price
-        # Use: straddle theta pts / (atm_iv/100 * spot / sqrt(365))
-        theta_pts = avg_theta * spot
+        # _bs_greeks returns theta ALREADY in index points per day (the BS formula
+        # is denominated in the same units as S). The old code multiplied it by spot
+        # again, inflating the ratio ~25,000× — it read 2,500 instead of 0.11 and so
+        # sat permanently above the 1.0 "good" threshold. This was invisible until
+        # _nearest_atm was fixed, because atm resolved to 0 and this bailed out at 0.0.
+        # Ratio = premium decayed per day ÷ 1-day expected move, both in points.
+        theta_pts = avg_theta
         iv_daily  = (iv / 100) * spot / np.sqrt(365)
         if iv_daily > 0:
             return theta_pts / iv_daily
@@ -561,47 +589,52 @@ class OptionsChainEngine(BaseStrategy):
             "put_integrity":  integrity("pe_oi", put_wall),
         }
 
-    def _gex(self, df: pd.DataFrame, spot: float) -> dict:
+    def _gex(self, df: pd.DataFrame, spot: float, dte: int, atm_iv: float) -> dict:
         """
-        GEX = Σ (Call OI × Call Gamma − Put OI × Put Gamma) × LOT_SIZE × Spot
-        Positive GEX = dealers short gamma = they BUY dips, SELL rallies = PINNING
-        Negative GEX = dealers long gamma = they SELL dips, BUY rallies = AMPLIFYING
-        FIX: uses BS-approximated gamma from _enrich_with_greeks.
+        Dealer gamma exposure — delegated to analytics.gamma_exposure.compute_gex,
+        the single GEX engine in this repo. Pages 18/19 already use it directly.
+
+        Dealer convention (industry standard): dealers are net LONG calls (+gamma)
+        and SHORT puts (−gamma).
+            POSITIVE net gamma → dealers cushion: sell rallies, buy dips → PINNING
+            NEGATIVE net gamma → dealers amplify: sell dips, buy rallies → AMPLIFYING
+
+        This replaces a local implementation that was wrong in three ways:
+          • flip level walked the CUMULATIVE SUM of per-strike GEX across strikes
+            and reported the first sign change. That is an artifact of strike
+            ordering, not a flip level — the real flip is the SPOT price at which
+            net dealer gamma crosses zero, which needs re-pricing on a spot grid
+            (what compute_gex._flip_level does).
+          • it scaled by LOT_SIZE × spot while compute_gex uses spot² × 0.01, so
+            pages 10/10B and pages 18/19 printed different numbers both labelled
+            "GEX" — and page 10's flip level disagreed with page 18's.
+          • its docstring had the sign convention inverted ("positive = dealers
+            short gamma"), which is the opposite of what the formula computes.
+
+        Output keys are unchanged so pages 10 / 10B / compute_signals / home_engine
+        keep working; extra keys are additive.
         """
-        if "ce_gamma" not in df.columns or "pe_gamma" not in df.columns:
-            return {"total_gex": 0, "flip_level": 0, "positive": False, "gex_per_strike": {}}
+        from analytics.gamma_exposure import compute_gex
 
-        gex_per      = {}
-        total_gex    = 0.0
-        running_list = []  # (strike, cumulative_gex) sorted by strike ascending
+        g = compute_gex(df, spot, dte, iv_fallback_pct=(atm_iv if atm_iv > 0 else 12.0))
+        prof = g.get("profile")
+        per_strike = {}
+        if prof is not None and not prof.empty and "gex_net" in prof.columns:
+            per_strike = {int(k): round(float(v), 0) for k, v in prof["gex_net"].items()}
 
-        for strike in sorted(df.index):
-            ce_g  = float(df.loc[strike, "ce_gamma"]) if strike in df.index else 0.0
-            pe_g  = float(df.loc[strike, "pe_gamma"]) if strike in df.index else 0.0
-            ce_oi = float(df.loc[strike, "ce_oi"])
-            pe_oi = float(df.loc[strike, "pe_oi"])
-
-            # Dealer GEX: dealer is SHORT calls (so positive gamma to dealer),
-            # and SHORT puts (positive gamma to dealer)
-            # Net = (call OI * call gamma - put OI * put gamma) * lot * spot
-            strike_gex = (ce_oi * ce_g - pe_oi * pe_g) * LOT_SIZE * spot
-            gex_per[strike] = round(strike_gex, 0)
-            total_gex += strike_gex
-            running_list.append((strike, total_gex))
-
-        # GEX flip level: lowest strike above spot where cumulative GEX turns negative
-        flip_level = 0
-        above_spot = [(s, g) for s, g in running_list if s > spot]
-        for i in range(1, len(above_spot)):
-            if above_spot[i - 1][1] >= 0 > above_spot[i][1]:
-                flip_level = above_spot[i][0]
-                break
-
+        flip = g.get("flip_level")
         return {
-            "total_gex":      round(total_gex, 0),
-            "flip_level":     flip_level,
-            "positive":       total_gex > 0,
-            "gex_per_strike": gex_per,
+            "total_gex":      round(float(g.get("net_gex", 0.0)), 0),
+            "flip_level":     int(round(flip)) if flip else 0,
+            "positive":       g.get("regime") == "POSITIVE",
+            "gex_per_strike": per_strike,
+            # additive — the richer read from the shared engine
+            "regime":            g.get("regime", "UNKNOWN"),
+            "spot_vs_flip_pts":  g.get("spot_vs_flip_pts"),
+            "gamma_call_wall":   g.get("call_wall"),
+            "gamma_put_wall":    g.get("put_wall"),
+            "headline":          g.get("gex_headline", ""),
+            "verdict":           g.get("gex_verdict", "UNKNOWN"),
         }
 
     def _wall_verdict(self, df: pd.DataFrame, call_wall: int,
@@ -645,20 +678,37 @@ class OptionsChainEngine(BaseStrategy):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _migration_status(self, df: pd.DataFrame, spot: float) -> dict:
+        """
+        Has today's OI flow moved enough to count as real repositioning?
+
+        Threshold is a SHARE of the side's standing OI, not a flat contract count.
+        It was `> 500_000` absolute, which meant the trigger fired constantly on a
+        heavy monthly chain and essentially never on a thin weekly one — the same
+        flow read as "migration" or "quiet" purely from which expiry was loaded.
+        """
         try:
             atm       = _nearest_atm(df, spot)
-            above_sum = df.loc[df.index > atm, "ce_oi_change"].sum()
-            below_sum = df.loc[df.index < atm, "pe_oi_change"].sum()
-            detected  = abs(above_sum) > 500_000 or abs(below_sum) > 500_000
+            above     = df.loc[df.index > atm]
+            below     = df.loc[df.index < atm]
+            above_sum = above["ce_oi_change"].sum()
+            below_sum = below["pe_oi_change"].sum()
+            above_base = float(above["ce_oi"].sum())
+            below_base = float(below["pe_oi"].sum())
+            detected = (
+                (above_base > 0 and abs(above_sum) / above_base > MIGRATION_OI_SHARE) or
+                (below_base > 0 and abs(below_sum) / below_base > MIGRATION_OI_SHARE)
+            )
             return {"detected": bool(detected), "above": int(above_sum), "below": int(below_sum)}
         except Exception:
             return {"detected": False, "above": 0, "below": 0}
 
     def _kill_switches(self, pcr: float, gex: dict, migration: dict) -> dict:
+        # Cast to plain bool: pcr comes off numpy sums, so the comparisons yield
+        # numpy.bool_, which json.dumps refuses without a custom encoder.
         return {
-            "migration_detected": migration.get("detected", False),
-            "gex_negative":       gex.get("total_gex", 0) < 0,
-            "pcr_extreme":        pcr < 0.5 or pcr > 2.0,
+            "migration_detected": bool(migration.get("detected", False)),
+            "gex_negative":       bool(gex.get("total_gex", 0) < 0),
+            "pcr_extreme":        bool(pcr < 0.5 or pcr > 2.0),
         }
 
     def _home_score(self, gex: dict, pcr: float, migration: dict) -> int:
@@ -684,7 +734,10 @@ class OptionsChainEngine(BaseStrategy):
             "binding_ce": 0, "binding_pe": 0,
             "call_wall": 0, "put_wall": 0,
             "wall_integrity": {"call_integrity": "UNKNOWN", "put_integrity": "UNKNOWN"},
-            "gex": {"total_gex": 0, "flip_level": 0, "positive": False, "gex_per_strike": {}},
+            "gex": {"total_gex": 0, "flip_level": 0, "positive": False, "gex_per_strike": {},
+                    "regime": "UNKNOWN", "spot_vs_flip_pts": None,
+                    "gamma_call_wall": None, "gamma_put_wall": None,
+                    "headline": "", "verdict": "UNKNOWN"},
             "wall_verdict": {"combined_verdict": "STANDARD", "gex_environment": "NEUTRAL",
                              "ce_gex_relationship": "UNKNOWN"},
             "migration": {"detected": False}, "kill_switches": {}, "home_score": 10,

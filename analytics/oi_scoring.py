@@ -16,12 +16,21 @@ from config import (
     WALL_INTRADAY_REINFORCE, WALL_INTRADAY_ABANDON,
 )
 
-# Far expiry OI thresholds — absolute levels (contracts)
-# Far expiry barely changes intraday so we score on total OI size
-FAR_OI_VERY_HIGH  = 5_000_000   # very strong wall
-FAR_OI_HIGH       = 2_000_000   # strong wall
-FAR_OI_MED        = 1_000_000   # moderate wall
-FAR_OI_LOW        = 300_000     # thin positioning
+# Far expiry OI thresholds — PERCENTILE RANK within the chain being scored,
+# not absolute contract counts.
+#
+# These were absolute levels (5M / 2M / 1M / 300k contracts). That breaks in three
+# ways: a monthly expiry carries far more OI than a weekly, so an entire weekly
+# chain scored as "thin"; total market OI drifts over months, so the bands silently
+# re-calibrate themselves; and the same strike could be the single biggest wall in
+# its chain yet still score -1. What matters is whether a strike is big RELATIVE TO
+# THE OTHER STRIKES in the same chain, which is exactly a percentile.
+#
+# Rank is computed per side (pe_oi and ce_oi separately) over the chain passed in.
+FAR_PCTL_VERY_HIGH = 0.90   # top 10% of strikes in this chain — very strong wall
+FAR_PCTL_HIGH      = 0.75   # top 25% — strong wall
+FAR_PCTL_MED       = 0.50   # upper half — moderate wall
+FAR_PCTL_LOW       = 0.25   # bottom quartile below this — thin positioning
 
 
 class OIScoringEngine(BaseStrategy):
@@ -88,8 +97,12 @@ class OIScoringEngine(BaseStrategy):
         if df.empty:
             return df
 
-        df["pe_base"] = df["pe_oi"].apply(self._score_far_pe_oi)
-        df["ce_base"] = df["ce_oi"].apply(self._score_far_ce_oi)
+        # Percentile rank within THIS chain, per side. pct=True gives 0..1.
+        pe_rank = df["pe_oi"].rank(pct=True)
+        ce_rank = df["ce_oi"].rank(pct=True)
+
+        df["pe_base"] = pe_rank.apply(self._score_far_pe_rank)
+        df["ce_base"] = ce_rank.apply(self._score_far_ce_rank)
 
         # For far expiry, no DTE panic multiplier on base scores
         # But still use % change for wall strength calculation
@@ -98,13 +111,9 @@ class OIScoringEngine(BaseStrategy):
 
         df["net_score"] = (df["pe_adj"] + df["ce_adj"]).clip(-6, 6).round()
 
-        # Wall strength uses absolute OI for far expiry
-        df["pe_wall"] = df.apply(
-            lambda r: self._far_wall_strength(r["pe_oi"], r["ce_oi"], dte), axis=1
-        )
-        df["ce_wall"] = df.apply(
-            lambda r: self._far_wall_strength(r["ce_oi"], r["pe_oi"], dte), axis=1
-        )
+        # Wall strength from the same in-chain rank
+        df["pe_wall"] = [self._far_wall_strength(r, dte) for r in pe_rank]
+        df["ce_wall"] = [self._far_wall_strength(r, dte) for r in ce_rank]
 
         df["position_action"] = df.apply(
             lambda r: self._position_action(r["net_score"], r["pe_wall"], r["ce_wall"]), axis=1
@@ -127,35 +136,35 @@ class OIScoringEngine(BaseStrategy):
     # ─────────────────────────────────────────────────────────────────────────
     # Far expiry absolute OI scoring
 
-    def _score_far_pe_oi(self, oi: float) -> int:
+    def _score_far_pe_rank(self, rank: float) -> int:
         """
-        Score put OI by absolute level for far expiry.
+        Score put OI by its percentile rank within this chain.
         Large put OI = strong floor = positive (PE side protected).
         """
-        if   oi >= FAR_OI_VERY_HIGH: return  3
-        elif oi >= FAR_OI_HIGH:      return  2
-        elif oi >= FAR_OI_MED:       return  1
-        elif oi >= FAR_OI_LOW:       return  0
-        else:                         return -1   # very thin — no floor
+        if   rank >= FAR_PCTL_VERY_HIGH: return  3
+        elif rank >= FAR_PCTL_HIGH:      return  2
+        elif rank >= FAR_PCTL_MED:       return  1
+        elif rank >= FAR_PCTL_LOW:       return  0
+        else:                            return -1   # very thin — no floor
 
-    def _score_far_ce_oi(self, oi: float) -> int:
+    def _score_far_ce_rank(self, rank: float) -> int:
         """
-        Score call OI by absolute level for far expiry.
+        Score call OI by its percentile rank within this chain.
         Large call OI = strong ceiling = negative (CE side resistance).
         """
-        if   oi >= FAR_OI_VERY_HIGH: return -3
-        elif oi >= FAR_OI_HIGH:      return -2
-        elif oi >= FAR_OI_MED:       return -1
-        elif oi >= FAR_OI_LOW:       return  0
-        else:                         return  1   # very thin ceiling — less resistance
+        if   rank >= FAR_PCTL_VERY_HIGH: return -3
+        elif rank >= FAR_PCTL_HIGH:      return -2
+        elif rank >= FAR_PCTL_MED:       return -1
+        elif rank >= FAR_PCTL_LOW:       return  0
+        else:                            return  1   # thin ceiling — less resistance
 
-    def _far_wall_strength(self, dominant_oi: float, weaker_oi: float, dte: int) -> int:
-        """Wall strength for far expiry based on absolute OI levels."""
-        if   dominant_oi >= FAR_OI_VERY_HIGH: base = 9
-        elif dominant_oi >= FAR_OI_HIGH:      base = 7
-        elif dominant_oi >= FAR_OI_MED:       base = 5
-        elif dominant_oi >= FAR_OI_LOW:       base = 3
-        else:                                  base = 1
+    def _far_wall_strength(self, rank: float, dte: int) -> int:
+        """Wall strength (1-10) for far expiry from the strike's in-chain OI rank."""
+        if   rank >= FAR_PCTL_VERY_HIGH: base = 9
+        elif rank >= FAR_PCTL_HIGH:      base = 7
+        elif rank >= FAR_PCTL_MED:       base = 5
+        elif rank >= FAR_PCTL_LOW:       base = 3
+        else:                            base = 1
         # DTE modifier
         score = base + self.get_wall_modifier(dte)
         return int(np.clip(score, 1, 10))
@@ -233,15 +242,45 @@ class OIScoringEngine(BaseStrategy):
     # Position action
 
     def _position_action(self, net_score: float, pe_wall: int, ce_wall: int) -> str:
+        """
+        Turn (net OI score, put-wall strength, call-wall strength) into one action.
+
+        net_score sign convention, from score_pe_base / score_ce_base:
+            POSITIVE = put writing dominant  → floor building → bullish drift
+                       → the PE leg is well defended, the CE leg is the threatened one
+            NEGATIVE = call writing dominant → ceiling building → bearish drift
+                       → the CE leg is well defended, the PE leg is the threatened one
+
+        So each branch first asks WHICH leg is under threat (sign of ns), then how
+        well that leg is walled. The threatened leg always decides the action —
+        a comfortable leg never overrides a leg that needs defending.
+
+        The previous version was ordered so that `ns <= -1 → REDUCE_PE_50PCT` sat
+        above the EXIT_PE / HOLD_CE_CONFIDENT / HOLD_CE_MONITOR branches, making all
+        three unreachable: every negative score returned REDUCE_PE_50PCT and the CE
+        side could never be recommended a hold. All nine outcomes are reachable now
+        (verified by exhaustive enumeration over ns × pe_wall × ce_wall).
+        """
         ns = int(net_score)
-        if   ns >= 3 and pe_wall >= 7:  return "HOLD_PE_CONFIDENT"
-        elif ns >= 1 and pe_wall >= 4:  return "HOLD_PE_MONITOR"
-        elif ns <= -1:                  return "REDUCE_PE_50PCT"
-        elif ns <= -2 and pe_wall <= 3: return "EXIT_PE"
-        elif ns <= -3 and ce_wall >= 7: return "HOLD_CE_CONFIDENT"
-        elif ns <  0  and ce_wall >= 4: return "HOLD_CE_MONITOR"
-        elif ns >= 1  and ce_wall <= 3: return "REDUCE_CE_50PCT"
-        elif ns >= 3:                   return "EXIT_CE"
+
+        # ── Bullish OI flow → CE leg is the threatened one ────────────────────
+        if ns >= 3:
+            if ce_wall <= 3:            return "EXIT_CE"
+            if ce_wall <= 6:            return "REDUCE_CE_50PCT"
+            return "HOLD_PE_CONFIDENT" if pe_wall >= 7 else "HOLD_PE_MONITOR"
+        if ns >= 1:
+            if ce_wall <= 3:            return "REDUCE_CE_50PCT"
+            return "HOLD_PE_MONITOR" if pe_wall >= 4 else "BALANCED_IC"
+
+        # ── Bearish OI flow → PE leg is the threatened one ────────────────────
+        if ns <= -3:
+            if pe_wall <= 3:            return "EXIT_PE"
+            if pe_wall <= 6:            return "REDUCE_PE_50PCT"
+            return "HOLD_CE_CONFIDENT" if ce_wall >= 7 else "HOLD_CE_MONITOR"
+        if ns <= -1:
+            if pe_wall <= 3:            return "REDUCE_PE_50PCT"
+            return "HOLD_CE_MONITOR" if ce_wall >= 4 else "BALANCED_IC"
+
         return "BALANCED_IC"
 
     # ─────────────────────────────────────────────────────────────────────────

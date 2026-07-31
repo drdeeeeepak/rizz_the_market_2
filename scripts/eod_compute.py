@@ -64,6 +64,28 @@ def main():
         except Exception as _e_g:
             log.warning("Gamma daily snapshot failed: %s", _e_g)
 
+    # Option-chain daily snapshot → the OI history. Same reasoning as gamma above:
+    # Kite serves no historical option OI, so PCR percentile, max-pain drift, wall
+    # migration and rollover % can only ever be built forward from here.
+    if spot > 0:
+        try:
+            import datetime as _dt_o, pytz as _pytz_o
+            import pandas as _pd_o
+            from data.oi_history import append_daily_snapshot as _append_oi
+            _today_o = _dt_o.datetime.now(_pytz_o.timezone("Asia/Kolkata")).strftime("%Y-%m-%d")
+            _append_oi(
+                _today_o,
+                chains.get("near", _pd_o.DataFrame()),
+                chains.get("far",  _pd_o.DataFrame()),
+                spot,
+                near_expiry=chains.get("near_expiry"),
+                far_expiry=chains.get("far_expiry"),
+                near_dte=chains.get("near_dte", 0),
+                far_dte=chains.get("far_dte", 0),
+            )
+        except Exception as _e_o:
+            log.warning("OI daily snapshot failed: %s", _e_o)
+
     # Update rolled positions from EOD close (only if we got a valid spot)
     if spot > 0:
         import datetime as _dt

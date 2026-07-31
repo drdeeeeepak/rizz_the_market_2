@@ -407,16 +407,20 @@ st.markdown(
 # ── Dynamic Roll Matrix — compact status chips ───────────────────────────────
 try:
     import datetime as _dt_rm
-    from data.live_fetcher import get_nifty_daily as _gnd_rm, get_dte as _gte_rm, next_tuesday as _nxt_rm
+    from data.live_fetcher import (get_nifty_daily as _gnd_rm, get_dte as _gte_rm,
+                                   next_tuesday as _nxt_rm, today_ist as _tist_rm)
 
     _daily_rm = _gnd_rm()
-    _dte_rm   = _gte_rm(_nxt_rm(_dt_rm.date.today()))
+    # IST, not the server's UTC date — Streamlit Cloud runs UTC and would report
+    # yesterday (and so a DTE one day too high) between 00:00 and 05:30 IST.
+    # No explicit from_date, so this is the clock-aware expiry (see next_tuesday).
+    _dte_rm   = _gte_rm(_nxt_rm())
 
     # Anchor close — last Tuesday (or last trading day before it)
     _tc_rm = _drift_rm = 0.0
     _anc_rm = False
     if not _daily_rm.empty:
-        _tod_rm   = _dt_rm.date.today()
+        _tod_rm   = _tist_rm()
         _ltu_rm   = _tod_rm - _dt_rm.timedelta(days=(_tod_rm.weekday() - 1) % 7)
         _trd_rm   = set(_daily_rm.index.date)
         _adate_rm = next(((_ltu_rm - _dt_rm.timedelta(days=i)) for i in range(7)

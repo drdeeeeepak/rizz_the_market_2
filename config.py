@@ -98,7 +98,14 @@ BB_VIX_DIV_VIX = 16          # VIX threshold for divergence alert
 BB_VIX_DIV_BW  = 4.5         # 2H BW% ceiling for divergence alert
 
 # ─── Page 10: Options Chain ──────────────────────────────────────────────────
-OI_STRIKE_RANGE=500; OI_STRIKE_STEP=50; OI_WALL_PCT=0.75
+# OI_STRIKE_RANGE is the MINIMUM half-width (pts) of the chain we pull around ATM.
+# OI_STRIKE_RANGE_PCT scales it with spot so the window keeps covering the strikes
+# we actually sell (anchor × 1.035 CE / × 0.960 PE) plus room to see the walls
+# BEYOND them. Effective reach = max(OI_STRIKE_RANGE, spot × OI_STRIKE_RANGE_PCT).
+# Was a flat 500 pts — at Nifty 25,000 that window (24,500–25,500) excluded BOTH
+# traded strikes (25,875 / 24,000), so every wall / max-pain / 10-delta reading
+# was computed on a band that did not contain the position.
+OI_STRIKE_RANGE=1500; OI_STRIKE_RANGE_PCT=0.06; OI_STRIKE_STEP=50; OI_WALL_PCT=0.75
 PCR_BALANCED_LOW=0.9; PCR_BALANCED_HI=1.1
 WALL_DIST_RANGE=1.2; WALL_DIST_EXPAND=2.5
 GEX_NEG_EXTRA=300; GEX_NOTRADE_CANARY=2; GEX_NOTRADE_VIX=17
@@ -112,6 +119,16 @@ OI_UNWIND_MILD=-10; OI_UNWIND_HEAVY=-20; OI_PANIC=-35
 WALL_RATIO_LOW=1.5; WALL_RATIO_MID=2.5
 WALL_INTRADAY_REINFORCE=0.15; WALL_INTRADAY_ABANDON=0.0
 DUAL_FORTRESS_BONUS=2; DUAL_FORTRESS_DIST_RED=100
+
+# ─── Page 10C: OI Intelligence ───────────────────────────────────────────────
+# Buildup quadrants: both the OI move and the premium move must clear these noise
+# bands before a strike is labelled, otherwise a barely-traded strike gets tagged
+# as if something happened. Premium is far more volatile than OI, hence the wider
+# band on price.
+BUILDUP_OI_NOISE_PCT=1.0; BUILDUP_PRICE_NOISE_PCT=2.0
+# Volume ÷ OI: at/above CHURN the day's volume rivals the whole standing position,
+# so contracts were opened and closed intraday rather than held.
+VOL_OI_CHURN=1.0; VOL_OI_CONVICTION=0.25
 
 # ─── Page 11: VIX / IV ───────────────────────────────────────────────────────
 VIX_COMPLACENT=11; VIX_LOW_NORMAL=12; VIX_TRADEABLE=17; VIX_SWEET_SPOT_HI=20

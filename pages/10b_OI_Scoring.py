@@ -34,6 +34,34 @@ near_exp = chains["near_expiry"]; far_exp  = chains["far_expiry"]
 near_dte = chains["near_dte"];   far_dte  = chains["far_dte"]
 atr14    = sig.get("atr14", 200.0)
 
+# The far chain IS your trade — without it every score, wall and GEX number below
+# would be a placeholder zero, indistinguishable from a real reading. Stop instead.
+if chains["far"].empty:
+    st.error(
+        f"⚠️ Far option chain unavailable for **{far_exp}** ({far_dte} DTE). "
+        "Kite returned no usable data, so the OI scores, walls and GEX on this page "
+        "would all be placeholder zeros. Nothing is shown rather than something wrong.\n\n"
+        "Check the Kite login on the Home page, then refresh."
+    )
+    st.stop()
+if chains["near"].empty:
+    st.warning(
+        f"⚠️ Near chain ({near_exp}) unavailable — the intelligence layer "
+        "(flow scoring, dual fortress, cross-expiry synthesis) is degraded. "
+        "Far-expiry structural analysis below is unaffected."
+    )
+
+# Log a forward OI history — daily snapshots come from the EOD job; here we append
+# an intraday point on each page load so today's session can be replayed later.
+# (Kite has no historical option OI, so it can only be accumulated going forward.)
+try:
+    from data.oi_history import log_intraday_snapshot as _log_oi
+    _log_oi(chains["near"], chains["far"], spot,
+            near_expiry=near_exp, far_expiry=far_exp,
+            near_dte=near_dte, far_dte=far_dte)
+except Exception as _e_oi:
+    pass
+
 eng    = OIScoringEngine()
 oc_eng = OptionsChainEngine()
 
@@ -78,11 +106,14 @@ flip_lvl  = far_gex.get("flip_level", 0)
 total_gex = far_gex.get("total_gex", 0)
 
 c1,c2,c3,c4 = st.columns(4)
+_svf = far_gex.get("spot_vs_flip_pts")
 with c1: ui.metric_card("GEX (FAR)",  f"{total_gex:+,.0f}",
-                          sub="+ Pinning | − Amplifying",
+                          sub="Relative scale · + Pinning | − Amplifying",
                           color="green" if total_gex > 0 else "red")
-with c2: ui.metric_card("GEX FLIP",  f"{flip_lvl:,}" if flip_lvl else "—",
-                          sub="Dealers flip here")
+with c2: ui.metric_card("GAMMA FLIP",  f"{flip_lvl:,}" if flip_lvl else "—",
+                          sub=(f"Spot {_svf:+,} pts vs line" if _svf is not None
+                               else "Dealers flip here"),
+                          color="green" if (_svf or 0) >= 0 else "red")
 with c3: ui.metric_card("CALL WALL", f"{call_wall:,}" if call_wall else "—",
                           sub="CE must be above", color="red")
 with c4: ui.metric_card("PUT WALL",  f"{put_wall:,}" if put_wall else "—",
@@ -127,9 +158,15 @@ def _velocity_metrics(chain_df: pd.DataFrame, label: str):
                               sub="% put growth minus % call growth",
                               color="green" if velocity > 0 else "red")
     with c3:
-        direction = ("Floor building" if abs_mom > 500_000 else
-                     "Ceiling building" if abs_mom < -500_000 else "Balanced")
-        ui.metric_card(f"{label} DIRECTION", direction)
+        # Size the "meaningful" band against the chain's own OI rather than a flat
+        # 500,000 contracts — that constant read as "Balanced" on any thin weekly
+        # chain and as "building" on any heavy monthly one, regardless of the flow.
+        chain_oi = total_pe + total_ce
+        band     = max(chain_oi * 0.02, 1.0)     # 2% of standing OI in the chain
+        direction = ("Floor building" if abs_mom > band else
+                     "Ceiling building" if abs_mom < -band else "Balanced")
+        ui.metric_card(f"{label} DIRECTION", direction,
+                       sub=f"±{band:,.0f} = 2% of chain OI")
 
 st.markdown("**Near Expiry — Flow Scoring**")
 _velocity_metrics(chains["near"], "NEAR")

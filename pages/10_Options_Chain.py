@@ -21,7 +21,7 @@ if not sig:
 # ── Data fetch ────────────────────────────────────────────────────────────────
 # CHANGED: added get_nifty_futures import — required for futures premium/discount
 from data.live_fetcher import get_nifty_spot, get_dual_expiry_chains, get_nifty_futures
-from analytics.options_chain import OptionsChainEngine
+from analytics.options_chain import OptionsChainEngine, THETA_IV_SELL, THETA_IV_BORDER
 
 spot          = get_nifty_spot()
 futures_price = get_nifty_futures()   # ← NEW: live Nifty futures LTP
@@ -42,6 +42,17 @@ choice = st.radio("Analyse expiry",
 is_far   = "Far" in choice
 df_chain = chains["far"] if is_far else chains["near"]
 dte      = far_dte if is_far else near_dte
+
+# An unreadable chain must NOT render as zeros — PCR 0.00 / walls 0 / GEX 0 look
+# identical to a real reading. Stop instead, and say why.
+if df_chain.empty:
+    st.error(
+        f"⚠️ Option chain unavailable for **{far_exp if is_far else near_exp}** "
+        f"({dte} DTE). Kite returned no usable data, so every number on this page "
+        "would be a placeholder zero. Nothing is shown rather than something wrong.\n\n"
+        "Check the Kite login on the Home page, then refresh."
+    )
+    st.stop()
 
 atr14    = sig.get("atr14", 200.0)
 net_skew = sig.get("net_skew", 0.0)
@@ -116,9 +127,13 @@ with c3: ui.metric_card("MAGNET STRIKE", f"{magnet:,}" if magnet else "—",
                           sub="Highest gamma — dealer hotspot",
                           color="red" if magnet and abs(magnet - spot) < 200 else "default")
 with c4:
-    th_note = ("Good — collect well" if th_iv >= 1.0 else
-               "Borderline" if th_iv >= 0.7 else "Poor selling edge")
-    th_col  = "green" if th_iv >= 1.0 else "amber" if th_iv >= 0.7 else "red"
+    # Thresholds come from the engine — the ratio is bounded around 0.22 and these
+    # track the biweekly cycle (≈0.10 at 5 DTE, ≈0.07 at 14 DTE). Do not re-hardcode.
+    th_note = ("Good — decay outpacing daily move" if th_iv >= THETA_IV_SELL else
+               "Borderline — entry-end of cycle" if th_iv >= THETA_IV_BORDER else
+               "Poor selling edge")
+    th_col  = ("green" if th_iv >= THETA_IV_SELL else
+               "amber" if th_iv >= THETA_IV_BORDER else "red")
     ui.metric_card("THETA/IV RATIO", f"{th_iv:.3f}", sub=th_note, color=th_col)
 with c5:
     sk_note = ("Downside feared more — add PE buffer" if d_skew == "PUT_SKEW" else
@@ -240,12 +255,15 @@ VERDICT_MSGS = {
 msg, level = VERDICT_MSGS.get(combined, ("Standard conditions.", "info"))
 ui.alert_box(f"Combined Verdict: {combined}", msg, level=level)
 
+svf = gex.get("spot_vs_flip_pts")
 c1,c2,c3,c4,c5,c6 = st.columns(6)
 with c1: ui.metric_card("GEX TOTAL", f"{total_gex:+,.0f}",
-                          sub="+ = Pinning | − = Amplifying",
+                          sub="Relative scale · + = Pinning | − = Amplifying",
                           color="green" if total_gex > 0 else "red")
-with c2: ui.metric_card("GEX FLIP LEVEL", f"{flip_lvl:,}" if flip_lvl else "—",
-                          sub="Dealers switch to amplifying above")
+with c2: ui.metric_card("GAMMA FLIP LEVEL", f"{flip_lvl:,}" if flip_lvl else "—",
+                          sub=(f"Spot {svf:+,} pts vs line" if svf is not None
+                               else "Below it moves get faster"),
+                          color="green" if (svf or 0) >= 0 else "red")
 with c3: ui.metric_card("GEX ENVIRONMENT", gex_env,
                           color="green" if gex_env == "PINNING" else "red")
 with c4: ui.metric_card("CALL WALL INTEGRITY", wall_int.get("call_integrity", "—"),
