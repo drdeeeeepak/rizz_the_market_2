@@ -29,6 +29,132 @@ st.caption(
     "signals, a chart, and the backtested findings gathered on it so far."
 )
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ACTIONABLE RULE — kept at the very top because it is the only thing on this
+# page that changes what you actually do. Everything below is signal display.
+# ══════════════════════════════════════════════════════════════════════════════
+with st.expander("📐 **STRIKE-TIGHTENING RULE** — sell the CALL nearer on a bearish "
+                 "divergence day (calibrated 31 Jul 2026)", expanded=False):
+    st.markdown("""
+## The rule
+
+On a **Pure Divergence** signal day, open the new position with the favoured leg
+**0.25% nearer**. Leave the other leg exactly where it normally goes.
+
+| Signal that day | CALL | PUT | Strength |
+|---|---|---|---|
+| **Bearish divergence** | **2.75%** (in from 3.0%) | 3.5% — unchanged | 🟢 **Strong** |
+| **Bullish divergence** | 3.0% — unchanged | **3.25%** (in from 3.5%) | 🟡 **Weak — unconfirmed** |
+| No signal | 3.0% | 3.5% | — |
+
+⚠️ **The two halves are not equally proven.** The CALL rule passed at both expiry
+horizons (p=0.008 and p=0.047). The PUT rule **did not** (p=0.059 near, p=0.452
+biweekly) — it leans the right way but never cleared the bar. Treat the CALL rule
+as actionable and the PUT rule as an experiment worth tracking.
+
+## The numbers
+
+Near expiry (5–9 trading days), Pure Divergence.
+
+**CALL side — bearish signal, n=219** 🟢
+
+| | Breach rate |
+|---|---|
+| CALL at your normal 3.0%, normal day | 9.2% |
+| **CALL at 2.75%, bearish-signal day** | **6.4%** ✅ |
+| CALL at 2.5%, bearish-signal day | 10.0% ❌ *worse than baseline* |
+
+The PUT left at 3.5% on a bearish day breaches **5.9%** vs 7.1% normally — leaving it alone costs nothing. Both legs improve.
+
+**PUT side — bullish signal, n=156** 🟡
+
+| | Breach rate |
+|---|---|
+| PUT at your normal 3.5%, all days | 6.8% |
+| **PUT at 3.25%, bullish-signal day** | **6.4%** ✅ *(thin margin)* |
+| PUT at 3.0%, bullish-signal day | 8.3% ❌ *worse than baseline* |
+
+The CALL left at 3.0% on a bullish day breaches 7.7% vs 8.1% — no penalty.
+
+**Stronger PUT alternative, with a catch.** Using **ANY of the 3 systems'** bullish
+signals instead of Pure Divergence alone is the only PUT-side result that reached
+significance (p=0.023, n=331), and gives a better PUT number (6.0% at 3.25%). But
+on those days the CALL left at 3.0% breaches **8.8% vs 7.7%** — you gain ~0.8pp on
+the PUT and hand back ~0.8pp on the CALL, so total position risk is roughly
+unchanged. That version buys **more premium, not more safety**. Pure Divergence is
+the cleaner choice; ANY-of-3 is the statistically stronger one.
+
+## Full breach ladder — near expiry, Pure Divergence
+
+| OTM | CALL, bearish day | CALL, normal day | PUT, bullish day | PUT, normal day |
+|---|---|---|---|---|
+| 1.0% | 47.5% | 53.1% | 41.0% | 44.3% |
+| 1.5% | 31.5% | 38.2% | 28.2% | 30.4% |
+| 2.0% | 19.2% | 25.1% | 16.7% | 20.9% |
+| 2.5% | 10.0% | 15.4% | 12.2% | 15.0% |
+| **3.0%** | **4.1%** | **9.2%** | 8.3% | 10.1% |
+| 3.5% | 1.4% | 6.0% | **3.8%** | **7.4%** |
+
+Biweekly expiry (10–14 days) is the same shape, roughly doubled — e.g. CALL at 3.0%: 16.9% vs 22.1%.
+
+Read the number at the distance you are actually considering. The curve is steep: a
+comfortable single-digit breach rate at 3% becomes ~20% at 2% and ~48% at 1%.
+
+## Do NOT
+
+- **Don't go 0.5% nearer.** At 2.5% CALL / 3.0% PUT the edge is gone and you carry *more* risk than your normal position. 0.25% is the whole edge.
+- **Don't tighten both legs on the same day.** Each rule fires on the opposite signal, so they can never both apply. A day is bearish or bullish, not both.
+- **Don't sell at 1–2% OTM on a signal.** Breach runs 19–48%. A low breach rate is a property of *distance*, not of the signal.
+- **Don't use Pivot Breakout or RSI Fade for this.** Tested, did not hold (see the grid below).
+- **Don't apply this to a position you already hold.** Every result comes from opening a *new* position on the signal day. Shifting a leg you already sold means buying it back, and that cost is in none of these numbers.
+
+## Why the PUT rule is weaker
+
+Only the biweekly horizon disagrees, and it disagrees hard: bullish → PUT at biweekly
+expiry is p=0.452, i.e. nothing at all (12.8% vs 13.2%). The near-expiry result
+(p=0.059) is the only thing holding it up, and it misses the 0.05 bar. The CALL rule
+by contrast holds at both horizons. That asymmetry is why the two carry different
+confidence markers above — it is not a presentation choice, it is what the data says.
+
+## What was tested, and what passed
+
+All 3 systems plus 2 composites, both sides, both expiries — **20 tests**. Weekday-adjusted p-values:
+
+| System | CALL near | CALL far | PUT near | PUT far |
+|---|---|---|---|---|
+| **Pure Divergence** | **0.008 ✅** | **0.047 ✅** | 0.059 | 0.452 |
+| MAJORITY (≥2 of 3) | 0.044 ✅ | 0.126 | 0.104 | 0.335 |
+| ANY of 3 | 0.193 | 0.448 | 0.023 ✅ | 0.103 |
+| RSI Fade 75/25 | 0.229 | 0.199 | 0.405 | 0.134 |
+| Pivot Breakout | 0.701 | 0.865 | 0.084 | 0.170 |
+
+**Pure Divergence CALL is the only cell that passed at both horizons.** MAJORITY CALL and ANY-of-3 PUT passed near but failed biweekly — read those as unconfirmed.
+
+## Why it works — direction, not volatility
+
+A cross-test scored all four signal→side pairings. A bearish signal helps the CALL at every distance (−4.6 to −6.7) and does nothing for the PUT (≈0). A bullish signal helps the PUT and makes a *close* CALL worse (+4.5 to +6.2 at 2.0–2.5% OTM). That is a direction signal — a volatility signal would improve both sides together, and it doesn't. That +4.5/+6.2 penalty disappears by 3.0% OTM, which is why leaving the untouched leg at regular distance is safe.
+
+## Honest limits
+
+- **The edge is small** — 0.25% of strike distance, ~60 Nifty points.
+- **Not proven.** p=0.008 as measured, but overlapping trades mean ~60 truly independent episodes rather than 219; corrected for that, p=0.134. 20 combinations were tested. Read as **promising, not established**.
+- **Survival only.** No historical option-price data exists in this app, so nothing here says whether 2.75% *pays* better than 3.0% — only that it survives as often. The premium side of that trade-off is your judgement.
+
+## Retest when
+
+- After ~50 live signal-day positions
+- If observed CALL breach at 2.75% runs above ~9%, or PUT breach at 3.25% above ~7% (the baselines each is meant to beat)
+- 12 months from calibration (**Aug 2027**)
+- After any sharp VIX regime change
+- **Sooner for the PUT rule** — it is unconfirmed, so track it separately and drop it if live breach at 3.25% runs at or above your normal 3.5% rate
+
+Re-run via page 33 — restore it from git first (see the retired-pages expander at the bottom).
+The backtest engine itself, `analytics/strike_survival_backtest.py`, is still in the repo
+and was never deleted.
+
+*Calibrated 31 Jul 2026 · 4 years hourly + daily Nifty (Aug 2022 – Jul 2026) · 984 entry days.*
+""")
+
 DAYS = 365
 RSI_PERIOD = 14
 
@@ -756,7 +882,7 @@ last calibration.
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.divider()
-with st.expander("🗄️ Bring back a retired page (04 / 28 / 31)", expanded=False):
+with st.expander("🗄️ Bring back a retired page (04 / 28 / 31 / 33)", expanded=False):
     st.markdown("""
 This page replaced 3 older pages on **30 Jul 2026**. Nothing is deleted forever —
 git keeps every version, so any of them can be restored exactly as they last looked.
@@ -765,9 +891,10 @@ Run this from the repo root (adjust the filename for whichever page you want bac
 then commit and push like normal:
 
 ```bash
-git show abe6634:pages/04_Hourly_RSI_Breakout.py    > pages/04_Hourly_RSI_Breakout.py
-git show 189b6c0:pages/28_RSI_Swing_Fade.py         > pages/28_RSI_Swing_Fade.py
+git show abe6634:pages/04_Hourly_RSI_Breakout.py     > pages/04_Hourly_RSI_Breakout.py
+git show 189b6c0:pages/28_RSI_Swing_Fade.py          > pages/28_RSI_Swing_Fade.py
 git show 189b6c0:pages/31_RSI_Divergence_Backtest.py > pages/31_RSI_Divergence_Backtest.py
+git show 449aca4:pages/33_RSI_Leadtime_Backtest.py   > pages/33_RSI_Leadtime_Backtest.py
 ```
 
 **What each one had:**
@@ -784,6 +911,22 @@ git show 189b6c0:pages/31_RSI_Divergence_Backtest.py > pages/31_RSI_Divergence_B
   losses) and CSV export of both the trade log and the sweep table — the
   numbers it produced are summarized in the findings section above, but the
   interactive sweep tool itself isn't on this page.
+- **Page 33 — RSI Lead-Time & Strike-Tightening Backtest** *(retired 31 Jul 2026)*.
+  Produced the strike-tightening rule pinned at the top of this page. Two scans:
+  **Q1** — entry on the signal day, exit at Tuesday expiry (near 5–9 sessions /
+  biweekly 10–14), breach % at every OTM distance 1.00→4.50% for all 5 systems and
+  both sides, plus the cross-test that proved it a direction rather than volatility
+  signal. **Q2** — the lead-time test, which found these signals give **no** usable
+  early warning of a breach (hit rates look high only because a signal is active on
+  25–82% of all days). Restore this page to re-calibrate at the retest triggers.
+
+**The backtest engine was NOT deleted.** `analytics/strike_survival_backtest.py`
+is still in the repo — page 33 was only ever a thin UI over it, so restoring the
+page above is enough to re-run everything. That module carries the guards that
+matter (a false-positive trap where the naive equal-risk metric reports a
+0.75–2.00% "pickup" on pure noise, the weekday hold-length confound under
+expiry-anchored exits, and a lazy-matplotlib crash), all verified against
+synthetic data with known answers.
 
 If you're not comfortable running git commands yourself, just tell me "bring back
 page 28" (or whichever) in a session and I'll do it.
