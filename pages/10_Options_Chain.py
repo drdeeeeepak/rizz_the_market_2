@@ -43,6 +43,17 @@ is_far   = "Far" in choice
 df_chain = chains["far"] if is_far else chains["near"]
 dte      = far_dte if is_far else near_dte
 
+# An unreadable chain must NOT render as zeros — PCR 0.00 / walls 0 / GEX 0 look
+# identical to a real reading. Stop instead, and say why.
+if df_chain.empty:
+    st.error(
+        f"⚠️ Option chain unavailable for **{far_exp if is_far else near_exp}** "
+        f"({dte} DTE). Kite returned no usable data, so every number on this page "
+        "would be a placeholder zero. Nothing is shown rather than something wrong.\n\n"
+        "Check the Kite login on the Home page, then refresh."
+    )
+    st.stop()
+
 atr14    = sig.get("atr14", 200.0)
 net_skew = sig.get("net_skew", 0.0)
 va_mult  = sig.get("mp_buf_mult", 0.75)

@@ -98,7 +98,14 @@ BB_VIX_DIV_VIX = 16          # VIX threshold for divergence alert
 BB_VIX_DIV_BW  = 4.5         # 2H BW% ceiling for divergence alert
 
 # ─── Page 10: Options Chain ──────────────────────────────────────────────────
-OI_STRIKE_RANGE=500; OI_STRIKE_STEP=50; OI_WALL_PCT=0.75
+# OI_STRIKE_RANGE is the MINIMUM half-width (pts) of the chain we pull around ATM.
+# OI_STRIKE_RANGE_PCT scales it with spot so the window keeps covering the strikes
+# we actually sell (anchor × 1.035 CE / × 0.960 PE) plus room to see the walls
+# BEYOND them. Effective reach = max(OI_STRIKE_RANGE, spot × OI_STRIKE_RANGE_PCT).
+# Was a flat 500 pts — at Nifty 25,000 that window (24,500–25,500) excluded BOTH
+# traded strikes (25,875 / 24,000), so every wall / max-pain / 10-delta reading
+# was computed on a band that did not contain the position.
+OI_STRIKE_RANGE=1500; OI_STRIKE_RANGE_PCT=0.06; OI_STRIKE_STEP=50; OI_WALL_PCT=0.75
 PCR_BALANCED_LOW=0.9; PCR_BALANCED_HI=1.1
 WALL_DIST_RANGE=1.2; WALL_DIST_EXPAND=2.5
 GEX_NEG_EXTRA=300; GEX_NOTRADE_CANARY=2; GEX_NOTRADE_VIX=17

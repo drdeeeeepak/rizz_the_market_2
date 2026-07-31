@@ -119,12 +119,17 @@ def get_leg_ltp(strike: int, expiry_str: str, opt_type: str) -> float:
         return 0.0
     try:
         from data.kite_client import get_kite
+        from data.live_fetcher import get_nifty_option_map
         from datetime import date
         exp = date.fromisoformat(expiry_str)
-        yy  = exp.strftime("%y")
-        m   = exp.month
-        dd  = exp.day
-        sym = f"NFO:NIFTY{yy}{m}{dd}{strike}{opt_type}"
+        # Resolve the real tradingsymbol from Kite's instrument dump. Building it by
+        # hand as f"NIFTY{yy}{month}{day}{strike}{type}" produced wrong names for
+        # single-digit days, Oct/Nov/Dec, and monthly expiries — quote() then returned
+        # nothing, this returned 0.0, and compute_leg_pnl() fell back to entry premium,
+        # so the leg silently displayed ZERO P&L on a live position.
+        sym = get_nifty_option_map(exp).get((int(strike), opt_type))
+        if not sym:
+            return 0.0
         kite = get_kite()
         quote = kite.quote([sym])
         if sym in quote:

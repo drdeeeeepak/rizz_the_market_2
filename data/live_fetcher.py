@@ -27,7 +27,7 @@ except ImportError:
 from config import (
     NIFTY_INDEX_TOKEN, TOP_10_TOKENS,
     TTL_OPTIONS, TTL_PRICE, TTL_DAILY, TTL_1H,
-    OI_STRIKE_STEP, OI_STRIKE_RANGE, EXPIRY_WEEKDAY,
+    OI_STRIKE_STEP, OI_STRIKE_RANGE, OI_STRIKE_RANGE_PCT, EXPIRY_WEEKDAY,
     DOW_PHASE_DAYS,
     TTL_15M, TTL_30M, TTL_5M,
     ST_15M_DAYS, ST_30M_DAYS, ST_5M_DAYS,
@@ -495,24 +495,119 @@ def get_top10_daily(days: int = 400) -> dict[str, pd.DataFrame]:
 
 # ─── Options chain ────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def _nifty_nfo_instruments() -> list:
+    """
+    Every NFO contract whose underlying is NIFTY (futures + options), straight from
+    Kite's instrument dump. Cached daily — the dump is large and only changes when
+    contracts are listed or expire.
+    """
+    kite = _get_kite_safe()
+    try:
+        return [i for i in kite.instruments("NFO") if i.get("name") == "NIFTY"]
+    except Exception as e:
+        log.error("NFO instrument dump failed: %s", e)
+        return []
+
+
+@st.cache_data(ttl=TTL_DAILY, show_spinner=False)
+def get_nifty_option_map(expiry: date) -> dict:
+    """
+    Resolve the REAL Kite tradingsymbol for every NIFTY option at `expiry`.
+    Returns {(strike:int, "CE"|"PE"): "NFO:TRADINGSYMBOL"} — empty dict on failure.
+
+    Why this exists: symbols used to be built by string-formatting
+        f"NIFTY{yy}{month}{day}{strike}CE"
+    which silently produced WRONG names for
+      • single-digit days  — 7 Jul 2026 → "2677", Kite wants "26707"
+      • Oct / Nov / Dec    — numeric 10/11/12 instead of the O/N/D codes,
+                             and "26113" is ambiguous (3 Nov vs 13 Jan)
+      • monthly expiries   — the last Tuesday uses "26JUL", not a weekly code
+    kite.quote() drops unknown symbols WITHOUT raising, so the chain came back as
+    all-zeros and every downstream page rendered PCR 0 / walls 0 / GEX 0 as though
+    it were a real reading. Reading instruments() removes the guessing entirely.
+    """
+    out = {}
+    for i in _nifty_nfo_instruments():
+        itype = i.get("instrument_type")
+        if itype not in ("CE", "PE"):
+            continue
+        try:
+            if pd.to_datetime(i.get("expiry")).date() != expiry:
+                continue
+            strike = int(float(i.get("strike") or 0))
+        except Exception:
+            continue
+        ts = i.get("tradingsymbol")
+        if strike and ts:
+            out[(strike, itype)] = f"NFO:{ts}"
+    if not out:
+        log.error("No NIFTY option instruments found for expiry %s", expiry)
+    return out
+
+
+def strike_reach(spot: float) -> int:
+    """
+    Half-width (pts, rounded to a strike step) of the chain window around ATM.
+    Scales with spot so the window always covers the strikes we actually sell
+    (anchor × 1.035 CE / × 0.960 PE) plus room to see the walls beyond them.
+    """
+    pct_reach = float(spot) * OI_STRIKE_RANGE_PCT
+    reach = max(OI_STRIKE_RANGE, pct_reach)
+    return int(round(reach / OI_STRIKE_STEP) * OI_STRIKE_STEP)
+
+
 @st.cache_data(ttl=TTL_OPTIONS, show_spinner=False)
 def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
-    from data.kite_client import get_kite, get_kite_action
-    kite = get_kite_action() if not _HAS_ST else get_kite()
-    atm     = round(spot / OI_STRIKE_STEP) * OI_STRIKE_STEP
-    strikes = range(atm-OI_STRIKE_RANGE, atm+OI_STRIKE_RANGE+OI_STRIKE_STEP, OI_STRIKE_STEP)
-    exp     = f"{expiry.strftime('%y')}{expiry.month}{expiry.day}"
-    symbols = []
+    """
+    One expiry's option chain, indexed by strike.
+
+    Returns an EMPTY DataFrame when the chain could not be read — never a frame of
+    zeros. Callers must treat empty as "no data" and say so, because a zero-filled
+    chain looks exactly like a real reading of PCR 0 / no walls / no gamma.
+    """
+    kite = _get_kite_safe()
+    atm     = int(round(spot / OI_STRIKE_STEP) * OI_STRIKE_STEP)
+    reach   = strike_reach(spot)
+    strikes = range(atm - reach, atm + reach + OI_STRIKE_STEP, OI_STRIKE_STEP)
+
+    sym_map = get_nifty_option_map(expiry)
+    if not sym_map:
+        return pd.DataFrame()
+
+    # Only ask for strikes that actually exist for this expiry.
+    wanted = {}                      # symbol -> (strike, side)
     for s in strikes:
-        symbols += [f"NFO:NIFTY{exp}{s}CE", f"NFO:NIFTY{exp}{s}PE"]
-    try:
-        data = kite.quote(symbols)
-    except Exception as e:
-        log.error("Batch OI failed: %s", e); data = {}
+        for side in ("CE", "PE"):
+            sym = sym_map.get((int(s), side))
+            if sym:
+                wanted[sym] = (int(s), side)
+    if not wanted:
+        log.error("Expiry %s has no listed strikes in %s..%s",
+                  expiry, atm - reach, atm + reach)
+        return pd.DataFrame()
+
+    # kite.quote() caps at 500 instruments per call — chunk to stay well under.
+    data, syms = {}, list(wanted)
+    for i in range(0, len(syms), 200):
+        batch = syms[i:i + 200]
+        try:
+            data.update(kite.quote(batch))
+        except Exception as e:
+            log.error("Batch OI quote failed (%d symbols from %s): %s",
+                      len(batch), batch[0], e)
+
+    if not data:
+        log.error("Chain %s: quote() returned nothing for %d symbols", expiry, len(syms))
+        return pd.DataFrame()
+
     records = []
     for s in strikes:
-        ce = data.get(f"NFO:NIFTY{exp}{s}CE", {})
-        pe = data.get(f"NFO:NIFTY{exp}{s}PE", {})
+        s = int(s)
+        ce = data.get(sym_map.get((s, "CE"), ""), {})
+        pe = data.get(sym_map.get((s, "PE"), ""), {})
+        if not ce and not pe:
+            continue                 # strike genuinely absent — skip, don't fake a zero row
         records.append({
             "strike": s,
             "ce_oi": ce.get("oi",0), "ce_vol": ce.get("volume",0),
@@ -522,12 +617,22 @@ def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
             "pe_ltp": pe.get("last_price",0), "pe_iv": pe.get("implied_volatility",0),
             "pe_oi_change": pe.get("oi_day_change",0),
         })
-    if not records: return pd.DataFrame()
+    if not records:
+        return pd.DataFrame()
+
     df = pd.DataFrame(records).set_index("strike")
+    # An all-zero-OI chain is a failed read dressed up as data — reject it.
+    if float(df["ce_oi"].sum()) <= 0 and float(df["pe_oi"].sum()) <= 0:
+        log.error("Chain %s: %d strikes quoted but total OI is zero — treating as no data",
+                  expiry, len(df))
+        return pd.DataFrame()
+
     prev_ce = df["ce_oi"] - df["ce_oi_change"]
     prev_pe = df["pe_oi"] - df["pe_oi_change"]
     df["ce_pct_change"] = np.where(prev_ce>0, df["ce_oi_change"]/prev_ce*100, 0.0)
     df["pe_pct_change"] = np.where(prev_pe>0, df["pe_oi_change"]/prev_pe*100, 0.0)
+    log.info("Chain %s: %d strikes %s..%s (reach ±%d pts)",
+             expiry, len(df), df.index.min(), df.index.max(), reach)
     return df
 
 
@@ -675,13 +780,14 @@ def get_nifty_fut_token() -> int:
     so VWAP / volume-delta must be computed on the future. Cached daily.
     Returns 0 on failure.
     """
-    kite = _get_kite_safe()
     try:
-        insts = kite.instruments("NFO")
+        # Shares the daily-cached NIFTY instrument dump with the option-chain
+        # resolver — no second multi-MB download.
+        insts = _nifty_nfo_instruments()
         today = date.today()
         cands = []
         for i in insts:
-            if i.get("name") == "NIFTY" and i.get("instrument_type") == "FUT":
+            if i.get("instrument_type") == "FUT":
                 try:
                     exp = pd.to_datetime(i.get("expiry")).date()
                 except Exception:

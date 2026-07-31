@@ -129,7 +129,7 @@ def run_oi_snapshot():
     Saves near and far expiry chains to parquet for historical analysis.
     """
     from data.kite_client import get_kite_action
-    from data.live_fetcher import get_near_far_expiries, get_dte
+    from data.live_fetcher import get_near_far_expiries, get_dte, get_options_chain
     from analytics.oi_scoring import OIScoringEngine
     import pandas as pd
 
@@ -137,7 +137,7 @@ def run_oi_snapshot():
     kite = get_kite_action()
 
     # Nifty spot
-    from config import NIFTY_INDEX_TOKEN, OI_STRIKE_STEP, OI_STRIKE_RANGE
+    from config import NIFTY_INDEX_TOKEN
     try:
         quote = kite.quote([f"NSE:{NIFTY_INDEX_TOKEN}"])
         spot  = float(quote[str(NIFTY_INDEX_TOKEN)]["last_price"])
@@ -149,45 +149,17 @@ def run_oi_snapshot():
     near_dte = get_dte(near_exp)
     far_dte  = get_dte(far_exp)
 
-    def fetch_chain(expiry):
-        atm    = round(spot / OI_STRIKE_STEP) * OI_STRIKE_STEP
-        strikes= range(atm - OI_STRIKE_RANGE, atm + OI_STRIKE_RANGE + OI_STRIKE_STEP, OI_STRIKE_STEP)
-        expiry_str = expiry.strftime("%d%b%Y").upper()
-        records = []
-        import numpy as np
-        for strike in strikes:
-            ce_sym = f"NFO:NIFTY{expiry_str}{strike}CE"
-            pe_sym = f"NFO:NIFTY{expiry_str}{strike}PE"
-            try:
-                data = kite.quote([ce_sym, pe_sym])
-                ce   = data.get(ce_sym, {})
-                pe   = data.get(pe_sym, {})
-                records.append({
-                    "strike":       strike,
-                    "ce_oi":        ce.get("oi", 0),
-                    "ce_vol":       ce.get("volume", 0),
-                    "ce_ltp":       ce.get("last_price", 0),
-                    "ce_iv":        ce.get("implied_volatility", 0),
-                    "ce_oi_change": ce.get("oi_day_change", 0),
-                    "pe_oi":        pe.get("oi", 0),
-                    "pe_vol":       pe.get("volume", 0),
-                    "pe_ltp":       pe.get("last_price", 0),
-                    "pe_iv":        pe.get("implied_volatility", 0),
-                    "pe_oi_change": pe.get("oi_day_change", 0),
-                })
-            except Exception as e:
-                log.warning("Strike %s fetch failed: %s", strike, e)
-        if not records:
-            return pd.DataFrame()
-        df = pd.DataFrame(records).set_index("strike")
-        prev_ce = df["ce_oi"] - df["ce_oi_change"]
-        prev_pe = df["pe_oi"] - df["pe_oi_change"]
-        df["ce_pct_change"] = np.where(prev_ce > 0, df["ce_oi_change"]/prev_ce*100, 0.0)
-        df["pe_pct_change"] = np.where(prev_pe > 0, df["pe_oi_change"]/prev_pe*100, 0.0)
-        return df
-
-    near_chain = fetch_chain(near_exp)
-    far_chain  = fetch_chain(far_exp)
+    # Uses the shared fetcher in live_fetcher — resolves real tradingsymbols from
+    # Kite's instrument dump, batches the quotes, and returns an EMPTY frame (not
+    # zeros) when the chain can't be read. The local copy this replaced built
+    # symbols as "NIFTY28JUL202625000CE", which matches no Kite contract, so every
+    # snapshot this job wrote was a chain of zeros.
+    near_chain = get_options_chain(near_exp, spot)
+    far_chain  = get_options_chain(far_exp,  spot)
+    if near_chain.empty and far_chain.empty:
+        log.error("OI snapshot aborted — neither chain could be read for %s / %s",
+                  near_exp, far_exp)
+        return
 
     # Score chains
     oi_eng = OIScoringEngine()

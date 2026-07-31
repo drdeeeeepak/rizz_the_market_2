@@ -148,7 +148,13 @@ def _nearest_atm(df: pd.DataFrame, spot: float) -> int:
     """
     if df.empty:
         return int(round(spot / OI_STRIKE_STEP) * OI_STRIKE_STEP)
-    diffs = (df.index - spot).to_series().abs()
+    # NOTE: must build the Series from the INDEX, then subtract.
+    # (df.index - spot).to_series() makes the *differences* both the index and the
+    # values, so idxmin() returned the smallest difference (0.0) instead of the
+    # strike — i.e. this function returned 0 on every call. That silently zeroed
+    # ATM IV, IV skew, straddle, theta/IV, delta skew and the IV-expected-move and
+    # straddle strike models, because each of them bails on `atm not in df.index`.
+    diffs = (df.index.to_series() - spot).abs()
     return int(diffs.idxmin())
 
 
@@ -376,13 +382,13 @@ class OptionsChainEngine(BaseStrategy):
         else:
             return 0.0
 
-        # Theta from BS is in fractional terms (fraction of spot per day)
-        # Convert to points: theta_pts = avg_theta * spot
-        # Ratio: theta_pts / (iv / 100 * spot / sqrt(365))
-        # Simplified: theta_pts * sqrt(365) / (iv_decimal * spot)
-        # Even simpler approach: straddle daily decay / straddle price
-        # Use: straddle theta pts / (atm_iv/100 * spot / sqrt(365))
-        theta_pts = avg_theta * spot
+        # _bs_greeks returns theta ALREADY in index points per day (the BS formula
+        # is denominated in the same units as S). The old code multiplied it by spot
+        # again, inflating the ratio ~25,000× — it read 2,500 instead of 0.11 and so
+        # sat permanently above the 1.0 "good" threshold. This was invisible until
+        # _nearest_atm was fixed, because atm resolved to 0 and this bailed out at 0.0.
+        # Ratio = premium decayed per day ÷ 1-day expected move, both in points.
+        theta_pts = avg_theta
         iv_daily  = (iv / 100) * spot / np.sqrt(365)
         if iv_daily > 0:
             return theta_pts / iv_daily

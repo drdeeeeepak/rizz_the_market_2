@@ -34,6 +34,23 @@ near_exp = chains["near_expiry"]; far_exp  = chains["far_expiry"]
 near_dte = chains["near_dte"];   far_dte  = chains["far_dte"]
 atr14    = sig.get("atr14", 200.0)
 
+# The far chain IS your trade — without it every score, wall and GEX number below
+# would be a placeholder zero, indistinguishable from a real reading. Stop instead.
+if chains["far"].empty:
+    st.error(
+        f"⚠️ Far option chain unavailable for **{far_exp}** ({far_dte} DTE). "
+        "Kite returned no usable data, so the OI scores, walls and GEX on this page "
+        "would all be placeholder zeros. Nothing is shown rather than something wrong.\n\n"
+        "Check the Kite login on the Home page, then refresh."
+    )
+    st.stop()
+if chains["near"].empty:
+    st.warning(
+        f"⚠️ Near chain ({near_exp}) unavailable — the intelligence layer "
+        "(flow scoring, dual fortress, cross-expiry synthesis) is degraded. "
+        "Far-expiry structural analysis below is unaffected."
+    )
+
 eng    = OIScoringEngine()
 oc_eng = OptionsChainEngine()
 
