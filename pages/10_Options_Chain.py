@@ -144,6 +144,96 @@ with c6: ui.metric_card("IV SKEW (Put-Call)", f"{iv_skew:+.1f}%",
                           sub="Put IV minus Call IV at ATM",
                           color="amber" if abs(iv_skew) > 2 else "default")
 
+st.markdown("")
+ui.section_header("Section 2B — The volatility smile",
+                  "Where fear is actually priced · 25-delta risk reversal and butterfly")
+
+ui.simple_technical(
+    "'IV Skew' above compares the put and call sitting exactly at the money. Those two "
+    "options are on the same point of the curve, so that number is mostly bid-ask noise. "
+    "The real story is in the wings — the far-out options people buy as insurance.\n\n"
+    "Risk reversal compares the out-of-the-money put with the equally-far out-of-the-money "
+    "call. For an index it is normally negative: puts cost more, because everyone wants "
+    "crash protection and nobody insures against a rally. When it goes sharply MORE "
+    "negative, fear is being bid — and it means the put side of your condor is being paid "
+    "better than the call side.\n\n"
+    "Butterfly measures how curved the smile is. Rising butterfly = the market is paying up "
+    "for BOTH tails, which is a warning for anyone short both wings.",
+    "RR25 = IV(25Δ call) − IV(25Δ put)\n"
+    "BF25 = (IV(25Δ call) + IV(25Δ put))/2 − IV(ATM)\n"
+    "IV interpolated along the DELTA axis, not snapped to the nearest 50-pt strike\n"
+    "OTM branch only: puts below spot, calls above\n"
+    "Blank when the chain does not quote far enough into a wing — never zero-filled"
+)
+st.markdown("")
+
+_skew = oc_sig.get("skew", {})
+if _skew.get("available"):
+    c1, c2, c3, c4 = st.columns(4)
+    _rr, _bf = _skew["rr"], _skew.get("bf")
+    with c1:
+        ui.metric_card("RISK REVERSAL 25Δ", f"{_rr:+.2f}%",
+                       sub=_skew["read"],
+                       color="red" if _rr <= -2.0 else "amber" if _rr <= -0.5 else "green")
+    with c2:
+        ui.metric_card("BUTTERFLY 25Δ", f"{_bf:+.2f}%" if _bf is not None else "—",
+                       sub="Both tails bid when rising",
+                       color="amber" if (_bf or 0) > 1.5 else "default")
+    with c3:
+        ui.metric_card("25Δ PUT WING IV", f"{_skew['put_wing_iv']:.2f}%",
+                       sub="What downside insurance costs", color="green")
+    with c4:
+        ui.metric_card("25Δ CALL WING IV", f"{_skew['call_wing_iv']:.2f}%",
+                       sub="What upside insurance costs", color="red")
+
+    if _rr <= -2.0:
+        ui.alert_box(
+            "Puts are richly bid",
+            f"The 25-delta put is {abs(_rr):.2f} vol points over the equivalent call. "
+            "Downside protection is expensive — the PE leg of your condor is being paid "
+            "better than the CE leg for the same distance. Consider selling the put side "
+            "slightly closer, or the call side slightly further out.",
+            level="warning")
+    elif _rr > 0.5:
+        ui.alert_box(
+            "Call skew — unusual for an index",
+            f"The 25-delta call is {_rr:.2f} vol points over the put. Upside is being "
+            "chased. The CE leg carries more risk than its distance suggests.",
+            level="warning")
+
+    _sm = _skew.get("smile")
+    if _sm is not None and not _sm.empty:
+        fig_s = go.Figure()
+        for side, colr, nm in (("PE", "#10b981", "OTM puts"), ("CE", "#ef4444", "OTM calls")):
+            part = _sm[_sm["side"] == side]
+            if not part.empty:
+                fig_s.add_trace(go.Scatter(
+                    x=part.index, y=part["iv"], name=nm, mode="lines+markers",
+                    line=dict(color=colr, width=2), marker=dict(size=5),
+                    hovertemplate="strike %{x:,}<br>IV %{y:.2f}%<extra></extra>"))
+        fig_s.add_vline(x=spot, line_dash="dash", line_color="#0ea5e9",
+                        annotation_text=f"Spot {spot:,.0f}", annotation_position="top")
+        # Read from oc_sig — the module-level binding_ce/binding_pe are not bound
+        # until Section 3, which renders below this one.
+        for lvl, colr, lbl in ((oc_sig.get("binding_ce", 0), "#ef4444", "Binding CE"),
+                               (oc_sig.get("binding_pe", 0), "#10b981", "Binding PE")):
+            if lvl:
+                fig_s.add_vline(x=lvl, line_dash="dot", line_color=colr,
+                                annotation_text=lbl, annotation_position="bottom")
+        fig_s.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10),
+                            title="Implied volatility by strike (OTM branch)",
+                            xaxis_title="strike", yaxis_title="IV %")
+        st.plotly_chart(fig_s, width="stretch")
+        st.caption("A steeper left side means downside insurance is getting relatively more "
+                   "expensive. Watch where your short strikes sit on the curve — a strike on "
+                   "a steep part is being paid more per point of distance than a flat one.")
+else:
+    st.info("Smile needs implied volatility across both wings — the chain is not quoting "
+            "far enough out right now, or IV is unavailable. Nothing shown rather than a "
+            "misleading zero.")
+
+st.divider()
+
 with st.expander("Greeks plain English guide", expanded=False):
     ui.simple_technical(
         "Magnet strike: this is where dealer hedging is most violent. If spot moves toward it, moves amplify. If it's between spot and your strike — it acts as a buffer absorbing hedging before price reaches you.\n\nTheta/IV ratio above 1.0 = good time to sell — you're collecting strong time decay relative to uncertainty.\n\nDelta skew tells you which direction options traders are paying more to hedge.",

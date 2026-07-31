@@ -162,6 +162,114 @@ def _enrich_with_greeks(df: pd.DataFrame, spot: float, dte: int) -> pd.DataFrame
     return df
 
 
+# ─── IV smile and delta-based skew ───────────────────────────────────────────
+#
+# The chain currently reports IV at ONE strike (ATM) and calls the difference
+# between the ATM put and ATM call "skew". That is the weakest possible reading:
+# at the money, puts and calls sit on the same point of the curve, so the number
+# is mostly bid-ask noise. The real skew lives in the WINGS.
+#
+# The industry-standard measures are quoted at 25 delta:
+#   RR25 = IV(25Δ call) − IV(25Δ put)
+#          how lopsided the curve is. Negative means puts are richer than calls —
+#          the normal state for an equity index, because people pay up for crash
+#          protection. A sharply MORE negative RR25 means fear is being bid.
+#   BF25 = (IV(25Δ call) + IV(25Δ put))/2 − IV(ATM)
+#          how curved the smile is, i.e. how much the market is paying for BOTH
+#          tails. Rising BF25 means tail risk is being priced on both sides.
+#
+# Both are read off OTM options only (puts below spot, calls above), which is
+# where the liquidity is, and both interpolate IV along the DELTA axis rather
+# than snapping to whichever listed strike happens to sit nearest 25 delta.
+
+def iv_smile(df: pd.DataFrame, spot: float, dte: int) -> pd.DataFrame:
+    """
+    The OTM implied-vol curve: puts below spot, calls above, which is the side of
+    each strike that actually trades. Returns a frame with strike, iv, delta,
+    side and moneyness — empty if the chain carries no usable IV.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "ce_delta" not in df.columns or "pe_delta" not in df.columns:
+        df = _enrich_with_greeks(df, spot, dte)
+
+    rows = []
+    for k in df.index:
+        try:
+            strike = float(k)
+        except (TypeError, ValueError):
+            continue
+        side = "CE" if strike >= spot else "PE"
+        iv = float(df.loc[k, f"{side.lower()}_iv"]) if f"{side.lower()}_iv" in df.columns else 0.0
+        if iv <= 0:
+            continue                     # illiquid / no quote — leave a gap, don't invent one
+        delta = abs(float(df.loc[k, f"{side.lower()}_delta"]))
+        rows.append({"strike": int(strike), "iv": round(iv, 3), "delta": round(delta, 4),
+                     "side": side, "moneyness": round((strike - spot) / spot * 100, 2)})
+    return pd.DataFrame(rows).set_index("strike").sort_index() if rows else pd.DataFrame()
+
+
+def iv_at_delta(smile: pd.DataFrame, target_delta: float = 0.25,
+                side: str = "CE") -> float:
+    """
+    IV at an exact delta, linearly interpolated along the delta axis.
+
+    Snapping to the nearest listed strike would quantise the answer to whatever
+    50-point grid Nifty happens to use, which moves RR25 around by more than the
+    signal itself on a quiet day. Returns 0.0 when the wing is not covered.
+    """
+    if smile is None or smile.empty:
+        return 0.0
+    sub = smile[smile["side"] == side.upper()]
+    # Keep the OTM branch only: delta below ~0.5, above a floor where quotes are junk.
+    sub = sub[(sub["delta"] > 0.01) & (sub["delta"] < 0.55)]
+    if len(sub) < 2:
+        return 0.0
+    s = sub.sort_values("delta")
+    d, v = s["delta"].to_numpy(dtype=float), s["iv"].to_numpy(dtype=float)
+    if target_delta < d.min() or target_delta > d.max():
+        return 0.0                       # do not extrapolate past the quoted wing
+    return round(float(np.interp(target_delta, d, v)), 3)
+
+
+def skew_metrics(df: pd.DataFrame, spot: float, dte: int, atm_iv: float,
+                 target_delta: float = 0.25) -> dict:
+    """
+    Risk reversal and butterfly at `target_delta`, plus the wing IVs they come from.
+    Every field is None when the chain does not quote enough of a wing to support it —
+    a missing wing must read as missing, not as zero skew.
+    """
+    smile = iv_smile(df, spot, dte)
+    if smile.empty:
+        return {"available": False}
+
+    ce_iv = iv_at_delta(smile, target_delta, "CE")
+    pe_iv = iv_at_delta(smile, target_delta, "PE")
+    if ce_iv <= 0 or pe_iv <= 0:
+        return {"available": False, "smile": smile}
+
+    rr = round(ce_iv - pe_iv, 3)
+    bf = round((ce_iv + pe_iv) / 2 - float(atm_iv), 3) if atm_iv and atm_iv > 0 else None
+
+    if rr <= -2.0:      read = "Heavy put skew — crash protection being bid hard"
+    elif rr <= -0.5:    read = "Normal index put skew"
+    elif rr < 0.5:      read = "Flat — unusually symmetric for an index"
+    else:               read = "Call skew — upside being chased"
+
+    return {
+        "available":  True,
+        "delta":      target_delta,
+        "rr":         rr,
+        "bf":         bf,
+        "call_wing_iv": ce_iv,
+        "put_wing_iv":  pe_iv,
+        "atm_iv":     round(float(atm_iv), 3) if atm_iv else None,
+        "read":       read,
+        "richer_side": "PUTS" if rr < 0 else "CALLS" if rr > 0 else "EVEN",
+        "smile":      smile,
+    }
+
+
 # ─── Probability of touch / finishing ITM ────────────────────────────────────
 #
 # A short strike does not have to EXPIRE in the money to hurt you — it only has to
@@ -331,6 +439,10 @@ class OptionsChainEngine(BaseStrategy):
         magnet     = self._magnet_strike(df)
         theta_iv   = self._theta_iv_ratio(df, spot, dte)
         delta_skew = self._delta_skew(df, spot)
+        # Wing skew. iv_skew above is the ATM put-minus-call difference, which is
+        # mostly bid-ask noise because both legs sit on the same point of the curve.
+        # RR25/BF25 read the actual wings. Both are kept — iv_skew is still shown.
+        skew = skew_metrics(df, spot, dte, atm_iv)
 
         # ── Section 3: Five strike models + synthesis ─────────────────────────
         models    = self._five_models(df, spot, dte, atr14, va_buf_mult,
@@ -369,6 +481,7 @@ class OptionsChainEngine(BaseStrategy):
             "magnet_strike":  magnet,
             "theta_iv_ratio": round(theta_iv, 3),
             "delta_skew":     delta_skew,
+            "skew":           skew,
             # Section 3
             "models":         models,
             "synthesis":      synthesis,
@@ -849,6 +962,7 @@ class OptionsChainEngine(BaseStrategy):
             "max_pain_dist": 0, "fut_premium": 0.0,
             "atm_iv": 0.0, "iv_skew": 0.0, "straddle_price": 0.0,
             "magnet_strike": 0, "theta_iv_ratio": 0.0, "delta_skew": "BALANCED",
+            "skew": {"available": False},
             "models": {}, "synthesis": {
                 "binding_ce": 0, "binding_pe": 0,
                 "binding_ce_model": "—", "binding_pe_model": "—"
