@@ -374,6 +374,13 @@ GAMMA_ROLL_MONO_AMBER     = 350   # Moneyness (pts from short strike) = amber zo
 GAMMA_ACCEL_ROLL          = 2.0   # Gamma multiple vs entry = roll signal
 GAMMA_ACCEL_WATCH         = 1.5   # Gamma multiple vs entry = watch signal
 GAMMA_DEFAULT_IV          = 12.0  # Fallback IV% when live chain not available
+# Short-leg delta triggers. The standard premium-selling adjustment rule: a short
+# leg is managed when its delta reaches ~30, watched from ~20. This catches danger
+# the other two triggers miss — a leg can drift to 30 delta on a slow move with DTE
+# still comfortable and gamma barely changed, so neither the DTE+proximity nor the
+# gamma-multiple trigger fires, yet the leg is already the one that will hurt.
+GAMMA_ROLL_DELTA_RED      = 0.30  # |delta| of the short leg = manage now
+GAMMA_ROLL_DELTA_AMBER    = 0.20  # |delta| of the short leg = watch
 
 # ─── Home Score Rescaling (Option B) — 8 lenses, total max = 100 ─────────────
 # Previous max per lens:  OC=25, RSI=20, MP=20, BB=15, VIX=10, Dow=5, EMA=5

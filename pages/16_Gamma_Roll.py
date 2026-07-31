@@ -9,6 +9,11 @@
 #     • DTE ≤ 5  AND spot within GAMMA_ROLL_MONO_RED pts of short strike
 #     • DTE ≤ 3  (any proximity — terminal gamma risk)
 #     • Current gamma ≥ GAMMA_ACCEL_ROLL × entry gamma
+#     • Short-leg |delta| ≥ GAMMA_ROLL_DELTA_RED — the standard premium-selling
+#       adjustment rule, and the only trigger that scales with volatility: 200 pts
+#       away means very different things at 11% IV and at 20%, but 30 delta does
+#       not. A leg can reach 30 delta on a slow grind with DTE still comfortable
+#       and gamma barely off entry, so the first three all stay quiet.
 #
 # What gamma provisioning means:
 #   As DTE drops, gamma of short options accelerates. The delta of the short
@@ -36,6 +41,8 @@ from config import (
     GAMMA_ACCEL_ROLL,
     GAMMA_ACCEL_WATCH,
     GAMMA_DEFAULT_IV,
+    GAMMA_ROLL_DELTA_RED,
+    GAMMA_ROLL_DELTA_AMBER,
 )
 
 LOT_SIZE = 65
@@ -44,8 +51,9 @@ RISK_FREE = 0.065
 st.set_page_config(page_title="P16 · Gamma Roll", layout="wide")
 st.title("Page 16 — Gamma Provisioning & Defensive Roll")
 st.caption(
-    "Monitors gamma acceleration on biweekly short legs · "
-    "Entry ~14 DTE · Roll triggers: DTE ≤ 5 + proximity, or gamma ≥ 2× entry"
+    "Monitors gamma acceleration on biweekly short legs · Entry ~14 DTE · "
+    f"Roll triggers: DTE ≤ {GAMMA_ROLL_DTE_RED} + proximity · gamma ≥ {GAMMA_ACCEL_ROLL:g}× entry · "
+    f"short delta ≥ {GAMMA_ROLL_DELTA_RED:.2f}"
 )
 
 # ── Bootstrap signals ─────────────────────────────────────────────────────────
@@ -90,6 +98,42 @@ def _bs_gamma(S: float, K: float, T: float, iv_dec: float) -> float:
         return 0.0
 
 
+def _bs_abs_delta(S: float, K: float, T: float, iv_dec: float, opt_type: str) -> float:
+    """
+    |delta| of one option, 0..1. Magnitude only — for a SHORT leg the sign just
+    says which way it hurts, and both wings are managed on the same number.
+    """
+    if T <= 0 or iv_dec <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    try:
+        d1 = (math.log(S / K) + (RISK_FREE + 0.5 * iv_dec ** 2) * T) / (iv_dec * math.sqrt(T))
+        return abs(norm.cdf(d1) if str(opt_type).upper() == "CE" else norm.cdf(d1) - 1.0)
+    except Exception:
+        return 0.0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _leg_iv(expiry_str: str, strike: int, opt_type: str, fallback: float) -> float:
+    """
+    That leg's OWN implied vol from the live chain for its expiry.
+
+    A flat ATM IV understates a far-OTM short leg, because skew prices the wings
+    above the money — and understating IV understates delta, which is exactly the
+    number the roll trigger reads. Falls back to ATM IV when the chain cannot be
+    read, so the page still works without a Kite session.
+    """
+    try:
+        from data.live_fetcher import get_options_chain
+        from analytics.options_chain import strike_iv
+        exp = datetime.date.fromisoformat(expiry_str)
+        chain = get_options_chain(exp, spot)
+        if chain is None or chain.empty:
+            return float(fallback)
+        return float(strike_iv(chain, int(strike), str(opt_type).upper(), fallback))
+    except Exception:
+        return float(fallback)
+
+
 def _dte_from_expiry(expiry_str: str) -> int:
     if not expiry_str:
         return 0
@@ -125,15 +169,25 @@ def _gamma_metrics(leg: dict) -> dict:
     dte_now   = _dte_from_expiry(expiry)
     dte_entry = _entry_dte(leg)
 
-    iv_dec = atm_iv / 100.0
+    # This leg's own IV, not a flat ATM figure — skew prices the wings higher, and
+    # understating IV understates delta, which is what the roll trigger reads.
+    opt_type = str(leg.get("type", "CE")).upper()
+    iv_pct = _leg_iv(expiry, strike, opt_type, atm_iv)
+    iv_dec = (iv_pct if iv_pct > 0 else atm_iv) / 100.0
     T_now   = max(dte_now, 0.25) / 365
     T_entry = max(dte_entry, 0.25) / 365
 
     g_now   = _bs_gamma(spot, strike, T_now,   iv_dec)
     g_entry = _bs_gamma(spot, strike, T_entry, iv_dec)
+    d_now   = _bs_abs_delta(spot, strike, T_now, iv_dec, opt_type)
 
     gamma_multiple = (g_now / g_entry) if g_entry > 0 else 1.0
-    moneyness_pts  = abs(spot - strike)
+    # SIGNED distance to safety: positive = still OTM, negative = BREACHED (ITM).
+    # This was abs(spot - strike), which made a leg 900 pts deep ITM look identical
+    # to one 900 pts safely OTM — and since the triggers only fire when the value is
+    # SMALL, a deeply breached leg scored "SAFE". The card's own "ITM ⚠ if < 0"
+    # branch could never run, which shows signed was the intent all along.
+    moneyness_pts = (strike - spot) if opt_type == "CE" else (spot - strike)
 
     # Gamma PnL sensitivity: if spot moves 1%, how many pts does delta change?
     # Δ(delta) per 1% spot move = gamma × spot × 0.01
@@ -150,28 +204,54 @@ def _gamma_metrics(leg: dict) -> dict:
         "moneyness_pts":  moneyness_pts,
         "gamma_pnl_sens": gamma_pnl_sens,
         "lots":           lots,
+        "delta_now":      d_now,
+        "iv_used":        iv_pct if iv_pct > 0 else atm_iv,
+        "opt_type":       opt_type,
     }
 
 
-def _roll_urgency(metrics: dict) -> tuple[str, str]:
-    """Returns (label, color) for roll urgency."""
+def _roll_urgency(metrics: dict) -> tuple[str, str, str]:
+    """
+    Returns (label, color, reason) for roll urgency.
+
+    Three independent triggers, any of which can fire:
+      1. DTE + proximity   — terminal gamma risk near expiry
+      2. Gamma multiple    — gamma has accelerated vs entry
+      3. Short-leg DELTA   — the standard premium-selling adjustment rule
+
+    Trigger 3 is the one that was missing. A leg can drift to 30 delta on a slow
+    grind with DTE still comfortable and gamma barely moved off entry, so neither
+    of the first two fires — yet that leg is already the one that will hurt. Delta
+    is also the only trigger that reads distance in a way that scales with
+    volatility: 200 points from spot means something very different at 11% IV than
+    at 20%, but 30 delta means the same thing in both.
+    """
     dte     = metrics["dte_now"]
     mono    = metrics["moneyness_pts"]
     gmult   = metrics["gamma_multiple"]
+    dlt     = metrics.get("delta_now", 0.0)
 
+    # Breached first: a short leg that is already in the money is the most urgent
+    # state there is, whatever the DTE or gamma say.
+    if mono < 0:
+        return "EMERGENCY ROLL", "red", f"BREACHED — {abs(mono):,.0f} pts in the money"
     if dte <= 3:
-        return "EMERGENCY ROLL", "red"
+        return "EMERGENCY ROLL", "red", f"DTE {dte} — terminal gamma"
     if dte <= GAMMA_ROLL_DTE_RED and mono <= GAMMA_ROLL_MONO_RED:
-        return "ROLL NOW", "red"
+        return "ROLL NOW", "red", f"DTE {dte} and only {mono:,.0f} pts away"
+    if dlt >= GAMMA_ROLL_DELTA_RED:
+        return "ROLL NOW", "red", f"Short delta {dlt:.2f} ≥ {GAMMA_ROLL_DELTA_RED:.2f}"
     if gmult >= GAMMA_ACCEL_ROLL and mono <= GAMMA_ROLL_MONO_RED * 1.5:
-        return "ROLL NOW", "red"
+        return "ROLL NOW", "red", f"Gamma {gmult:.1f}× entry, {mono:,.0f} pts away"
     if dte <= GAMMA_ROLL_DTE_AMBER and mono <= GAMMA_ROLL_MONO_AMBER:
-        return "WATCH", "amber"
+        return "WATCH", "amber", f"DTE {dte} and {mono:,.0f} pts away"
+    if dlt >= GAMMA_ROLL_DELTA_AMBER:
+        return "WATCH", "amber", f"Short delta {dlt:.2f} ≥ {GAMMA_ROLL_DELTA_AMBER:.2f}"
     if gmult >= GAMMA_ACCEL_WATCH:
-        return "WATCH", "amber"
+        return "WATCH", "amber", f"Gamma {gmult:.1f}× entry"
     if mono <= GAMMA_ROLL_MONO_RED:
-        return "ALERT", "amber"
-    return "SAFE", "green"
+        return "ALERT", "amber", f"Only {mono:,.0f} pts from spot"
+    return "SAFE", "green", f"Delta {dlt:.2f}, {mono:,.0f} pts away, DTE {dte}"
 
 
 # ── Next biweekly roll target ─────────────────────────────────────────────────
@@ -222,7 +302,7 @@ for pos in positions:
         m = _gamma_metrics(leg)
         if not m:
             continue
-        urgency, color = _roll_urgency(m)
+        urgency, color, reason = _roll_urgency(m)
         row = {
             "pos_name": pos_name,
             "leg_id":   leg_id,
@@ -236,8 +316,11 @@ for pos in positions:
             "moneyness_pts":  m["moneyness_pts"],
             "gamma_pnl_sens": m["gamma_pnl_sens"],
             "lots":           m["lots"],
+            "delta_now":      m["delta_now"],
+            "iv_used":        m["iv_used"],
             "urgency":        urgency,
             "color":          color,
+            "reason":         reason,
             "roll_expiry":    _roll_target_expiry(m["dte_now"]),
             "roll_strike":    _roll_strike_suggestion(leg.get("type", "CE")),
         }
@@ -395,8 +478,20 @@ for row in sorted_legs:
     st.markdown(header_html, unsafe_allow_html=True)
 
     with st.expander("Gamma detail", expanded=(row["color"] == "red")):
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # Why this leg carries the label it does — the triggers are independent, so
+        # without this you cannot tell which one fired.
+        ui.alert_box(f"Trigger: {row['urgency']}", row.get("reason", "—"),
+                     level="danger" if row["color"] == "red" else
+                           "warning" if row["color"] == "amber" else "success")
 
+        colD, col1, col2, col3, col4, col5 = st.columns(6)
+
+        with colD:
+            _d = row.get("delta_now", 0.0)
+            ui.metric_card("SHORT DELTA", f"{_d:.2f}",
+                           sub=f"Manage at {GAMMA_ROLL_DELTA_RED:.2f} · IV {row.get('iv_used', 0):.1f}%",
+                           color="red" if _d >= GAMMA_ROLL_DELTA_RED else
+                                 "amber" if _d >= GAMMA_ROLL_DELTA_AMBER else "green")
         with col1:
             ui.metric_card("DTE", str(row["dte"]),
                            sub="Days to expiry",
@@ -405,7 +500,9 @@ for row in sorted_legs:
         with col2:
             ui.metric_card("MONEYNESS",
                            f"{row['moneyness_pts']:,.0f} pts",
-                           sub=f"{'ITM ⚠' if row['moneyness_pts'] < 0 else 'OTM'} from {row['strike']:,}",
+                           sub=(f"⚠ BREACHED — {abs(row['moneyness_pts']):,.0f} pts ITM past {row['strike']:,}"
+                                if row["moneyness_pts"] < 0
+                                else f"OTM cushion from {row['strike']:,}"),
                            color="red" if row["moneyness_pts"] <= GAMMA_ROLL_MONO_RED else
                                  "amber" if row["moneyness_pts"] <= GAMMA_ROLL_MONO_AMBER else "default")
         with col3:
@@ -492,11 +589,14 @@ for row in sorted_legs:
         "Leg":          f"{row['side']} {row['strike']:,}",
         "Expiry":       row["expiry"],
         "DTE":          row["dte"],
-        "Moneyness":    f"{row['moneyness_pts']:,.0f} pts",
+        "Delta":        f"{row.get('delta_now', 0):.2f}",
+        "Cushion":      (f"⚠ {row['moneyness_pts']:,.0f} pts (ITM)" if row["moneyness_pts"] < 0
+                         else f"{row['moneyness_pts']:,.0f} pts"),
         "Gamma Now":    f"{row['gamma_now']:.5f}",
         "γ Multiple":   f"{row['gamma_multiple']:.2f}×",
         "Δδ/1% Nifty":  f"{row['gamma_pnl_sens']:.1f}",
         "Status":       f"{urgency_icon} {row['urgency']}",
+        "Why":          row.get("reason", ""),
         "Roll Expiry":  row["roll_expiry"].strftime("%-d %b"),
         "Roll Strike":  f"{row['roll_strike']:,}",
     })
