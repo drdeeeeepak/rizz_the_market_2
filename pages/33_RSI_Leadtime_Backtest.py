@@ -80,24 +80,26 @@ st.caption(
     "bar than Q2: for a sold CALL, the market falling AND going sideways both count as safe."
 )
 
-q1a, q1b, q1c = st.columns(3)
+Q1_HORIZONS = (5, 10)   # 1 week and 2 weeks (biweekly) — both run in one click
+
+q1a, q1b = st.columns(2)
 with q1a:
     q1_days = st.slider("History (calendar days)", 180, 1460, 1460, 30, key="p33_q1_days")
 with q1b:
-    q1_horizon = st.slider("Hold horizon (trading sessions)", 3, 15, 5, 1, key="p33_q1_horizon")
-with q1c:
     q1_call = st.number_input("Routine CALL % OTM", 1.0, 8.0, 3.5, 0.25, key="p33_q1_call")
     q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 4.0, 0.25, key="p33_q1_put")
 
 st.caption(
+    "Runs BOTH a 5-session (1-week) and 10-session (biweekly) hold in one click. "
     "`breach_on_pct` vs `breach_off_pct` is the whole answer: does a signal day actually "
     "breach less often than a non-signal day, at your routine distance? The verdict column "
     "folds in a Fisher exact test — on random no-edge data this metric otherwise reports a "
     "fat bogus 'pickup', so anything not marked significant is noise."
 )
 
-if st.button("▶ Run Q1 — strike-tightening scan", type="primary", key="p33_q1_run"):
-    with st.spinner("Fetching history and testing signal-day entries…"):
+if st.button("▶ Run Q1 — strike-tightening scan (5 & 10 sessions)", type="primary",
+             key="p33_q1_run"):
+    with st.spinner("Fetching history and testing signal-day entries at both horizons…"):
         _daily = get_nifty_daily(days=q1_days + 60)
         _hourly = get_nifty_1h_extended(days=q1_days)
         if _daily is None or _daily.empty or _hourly is None or _hourly.empty:
@@ -106,40 +108,59 @@ if st.button("▶ Run Q1 — strike-tightening scan", type="primary", key="p33_q
         else:
             if not isinstance(_hourly.index, pd.DatetimeIndex):
                 _hourly.index = pd.to_datetime(_hourly.index)
-            st.session_state.p33_q1 = ssb.conditional_strike_distance_scan(
-                _daily, _hourly, horizon_days=q1_horizon,
-                routine_call_pct=float(q1_call), routine_put_pct=float(q1_put))
+            st.session_state.p33_q1 = {
+                h: ssb.conditional_strike_distance_scan(
+                    _daily, _hourly, horizon_days=h,
+                    routine_call_pct=float(q1_call), routine_put_pct=float(q1_put))
+                for h in Q1_HORIZONS}
             st.session_state.p33_q1_err = False
 
 if st.session_state.get("p33_q1_err"):
     st.error("Could not fetch Nifty history. Log in via Home → Kite, then retry.")
 
-_q1 = st.session_state.get("p33_q1")
-if _q1 is not None and not _q1["equal_risk"].empty:
-    st.success(f"{_q1['n_entries']} entry days · {_q1['horizon_days']}-session hold")
+_q1all = st.session_state.get("p33_q1")
+if _q1all:
+    _tabs = st.tabs([f"{h} sessions ({'1 week' if h == 5 else 'biweekly'})"
+                     for h in Q1_HORIZONS])
+    for _tab, _h in zip(_tabs, Q1_HORIZONS):
+        _q1 = _q1all[_h]
+        with _tab:
+            if _q1["equal_risk"].empty:
+                st.warning("Not enough data to score — try a longer history window.")
+                continue
+            st.success(f"{_q1['n_entries']} entry days · {_h}-session hold")
 
-    st.markdown("**Verdict — is a signal day actually safer at your routine distance?**")
-    for _side in ("CALL", "PUT"):
-        _sig_name = "bearish" if _side == "CALL" else "bullish"
-        st.markdown(f"*{_side} side (tighten on a {_sig_name} signal)*")
-        _er = _q1["equal_risk"]
-        st.dataframe(_er[_er.side == _side], use_container_width=True, hide_index=True)
+            st.markdown("**Verdict — is a signal day actually safer at your routine distance?**")
+            for _side in ("CALL", "PUT"):
+                _sig_name = "bearish" if _side == "CALL" else "bullish"
+                st.markdown(f"*{_side} side (tighten on a {_sig_name} signal)*")
+                _er = _q1["equal_risk"]
+                st.dataframe(_er[_er.side == _side], use_container_width=True, hide_index=True)
 
-    st.markdown("**Breach rate by strike distance** — signal day vs non-signal day")
-    _b = _q1["breach"]
-    _sys = st.selectbox("System", sorted(_b["system"].unique()), key="p33_q1_sys")
-    _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key="p33_q1_side")
-    _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
-        index="condition", columns="distance_pct", values="breach_pct")
-    st.dataframe(_piv, use_container_width=True)
+            st.markdown("**Breach rate by strike distance** — signal day vs non-signal day")
+            _b = _q1["breach"]
+            _sys = st.selectbox("System", sorted(_b["system"].unique()), key=f"p33_q1_sys_{_h}")
+            _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key=f"p33_q1_side_{_h}")
+            _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
+                index="condition", columns="distance_pct", values="breach_pct")
+            st.dataframe(_piv, use_container_width=True)
 
-    st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
-    st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
-    st.download_button("⬇ Download Q1 breach table CSV", _b.to_csv(index=False).encode("utf-8"),
-                       file_name="q1_strike_tightening_breach.csv", mime="text/csv",
-                       key="p33_dl_q1")
-elif _q1 is not None:
-    st.warning("Not enough data to score — try a longer history window.")
+            st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
+            st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
+            st.download_button(f"⬇ Download Q1 breach table CSV ({_h} sessions)",
+                               _b.to_csv(index=False).encode("utf-8"),
+                               file_name=f"q1_strike_tightening_breach_{_h}s.csv",
+                               mime="text/csv", key=f"p33_dl_q1_{_h}")
+
+    # combined export so both horizons come back in one file
+    _combined = pd.concat([_q1all[h]["equal_risk"].assign(horizon_sessions=h)
+                           for h in Q1_HORIZONS if not _q1all[h]["equal_risk"].empty],
+                          ignore_index=True)
+    if not _combined.empty:
+        st.download_button("⬇ Download BOTH horizons — verdict table (send me this one)",
+                           _combined.to_csv(index=False).encode("utf-8"),
+                           file_name="q1_verdict_both_horizons.csv", mime="text/csv",
+                           key="p33_dl_q1_both", type="primary")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
