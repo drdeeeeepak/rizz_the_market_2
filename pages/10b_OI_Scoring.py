@@ -51,6 +51,17 @@ if chains["near"].empty:
         "Far-expiry structural analysis below is unaffected."
     )
 
+# Log a forward OI history — daily snapshots come from the EOD job; here we append
+# an intraday point on each page load so today's session can be replayed later.
+# (Kite has no historical option OI, so it can only be accumulated going forward.)
+try:
+    from data.oi_history import log_intraday_snapshot as _log_oi
+    _log_oi(chains["near"], chains["far"], spot,
+            near_expiry=near_exp, far_expiry=far_exp,
+            near_dte=near_dte, far_dte=far_dte)
+except Exception as _e_oi:
+    pass
+
 eng    = OIScoringEngine()
 oc_eng = OptionsChainEngine()
 

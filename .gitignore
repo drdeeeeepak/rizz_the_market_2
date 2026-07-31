@@ -209,3 +209,4 @@ __marimo__/
 
 # Ephemeral intraday gamma log (rebuilt live each day, never committed)
 data/gamma_today.json
+data/oi_today.json
