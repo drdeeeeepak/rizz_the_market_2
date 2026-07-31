@@ -80,7 +80,11 @@ st.caption(
     "bar than Q2: for a sold CALL, the market falling AND going sideways both count as safe."
 )
 
-Q1_HORIZONS = (5, 10)   # 1 week and 2 weeks (biweekly) — both run in one click
+# Positions die on a calendar date (Tuesday expiry), not after a fixed number of
+# sessions — so the exit is expiry-anchored: "near" = next Tuesday, "far" = the
+# Tuesday after (biweekly). Hold length therefore VARIES with the entry weekday.
+Q1_MODES = (("near", "Near expiry (next Tuesday)"),
+            ("far", "Biweekly (Tuesday after next)"))
 
 q1a, q1b = st.columns(2)
 with q1a:
@@ -90,16 +94,19 @@ with q1b:
     q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 4.0, 0.25, key="p33_q1_put")
 
 st.caption(
-    "Runs BOTH a 5-session (1-week) and 10-session (biweekly) hold in one click. "
-    "`breach_on_pct` vs `breach_off_pct` is the whole answer: does a signal day actually "
-    "breach less often than a non-signal day, at your routine distance? The verdict column "
-    "folds in a Fisher exact test — on random no-edge data this metric otherwise reports a "
-    "fat bogus 'pickup', so anything not marked significant is noise."
+    "Entry on the signal day, exit **at Tuesday expiry** — near (next Tuesday) and biweekly "
+    "(the Tuesday after) both run in one click. Because expiry is a fixed date, hold length "
+    "depends on which weekday you entered: a Monday signal carries ~1 day of risk, a "
+    "Wednesday signal ~4-5. That is a trap — a signal that happens to fire late in the week "
+    "would post a lower breach rate purely from carrying less time. So the verdict uses a "
+    "**weekday-adjusted** p-value (Cochran-Mantel-Haenszel), which holds hold-length constant. "
+    "Compare it against the raw p-value: a big gap between them means the raw number was "
+    "mostly just time, not skill."
 )
 
-if st.button("▶ Run Q1 — strike-tightening scan (5 & 10 sessions)", type="primary",
+if st.button("▶ Run Q1 — strike-tightening scan (near + biweekly expiry)", type="primary",
              key="p33_q1_run"):
-    with st.spinner("Fetching history and testing signal-day entries at both horizons…"):
+    with st.spinner("Fetching history and testing signal-day entries to Tuesday expiry…"):
         _daily = get_nifty_daily(days=q1_days + 60)
         _hourly = get_nifty_1h_extended(days=q1_days)
         if _daily is None or _daily.empty or _hourly is None or _hourly.empty:
@@ -109,10 +116,10 @@ if st.button("▶ Run Q1 — strike-tightening scan (5 & 10 sessions)", type="pr
             if not isinstance(_hourly.index, pd.DatetimeIndex):
                 _hourly.index = pd.to_datetime(_hourly.index)
             st.session_state.p33_q1 = {
-                h: ssb.conditional_strike_distance_scan(
-                    _daily, _hourly, horizon_days=h,
+                m: ssb.conditional_strike_distance_scan(
+                    _daily, _hourly, expiry_mode=m,
                     routine_call_pct=float(q1_call), routine_put_pct=float(q1_put))
-                for h in Q1_HORIZONS}
+                for m, _ in Q1_MODES}
             st.session_state.p33_q1_err = False
 
 if st.session_state.get("p33_q1_err"):
@@ -120,47 +127,65 @@ if st.session_state.get("p33_q1_err"):
 
 _q1all = st.session_state.get("p33_q1")
 if _q1all:
-    _tabs = st.tabs([f"{h} sessions ({'1 week' if h == 5 else 'biweekly'})"
-                     for h in Q1_HORIZONS])
-    for _tab, _h in zip(_tabs, Q1_HORIZONS):
-        _q1 = _q1all[_h]
+    _tabs = st.tabs([lbl for _, lbl in Q1_MODES])
+    for _tab, (_m, _lbl) in zip(_tabs, Q1_MODES):
+        _q1 = _q1all[_m]
         with _tab:
             if _q1["equal_risk"].empty:
                 st.warning("Not enough data to score — try a longer history window.")
                 continue
-            st.success(f"{_q1['n_entries']} entry days · {_h}-session hold")
+            st.success(f"{_q1['n_entries']} entry days · exit at {_lbl}")
 
             st.markdown("**Verdict — is a signal day actually safer at your routine distance?**")
+            st.caption("Trust `p_value_weekday_adjusted` over `p_value_on_vs_off` — the raw "
+                      "one can be inflated purely by shorter holds.")
             for _side in ("CALL", "PUT"):
                 _sig_name = "bearish" if _side == "CALL" else "bullish"
                 st.markdown(f"*{_side} side (tighten on a {_sig_name} signal)*")
                 _er = _q1["equal_risk"]
                 st.dataframe(_er[_er.side == _side], use_container_width=True, hide_index=True)
 
+            st.markdown("**Hold-length check — is the comparison even fair?**")
+            st.caption("If signal days show fewer mean sessions held than non-signal days, "
+                      "part of any raw breach advantage is just less time at risk.")
+            st.dataframe(_q1["hold_profile"], use_container_width=True, hide_index=True)
+
             st.markdown("**Breach rate by strike distance** — signal day vs non-signal day")
             _b = _q1["breach"]
-            _sys = st.selectbox("System", sorted(_b["system"].unique()), key=f"p33_q1_sys_{_h}")
-            _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key=f"p33_q1_side_{_h}")
+            _sys = st.selectbox("System", sorted(_b["system"].unique()), key=f"p33_q1_sys_{_m}")
+            _sd = st.radio("Side", ["CALL", "PUT"], horizontal=True, key=f"p33_q1_side_{_m}")
             _piv = _b[(_b.system == _sys) & (_b.side == _sd)].pivot_table(
                 index="condition", columns="distance_pct", values="breach_pct")
             st.dataframe(_piv, use_container_width=True)
 
             st.markdown("**Worst adverse move over the hold** (percentiles, % from entry close)")
             st.dataframe(_q1["excursion"], use_container_width=True, hide_index=True)
-            st.download_button(f"⬇ Download Q1 breach table CSV ({_h} sessions)",
+            st.download_button(f"⬇ Download Q1 breach table CSV ({_m})",
                                _b.to_csv(index=False).encode("utf-8"),
-                               file_name=f"q1_strike_tightening_breach_{_h}s.csv",
-                               mime="text/csv", key=f"p33_dl_q1_{_h}")
+                               file_name=f"q1_strike_tightening_breach_{_m}.csv",
+                               mime="text/csv", key=f"p33_dl_q1_{_m}")
 
-    # combined export so both horizons come back in one file
-    _combined = pd.concat([_q1all[h]["equal_risk"].assign(horizon_sessions=h)
-                           for h in Q1_HORIZONS if not _q1all[h]["equal_risk"].empty],
-                          ignore_index=True)
-    if not _combined.empty:
-        st.download_button("⬇ Download BOTH horizons — verdict table (send me this one)",
+    # combined export so both expiries come back in one file
+    _parts = []
+    for _m, _lbl in Q1_MODES:
+        _er = _q1all[_m]["equal_risk"]
+        if not _er.empty:
+            _parts.append(_er.assign(expiry=_m))
+        _hp = _q1all[_m]["hold_profile"]
+    if _parts:
+        _combined = pd.concat(_parts, ignore_index=True)
+        st.download_button("⬇ Download BOTH expiries — verdict table (send me this one)",
                            _combined.to_csv(index=False).encode("utf-8"),
-                           file_name="q1_verdict_both_horizons.csv", mime="text/csv",
+                           file_name="q1_verdict_both_expiries.csv", mime="text/csv",
                            key="p33_dl_q1_both", type="primary")
+        _hpc = pd.concat([_q1all[m]["hold_profile"].assign(expiry=m)
+                          for m, _ in Q1_MODES if not _q1all[m]["hold_profile"].empty],
+                         ignore_index=True)
+        if not _hpc.empty:
+            st.download_button("⬇ Download hold-length check (send this too)",
+                               _hpc.to_csv(index=False).encode("utf-8"),
+                               file_name="q1_hold_profile_both_expiries.csv", mime="text/csv",
+                               key="p33_dl_q1_hold")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

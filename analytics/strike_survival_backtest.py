@@ -147,12 +147,32 @@ DEFAULT_DISTANCES = tuple(round(x, 2) for x in
                           [1.5 + 0.25 * i for i in range(13)])   # 1.50% … 4.50%
 
 
+def _expiry_index(idx: pd.DatetimeIndex, i: int, which: str):
+    """Index of the session a position opened at `i` runs to.
+
+    Real positions die on a calendar date (Tuesday expiry), not after a fixed
+    number of sessions — so a Monday signal buys 1 day of risk and a Wednesday
+    signal buys 4-5. which="near" → the next Tuesday strictly after entry;
+    "far" → the Tuesday after that (the biweekly hold). If that Tuesday is a
+    holiday it isn't in the index, so we take the last session on or before it
+    (Monday), matching how compute_anchor_live handles holiday Tuesdays.
+    """
+    d0 = idx[i].normalize()
+    ahead = (1 - d0.weekday()) % 7 or 7          # Tue=1; always strictly forward
+    tue = d0 + pd.Timedelta(days=ahead)
+    if which == "far":
+        tue += pd.Timedelta(days=7)
+    j = int(idx.searchsorted(tue, side="right")) - 1
+    return j if j > i else None
+
+
 def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
                                      horizon_days: int = 5,
                                      distances=DEFAULT_DISTANCES,
                                      rsi_period: int = 14,
                                      routine_call_pct: float = 3.5,
-                                     routine_put_pct: float = 4.0) -> dict:
+                                     routine_put_pct: float = 4.0,
+                                     expiry_mode=None) -> dict:
     """
     Entry is triggered BY THE SIGNAL FIRING, not by the calendar: every day on
     which a tightening signal is generated is an entry day. Anchor = that day's
@@ -184,7 +204,8 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
     sigs = all_signals(hourly, rsi_period)
     if sigs.empty or len(d) < horizon_days + 2:
         return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
-                   equal_risk=pd.DataFrame(), n_entries=0, horizon_days=horizon_days)
+                   equal_risk=pd.DataFrame(), hold_profile=pd.DataFrame(),
+                   n_entries=0, horizon_days=horizon_days, expiry_mode=expiry_mode)
 
     # Days on which each system generated a signal, per direction.
     sig_days = {}
@@ -208,8 +229,6 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
     systems = list(SYSTEMS) + ["ANY of 3", "MAJORITY (>=2 of 3)"]
     records = []      # one row per (entry day, system, side)
     for i in range(len(idx)):
-        if i + horizon_days >= len(d):
-            continue
         entry_day = idx[i].normalize()
         # only days actually covered by the hourly signal history are comparable
         if entry_day < hourly_start or entry_day > hourly_end:
@@ -217,24 +236,37 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
         anchor = float(close[i])
         if anchor <= 0:
             continue
-        fwd = close[i + 1: i + 1 + horizon_days]
+
+        if expiry_mode:
+            j = _expiry_index(idx, i, expiry_mode)
+            if j is None or j >= len(d):
+                continue
+            fwd = close[i + 1: j + 1]
+        else:
+            if i + horizon_days >= len(d):
+                continue
+            fwd = close[i + 1: i + 1 + horizon_days]
         if len(fwd) == 0:
             continue
+        held = len(fwd)
         up_move = (fwd.max() - anchor) / anchor * 100     # worst case for a sold CALL
         down_move = (anchor - fwd.min()) / anchor * 100   # worst case for a sold PUT
 
         for system in systems:
             records.append(dict(entry=entry_day, system=system, side="CALL",
-                               adverse_pct=up_move,
+                               adverse_pct=up_move, sessions_held=held,
+                               entry_weekday=entry_day.day_name()[:3],
                                signal_on=entry_day in sig_days.get((system, _CALL_SIGNAL_DIR), set())))
             records.append(dict(entry=entry_day, system=system, side="PUT",
-                               adverse_pct=down_move,
+                               adverse_pct=down_move, sessions_held=held,
+                               entry_weekday=entry_day.day_name()[:3],
                                signal_on=entry_day in sig_days.get((system, _PUT_SIGNAL_DIR), set())))
 
     rec = pd.DataFrame(records)
     if rec.empty:
         return dict(breach=pd.DataFrame(), excursion=pd.DataFrame(),
-                   equal_risk=pd.DataFrame(), n_entries=0, horizon_days=horizon_days)
+                   equal_risk=pd.DataFrame(), hold_profile=pd.DataFrame(),
+                   n_entries=0, horizon_days=horizon_days, expiry_mode=expiry_mode)
 
     n_entries = rec["entry"].nunique()
 
@@ -307,6 +339,37 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
             except Exception:
                 pval = np.nan
 
+        # Confounder control. Under expiry-anchored exits the hold length is set
+        # by WHICH WEEKDAY you entered on (a Monday signal buys ~1 day of risk
+        # before Tuesday expiry, a Wednesday signal ~4-5). So if a signal tends
+        # to fire late in the week, it would post a lower breach rate purely
+        # from carrying less time — no skill involved. This re-tests within
+        # weekday strata (Cochran-Mantel-Haenszel), where hold length is held
+        # constant, so only a real effect survives.
+        pval_strat = np.nan
+        if expiry_mode is not None:
+            sub = rec[(rec["system"] == system) & (rec["side"] == side)]
+            num = den = 0.0
+            obs = 0
+            for _wd, gw in sub.groupby("entry_weekday"):
+                a = int(((gw["adverse_pct"] >= nearest) & gw["signal_on"]).sum())
+                b = int((~gw["signal_on"] & (gw["adverse_pct"] >= nearest)).sum())
+                r1 = int(gw["signal_on"].sum())
+                r2 = int((~gw["signal_on"]).sum())
+                c1 = a + b
+                nk = r1 + r2
+                if nk < 2 or r1 == 0 or r2 == 0 or c1 == 0 or c1 == nk:
+                    continue
+                obs += a
+                num += r1 * c1 / nk
+                den += r1 * r2 * c1 * (nk - c1) / (nk * nk * (nk - 1))
+            if den > 0:
+                from scipy.stats import chi2 as _chi2
+                z2 = (abs(obs - num) - 0.5) ** 2 / den
+                # one-sided: only counts if signal days breached LESS than expected
+                pval_strat = (float(_chi2.sf(z2, 1)) / 2 if obs < num
+                             else 1 - float(_chi2.sf(z2, 1)) / 2)
+
         enough = base_breach_n >= MIN_BREACH_EVENTS and on_n >= MIN_SIGNAL_DAYS
         closest = pickup = np.nan
         if enough:
@@ -321,26 +384,64 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
         # 0.75-2.00% pickup (verified), and only the p-value exposes it as
         # noise. So a pickup is only ever called real when the signal-on vs
         # signal-off difference clears p<0.05 on its own.
+        # Under expiry-anchored exits the weekday-stratified p-value is the
+        # honest one — the raw one can be driven purely by hold length.
+        # NEVER fall back to the raw p when the stratified one is unavailable:
+        # it comes back NaN precisely when the signal fires only on certain
+        # weekdays, which is the case where the raw p is MOST confounded. A
+        # Friday-only signal with no real edge posts raw p=0.0007 purely because
+        # Friday->Tuesday is a 2-session hold vs 3.25 average (verified).
+        p_judge = pval_strat if expiry_mode is not None else pval
+        confounded = expiry_mode is not None and pd.isna(pval_strat)
         if not enough:
             verdict = f"can't judge (need >={MIN_BREACH_EVENTS} baseline breaches, >={MIN_SIGNAL_DAYS} signal days)"
         elif pd.isna(pickup) or pickup <= 0:
             verdict = "no pickup — signal day is no safer"
-        elif pd.isna(pval) or pval >= 0.05:
-            verdict = f"NOT significant (p={pval:.2f}) — treat as noise"
+        elif confounded:
+            verdict = "CONFOUNDED — signal fires on set weekdays; can't separate edge from hold length"
+        elif pd.isna(p_judge) or p_judge >= 0.05:
+            verdict = f"NOT significant (p={p_judge:.2f}) — treat as noise"
         else:
-            verdict = f"significant pickup (p={pval:.3f})"
+            verdict = f"significant pickup (p={p_judge:.3f})"
+
+        _s = rec[(rec["system"] == system) & (rec["side"] == side)]
+        _hold_on = float(_s[_s["signal_on"]]["sessions_held"].mean()) if _s["signal_on"].any() else np.nan
+        _hold_off = float(_s[~_s["signal_on"]]["sessions_held"].mean()) if (~_s["signal_on"]).any() else np.nan
 
         eq_rows.append(dict(
             system=system, side=side, routine_pct=routine,
             n_signal_on=on_n, breach_on_pct=round(on_b / on_n * 100, 1) if on_n else np.nan,
             n_signal_off=off_n, breach_off_pct=round(off_b / off_n * 100, 1) if off_n else np.nan,
+            mean_hold_on=round(_hold_on, 2) if pd.notna(_hold_on) else np.nan,
+            mean_hold_off=round(_hold_off, 2) if pd.notna(_hold_off) else np.nan,
             baseline_breach_pct=base_breach_pct, baseline_breach_events=base_breach_n,
             p_value_on_vs_off=round(pval, 4) if pd.notna(pval) else np.nan,
+            p_value_weekday_adjusted=round(pval_strat, 4) if pd.notna(pval_strat) else np.nan,
             closest_equal_risk_pct=closest, pickup_pct=pickup, verdict=verdict))
     equal_risk = pd.DataFrame(eq_rows)
 
+    # Hold-length diagnostic — makes the confounder inspectable rather than
+    # implicit: if signal days carry systematically fewer sessions to expiry
+    # than non-signal days, any raw breach advantage is partly just less time.
+    hold_rows = []
+    for (system, side), g in rec.groupby(["system", "side"]):
+        for cond, sub in (("signal ACTIVE", g[g["signal_on"]]), ("no signal", g[~g["signal_on"]])):
+            if sub.empty:
+                continue
+            hold_rows.append(dict(
+                system=system, side=side, condition=cond, n=len(sub),
+                mean_sessions_held=round(float(sub["sessions_held"].mean()), 2),
+                median_sessions_held=float(sub["sessions_held"].median()),
+                pct_entries_Mon=round(float((sub["entry_weekday"] == "Mon").mean() * 100), 1),
+                pct_entries_Tue=round(float((sub["entry_weekday"] == "Tue").mean() * 100), 1),
+                pct_entries_Wed=round(float((sub["entry_weekday"] == "Wed").mean() * 100), 1),
+                pct_entries_Thu=round(float((sub["entry_weekday"] == "Thu").mean() * 100), 1),
+                pct_entries_Fri=round(float((sub["entry_weekday"] == "Fri").mean() * 100), 1)))
+    hold_profile = pd.DataFrame(hold_rows)
+
     return dict(breach=breach, excursion=excursion, equal_risk=equal_risk,
-               n_entries=n_entries, horizon_days=horizon_days)
+               hold_profile=hold_profile, n_entries=n_entries,
+               horizon_days=horizon_days, expiry_mode=expiry_mode)
 
 
 # ── Joint lead-time / hit-rate / false-positive backtest ──────────────────────
