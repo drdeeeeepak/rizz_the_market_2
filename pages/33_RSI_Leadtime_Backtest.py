@@ -80,11 +80,12 @@ st.caption(
     "bar than Q2: for a sold CALL, the market falling AND going sideways both count as safe."
 )
 
-# Positions die on a calendar date (Tuesday expiry), not after a fixed number of
-# sessions — so the exit is expiry-anchored: "near" = next Tuesday, "far" = the
-# Tuesday after (biweekly). Hold length therefore VARIES with the entry weekday.
-Q1_MODES = (("near", "Near expiry (next Tuesday)"),
-            ("far", "Biweekly (Tuesday after next)"))
+# Exit is expiry-anchored (always a Tuesday), and never into an expiry closer
+# than the mode's minimum — a 1-2 session Tuesday is not a trade worth writing.
+# "near" = first Tuesday >=5 sessions out -> 5-9 sessions held.
+# "far"  = first Tuesday >=10 sessions out -> 10-14 sessions held.
+Q1_MODES = (("near", "Near expiry (min 5 sessions → 5-9 held)"),
+            ("far", "Biweekly (min 10 sessions → 10-14 held)"))
 
 q1a, q1b = st.columns(2)
 with q1a:
@@ -98,14 +99,14 @@ with q1b:
     q1_put = st.number_input("Routine PUT % OTM", 1.0, 8.0, 3.5, 0.25, key="p33_q1_put")
 
 st.caption(
-    "Entry on the signal day, exit **at Tuesday expiry** — near (next Tuesday) and biweekly "
-    "(the Tuesday after) both run in one click. Because expiry is a fixed date, hold length "
-    "depends on which weekday you entered: a Monday signal carries ~1 day of risk, a "
-    "Wednesday signal ~4-5. That is a trap — a signal that happens to fire late in the week "
-    "would post a lower breach rate purely from carrying less time. So the verdict uses a "
-    "**weekday-adjusted** p-value (Cochran-Mantel-Haenszel), which holds hold-length constant. "
-    "Compare it against the raw p-value: a big gap between them means the raw number was "
-    "mostly just time, not skill."
+    "Entry on the signal day, exit **at Tuesday expiry**, never into an expiry closer than "
+    "the mode's minimum — a 1-2 session Tuesday is no trade (no premium, expiry gamma), so "
+    "it rolls to the next one. Near holds 5-9 sessions, biweekly 10-14; both run in one click. "
+    "Hold length still varies with entry weekday (Tue→5, Mon→6, Fri→7, Thu→8, Wed→9), and "
+    "that is a trap: a signal firing on the short-hold weekdays would post a lower breach "
+    "rate purely from carrying less time. So the verdict uses a **weekday-adjusted** p-value "
+    "(Cochran-Mantel-Haenszel), which holds hold length constant. A big gap between it and "
+    "the raw p-value means the raw number was mostly time, not skill."
 )
 
 if st.button("▶ Run Q1 — strike-tightening scan (near + biweekly expiry)", type="primary",

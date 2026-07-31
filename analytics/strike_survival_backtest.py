@@ -146,24 +146,35 @@ _PUT_SIGNAL_DIR = "UP"      # bullish signal → downside capped → tighten PUT
 DEFAULT_DISTANCES = tuple(round(x, 2) for x in
                           [1.5 + 0.25 * i for i in range(13)])   # 1.50% … 4.50%
 
+# Minimum trading sessions to expiry per mode. A position is never written into
+# an expiry closer than this — a 1-2 session Tuesday is not a trade worth having
+# (no premium, expiry-day gamma), so the scan rolls out to the next Tuesday.
+EXPIRY_MIN_SESSIONS = {"near": 5, "far": 10}
 
-def _expiry_index(idx: pd.DatetimeIndex, i: int, which: str):
-    """Index of the session a position opened at `i` runs to.
 
-    Real positions die on a calendar date (Tuesday expiry), not after a fixed
-    number of sessions — so a Monday signal buys 1 day of risk and a Wednesday
-    signal buys 4-5. which="near" → the next Tuesday strictly after entry;
-    "far" → the Tuesday after that (the biweekly hold). If that Tuesday is a
-    holiday it isn't in the index, so we take the last session on or before it
-    (Monday), matching how compute_anchor_live handles holiday Tuesdays.
+def _expiry_index(idx: pd.DatetimeIndex, i: int, min_sessions: int):
+    """Index of the Tuesday-expiry session a position opened at `i` runs to,
+    skipping any expiry closer than `min_sessions` trading sessions.
+
+    Positions die on a calendar date, so the raw next Tuesday can be 1 session
+    away (Monday signal) — which is not a trade worth writing: no premium left
+    and expiry-day gamma. So roll forward to the first Tuesday at least
+    min_sessions out. With min_sessions=5 that yields 5-9 sessions held
+    (Tue entry→5, Mon→6, Fri→7, Thu→8, Wed→9); with 10 it yields 10-14.
+
+    A holiday Tuesday isn't in the index, so we take the last session on or
+    before it (Monday), matching compute_anchor_live's holiday handling.
     """
     d0 = idx[i].normalize()
     ahead = (1 - d0.weekday()) % 7 or 7          # Tue=1; always strictly forward
     tue = d0 + pd.Timedelta(days=ahead)
-    if which == "far":
+    last = idx[-1]
+    while tue <= last:
+        j = int(idx.searchsorted(tue, side="right")) - 1
+        if j > i and (j - i) >= min_sessions:
+            return j
         tue += pd.Timedelta(days=7)
-    j = int(idx.searchsorted(tue, side="right")) - 1
-    return j if j > i else None
+    return None
 
 
 def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
@@ -238,7 +249,7 @@ def conditional_strike_distance_scan(daily: pd.DataFrame, hourly: pd.DataFrame,
             continue
 
         if expiry_mode:
-            j = _expiry_index(idx, i, expiry_mode)
+            j = _expiry_index(idx, i, EXPIRY_MIN_SESSIONS[expiry_mode])
             if j is None or j >= len(d):
                 continue
             fwd = close[i + 1: j + 1]
