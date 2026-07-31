@@ -182,8 +182,9 @@ A cross-test scored all four signal→side pairings. A bearish signal helps the 
 - After any sharp VIX regime change
 - **Sooner for the PUT rule** — it is unconfirmed, so track it separately and drop it if live breach at 3.25% runs at or above your normal 3.5% rate
 
-Re-run via **page 33 — RSI Lead-Time & Strike-Tightening Backtest**, which produced these
-numbers. Press its Run button; every table is laid out with no controls to set.
+Re-run via page 33 — restore it from git first (see the retired-pages expander at the bottom).
+The backtest engine itself, `analytics/strike_survival_backtest.py`, is still in the repo
+and was never deleted.
 
 *Calibrated 31 Jul 2026 · 4 years hourly + daily Nifty (Aug 2022 – Jul 2026) · 984 entry days.*
 """)
@@ -915,7 +916,7 @@ last calibration.
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.divider()
-with st.expander("🗄️ Bring back a retired page (04 / 28 / 31)", expanded=False):
+with st.expander("🗄️ Bring back a retired page (04 / 28 / 31 / 33)", expanded=False):
     st.markdown("""
 This page replaced 3 older pages on **30 Jul 2026**. Nothing is deleted forever —
 git keeps every version, so any of them can be restored exactly as they last looked.
@@ -927,6 +928,7 @@ then commit and push like normal:
 git show abe6634:pages/04_Hourly_RSI_Breakout.py     > pages/04_Hourly_RSI_Breakout.py
 git show 189b6c0:pages/28_RSI_Swing_Fade.py          > pages/28_RSI_Swing_Fade.py
 git show 189b6c0:pages/31_RSI_Divergence_Backtest.py > pages/31_RSI_Divergence_Backtest.py
+git show 449aca4:pages/33_RSI_Leadtime_Backtest.py   > pages/33_RSI_Leadtime_Backtest.py
 ```
 
 **What each one had:**
@@ -943,9 +945,17 @@ git show 189b6c0:pages/31_RSI_Divergence_Backtest.py > pages/31_RSI_Divergence_B
   losses) and CSV export of both the trade log and the sweep table — the
   numbers it produced are summarized in the findings section above, but the
   interactive sweep tool itself isn't on this page.
-**Page 33 is NOT retired** — it is still live in the sidebar. It produced the
-strike-tightening rule pinned at the top of this page, and re-running it is how you
-re-calibrate at the retest triggers.
+- **Page 33 — RSI Lead-Time & Strike-Tightening Backtest** *(retired 31 Jul 2026)*.
+  Produced the strike-tightening rule pinned at the top of this page. Two scans:
+  **Q1** — entry on the signal day, exit at Tuesday expiry (near 5–9 sessions /
+  biweekly 10–14), breach % at every OTM distance 1.00→4.50% for all 5 systems and
+  both sides, plus the cross-test that showed it a direction rather than volatility
+  signal. **Q2** — the lead-time test, which found these signals give **no** usable
+  early warning of a breach. Restore this page to re-calibrate at the retest triggers.
+
+**The backtest engine was NOT deleted.** `analytics/strike_survival_backtest.py`
+is still in the repo — page 33 was only ever a thin UI over it, so restoring the
+page above is enough to re-run everything.
 
 If you're not comfortable running git commands yourself, just tell me "bring back
 page 28" (or whichever) in a session and I'll do it.
