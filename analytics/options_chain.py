@@ -162,6 +162,119 @@ def _enrich_with_greeks(df: pd.DataFrame, spot: float, dte: int) -> pd.DataFrame
     return df
 
 
+# ─── Probability of touch / finishing ITM ────────────────────────────────────
+#
+# A short strike does not have to EXPIRE in the money to hurt you — it only has to
+# be REACHED, because that is when the leg goes under water, margin rises, and the
+# roll decision lands. Probability of touch is therefore the number that matters
+# for managing an iron condor, and it is roughly DOUBLE the probability of
+# finishing ITM. Reading the 10-delta model as "10% risk" understates the real
+# chance of being tested by about half.
+#
+# Both use the risk-neutral measure. In log space X_t = ln(S_t/S_0) is Brownian
+# motion with drift ν = r − σ²/2, and the barrier is b = ln(K/S_0). The touch
+# probability is the standard reflection-principle result for a one-sided barrier:
+#
+#     upper (b > 0):  N((−b+νT)/σ√T) + e^(2νb/σ²)·N((−b−νT)/σ√T)
+#     lower (b < 0):  N(( b−νT)/σ√T) + e^(2νb/σ²)·N(( b+νT)/σ√T)
+#
+# With ν = 0 both collapse to 2·N(−|b|/σ√T) — exactly twice the finish-beyond
+# probability, which is where the "double it" rule of thumb comes from.
+
+def prob_touch(spot: float, strike: float, dte: float, iv_pct: float,
+               r: float = RISK_FREE) -> float:
+    """
+    Probability spot TOUCHES `strike` at any point before expiry. 0..1.
+    iv_pct is the strike's own implied vol in percent (e.g. 13.5).
+    """
+    try:
+        S, K = float(spot), float(strike)
+        T = max(float(dte), 0.0) / 365.0
+        sig = float(iv_pct) / 100.0
+    except (TypeError, ValueError):
+        return 0.0
+    if S <= 0 or K <= 0 or sig <= 0:
+        return 0.0
+    if T <= 0:                       # at expiry it is touched only if already there
+        return 1.0 if (K >= S if K > S else K <= S) and abs(K - S) < 1e-9 else 0.0
+    if abs(K - S) < 1e-9:
+        return 1.0                   # already at the strike
+
+    b   = np.log(K / S)
+    nu  = r - 0.5 * sig ** 2
+    vol = sig * np.sqrt(T)
+    try:
+        # e^(2νb/σ²) overflows for far barriers with tiny vol; the term it
+        # multiplies underflows faster, so clipping the exponent is safe.
+        expo = np.clip(2.0 * nu * b / (sig ** 2), -700, 700)
+        if b > 0:                    # upper barrier — call side
+            p = norm.cdf((-b + nu * T) / vol) + np.exp(expo) * norm.cdf((-b - nu * T) / vol)
+        else:                        # lower barrier — put side
+            p = norm.cdf((b - nu * T) / vol) + np.exp(expo) * norm.cdf((b + nu * T) / vol)
+        return float(np.clip(p, 0.0, 1.0))
+    except Exception:
+        return 0.0
+
+
+def prob_itm(spot: float, strike: float, dte: float, iv_pct: float,
+             option_type: str = "CE", r: float = RISK_FREE) -> float:
+    """
+    Probability the option FINISHES in the money — risk-neutral N(d2) for a call,
+    N(−d2) for a put. This is what a strike's delta roughly approximates.
+    """
+    try:
+        S, K = float(spot), float(strike)
+        T = max(float(dte), 0.0) / 365.0
+        sig = float(iv_pct) / 100.0
+    except (TypeError, ValueError):
+        return 0.0
+    if S <= 0 or K <= 0 or sig <= 0 or T <= 0:
+        return 0.0
+    d2 = (np.log(S / K) + (r - 0.5 * sig ** 2) * T) / (sig * np.sqrt(T))
+    return float(norm.cdf(d2) if option_type == "CE" else norm.cdf(-d2))
+
+
+def strike_iv(df: pd.DataFrame, strike: int, side: str, fallback_pct: float) -> float:
+    """
+    That strike's OWN implied vol, falling back to ATM only when Kite returns 0.
+    Using a flat ATM IV understates far-OTM risk, because skew prices those
+    strikes at a higher vol than ATM — which is exactly where short legs sit.
+    """
+    col = f"{side.lower()}_iv"
+    try:
+        if col in df.columns and strike in df.index:
+            v = float(df.loc[strike, col])
+            if v > 0:
+                return v
+    except Exception:
+        pass
+    return float(fallback_pct or 0.0)
+
+
+def strike_risk(df: pd.DataFrame, spot: float, strike: int, dte: float,
+                side: str, fallback_iv: float) -> dict:
+    """Full risk read for one short strike: touch, finish-ITM, and the gap between."""
+    if not strike or strike <= 0:
+        return {"available": False}
+    iv = strike_iv(df, int(strike), side, fallback_iv)
+    if iv <= 0:
+        return {"available": False}
+    pt  = prob_touch(spot, strike, dte, iv)
+    pi  = prob_itm(spot, strike, dte, iv, option_type=side.upper())
+    return {
+        "available":    True,
+        "strike":       int(strike),
+        "side":         side.upper(),
+        "iv":           round(iv, 2),
+        "distance_pts": round(float(strike) - float(spot), 0),
+        "distance_pct": round((float(strike) - float(spot)) / float(spot) * 100, 2),
+        "prob_touch":   round(pt, 4),
+        "prob_itm":     round(pi, 4),
+        "prob_safe":    round(1.0 - pt, 4),   # never tested at all
+        "touch_mult":   round(pt / pi, 2) if pi > 0 else None,
+    }
+
+
 def _nearest_atm(df: pd.DataFrame, spot: float) -> int:
     """
     Return the strike in df.index closest to spot.
@@ -224,6 +337,14 @@ class OptionsChainEngine(BaseStrategy):
                                       atm_iv, straddle, call_wall, put_wall)
         synthesis = self._strike_synthesis(models)
 
+        # ── Section 3b: Risk on the binding strikes ───────────────────────────
+        # Probability of being TESTED, not just of finishing ITM — for a short leg
+        # the test is what triggers the roll, so it is the number that matters.
+        risk = {
+            "ce": strike_risk(df, spot, synthesis["binding_ce"], dte, "CE", atm_iv),
+            "pe": strike_risk(df, spot, synthesis["binding_pe"], dte, "PE", atm_iv),
+        }
+
         # ── Section 4: Wall and GEX analysis ─────────────────────────────────
         gex          = self._gex(df, spot, dte, atm_iv)
         wall_verdict = self._wall_verdict(df, call_wall, put_wall, gex)
@@ -253,6 +374,7 @@ class OptionsChainEngine(BaseStrategy):
             "synthesis":      synthesis,
             "binding_ce":     synthesis["binding_ce"],
             "binding_pe":     synthesis["binding_pe"],
+            "strike_risk":    risk,
             # Section 4
             "call_wall":      call_wall,
             "put_wall":       put_wall,
@@ -732,6 +854,7 @@ class OptionsChainEngine(BaseStrategy):
                 "binding_ce_model": "—", "binding_pe_model": "—"
             },
             "binding_ce": 0, "binding_pe": 0,
+            "strike_risk": {"ce": {"available": False}, "pe": {"available": False}},
             "call_wall": 0, "put_wall": 0,
             "wall_integrity": {"call_integrity": "UNKNOWN", "put_integrity": "UNKNOWN"},
             "gex": {"total_gex": 0, "flip_level": 0, "positive": False, "gex_per_strike": {},

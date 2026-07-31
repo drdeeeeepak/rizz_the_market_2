@@ -233,6 +233,108 @@ else:
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 3B — Probability of being tested
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 3B — Probability of being tested",
+                  "A short strike does not have to expire ITM to hurt you — it only has to be reached")
+
+ui.simple_technical(
+    "The 10-delta model says a strike has about a 10% chance of finishing in the money. "
+    "That is not your real risk. A strike only has to be TOUCHED for the leg to go under "
+    "water, margin to rise, and the roll decision to land on you — and the chance of being "
+    "touched at some point is roughly DOUBLE the chance of finishing there.\n\n"
+    "So a '10 delta, 10% risk' strike is really about a 1-in-5 chance of being tested before "
+    "expiry. That is the number to size and plan around.",
+    "P(touch) from the reflection principle on log-price Brownian motion:\n"
+    "  upper barrier: N((−b+νT)/σ√T) + e^(2νb/σ²)·N((−b−νT)/σ√T)\n"
+    "  lower barrier: N(( b−νT)/σ√T) + e^(2νb/σ²)·N(( b+νT)/σ√T)\n"
+    "  b = ln(K/S), ν = r − σ²/2, r = 6.5%\n"
+    "P(finish ITM) = N(d2) for a call, N(−d2) for a put\n"
+    "Each strike uses its OWN IV from the chain, not a flat ATM IV — skew prices\n"
+    "OTM strikes higher, which is exactly where short legs sit."
+)
+st.markdown("")
+
+from analytics.options_chain import strike_risk
+
+_risk = oc_sig.get("strike_risk", {})
+_ce_set = int(st.session_state.get("ce_short", 0) or 0)
+_pe_set = int(st.session_state.get("pe_short", 0) or 0)
+
+def _risk_row(label: str, r: dict, colour: str):
+    if not r or not r.get("available"):
+        return None
+    return {
+        "Strike":       f"{r['strike']:,}",
+        "Which":        label,
+        "Distance":     f"{r['distance_pts']:+,.0f} ({r['distance_pct']:+.2f}%)",
+        "IV used":      f"{r['iv']:.1f}%",
+        "Chance TESTED": f"{r['prob_touch']*100:.1f}%",
+        "Chance finishes ITM": f"{r['prob_itm']*100:.1f}%",
+        "Touch vs ITM": f"{r['touch_mult']:.1f}×" if r.get("touch_mult") else "—",
+        "Never tested": f"{r['prob_safe']*100:.1f}%",
+    }
+
+rows_r = []
+for lbl, key, side in (("Binding (model)", "ce", "CE"), ("Binding (model)", "pe", "PE")):
+    row = _risk_row(f"{side} · {lbl}", _risk.get(key, {}), "red" if side == "CE" else "green")
+    if row: rows_r.append(row)
+# The strikes actually sold, if set in the sidebar on page 10B / 10C
+for strike, side in ((_ce_set, "CE"), (_pe_set, "PE")):
+    if strike:
+        r = strike_risk(df_chain, spot, strike, dte, side, atm_iv)
+        row = _risk_row(f"{side} · YOUR STRIKE", r, "red" if side == "CE" else "green")
+        if row: rows_r.append(row)
+
+if rows_r:
+    df_r = pd.DataFrame(rows_r)
+
+    def _hl_risk(row):
+        if "YOUR STRIKE" in str(row["Which"]):
+            return ["background-color:#fef9c3;font-weight:700"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(df_r.style.apply(_hl_risk, axis=1), width="stretch", hide_index=True)
+
+    # Headline cards for the binding pair
+    ce_r, pe_r = _risk.get("ce", {}), _risk.get("pe", {})
+    if ce_r.get("available") and pe_r.get("available"):
+        both_safe = ce_r["prob_safe"] * pe_r["prob_safe"]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            ui.metric_card("CE TESTED", f"{ce_r['prob_touch']*100:.1f}%",
+                           sub=f"vs {ce_r['prob_itm']*100:.1f}% finishing ITM",
+                           color="red" if ce_r["prob_touch"] > 0.30 else
+                                 "amber" if ce_r["prob_touch"] > 0.15 else "green")
+        with c2:
+            ui.metric_card("PE TESTED", f"{pe_r['prob_touch']*100:.1f}%",
+                           sub=f"vs {pe_r['prob_itm']*100:.1f}% finishing ITM",
+                           color="red" if pe_r["prob_touch"] > 0.30 else
+                                 "amber" if pe_r["prob_touch"] > 0.15 else "green")
+        with c3:
+            ui.metric_card("EITHER SIDE TESTED",
+                           f"{(1-both_safe)*100:.1f}%",
+                           sub="Chance the position gets touched at all",
+                           color="red" if (1-both_safe) > 0.40 else
+                                 "amber" if (1-both_safe) > 0.25 else "green")
+        with c4:
+            ui.metric_card("UNTOUCHED BOTH SIDES", f"{both_safe*100:.1f}%",
+                           sub=f"Clean run to expiry · {dte} DTE",
+                           color="green" if both_safe > 0.75 else "amber")
+
+        if (1 - both_safe) > 0.40:
+            ui.alert_box(
+                "High chance of being tested",
+                f"There is a {(1-both_safe)*100:.0f}% chance one of these legs gets touched "
+                f"before expiry — roughly a coin flip. The strikes are close, IV is high, or "
+                f"{dte} DTE is a long time to stay untouched. Consider widening.",
+                level="warning")
+else:
+    st.info("Strike risk needs implied volatility from the chain — unavailable right now.")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — Wall and GEX
 # ══════════════════════════════════════════════════════════════════════════════
 ui.section_header("Section 4 — Wall and GEX Analysis",
