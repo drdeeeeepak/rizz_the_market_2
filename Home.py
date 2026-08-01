@@ -62,16 +62,7 @@ get_kite()
 # trading day, rebuilding the container each time. If the repo copy is missing you
 # get bounced to the login screen repeatedly, and any day you do not notice is a day
 # the EOD job cannot collect. Silent failure here used to be invisible.
-if st.session_state.get("token_repo_ok") is False:
-    st.warning(
-        "⚠️ **Logged in, but the token was NOT saved to the repo.** You will be asked "
-        "to log in again every time the app redeploys (roughly 7× a day), and the "
-        "3:35 PM EOD job may not be able to collect today's data.\n\n"
-        f"Reason: {st.session_state.get('token_repo_msg', 'unknown')}\n\n"
-        "Fix: set `GH_PAT` and `GITHUB_REPO` in Streamlit Cloud → Settings → Secrets."
-    )
-
-with st.expander("🔒 Session health — will a redeploy log me out?", expanded=False):
+with st.expander("🔒 Session health", expanded=False):
     try:
         from data.kite_client import session_health
         _h = session_health()
@@ -86,24 +77,29 @@ with st.expander("🔒 Session health — will a redeploy log me out?", expanded
             st.metric("Survives a redeploy",
                       "✅ yes" if _h["survives_redeploy"] else "❌ NO")
 
+        st.markdown(
+            "**Your logins** are handled by the browser copy — it survives every "
+            "redeploy with no setup, so one login lasts until the token expires at "
+            "midnight IST. Nothing to configure."
+        )
+
         if _h["survives_redeploy"]:
             st.success(
-                "You will stay logged in when the app redeploys, and the EOD job can "
-                "read this token. Pushing changes to the repo will not interrupt data "
-                "collection."
+                "**Automated data collection is working.** The token is in the repo, "
+                "so the 3:35 PM EOD job can read it and record today's option data."
             )
         else:
-            st.error(
-                f"**Redeploys will log you out, and today's data collection is at risk.**\n\n"
-                f"Reason: {_h.get('error') or 'the repo has no token for today'}\n\n"
-                "The app pushes to `main` about seven times on a trading day "
-                "(09:00, 11:00, 13:30, 15:15, 15:35, 16:05, 17:05 IST), and every push "
-                "rebuilds the container. Without a token in the repo, each rebuild "
-                "drops you back to the login screen.\n\n"
-                "**Fix:** Streamlit Cloud → Settings → Secrets, add:\n"
-                "```\nGH_PAT = \"ghp_your_token_here\"\nGITHUB_REPO = \"drdeeeeepak/rizz_the_market_2\"\n```\n"
-                "The PAT needs `Contents: read and write` on this repo. Then log in "
-                "again once — the token will be written to the repo and stay there."
+            st.info(
+                "**Automated data collection is not running yet.** This is separate "
+                "from your logins — a GitHub Action runs on GitHub's machines and "
+                "cannot see your browser, so it can only read a token saved to the "
+                "repo. That write needs a credential only you can issue.\n\n"
+                "Optional, and only needed if you want the nightly OI history, "
+                "gamma history and signals to build themselves:\n"
+                "```\nGH_PAT = \"ghp_...\"          # Contents: read and write\n"
+                "GITHUB_REPO = \"drdeeeeepak/rizz_the_market_2\"\n```\n"
+                "Streamlit Cloud → Settings → Secrets. Without it the app works "
+                "normally; only the unattended overnight jobs stay idle."
             )
         _rd = _h.get("repo_token_date")
         st.caption(f"Repo: `{_h['repo']}` · token in repo dated: {_rd or 'none'} · today (IST): {_h['today']}")

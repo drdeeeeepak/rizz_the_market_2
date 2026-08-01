@@ -188,6 +188,131 @@ def _push_token_to_github(access_token: str) -> tuple[bool, str]:
         return False, f"GitHub token push failed: {e}"
 
 
+"""
+─── WHY THE TOKEN NEEDS THREE HOMES ──────────────────────────────────────────
+
+Zerodha invalidates the access token at midnight IST, so ONE login per day is
+unavoidable — that part is Kite's rule and no code can change it. Being asked
+again at 11am is not: that is this app losing a token it already had.
+
+It loses it because Streamlit Cloud rebuilds the container on every push to the
+tracked branch, and this repo pushes to main about seven times on a trading day
+(09:00, 11:00, 13:30, 15:15, 15:35, 16:05, 17:05 IST). A rebuild wipes
+st.session_state and the container filesystem together.
+
+So the token is kept in three places, each covering what the others cannot:
+
+  1. st.session_state   — fastest, but dies on rebuild AND on browser refresh.
+  2. BROWSER            — survives every rebuild, needs no configuration at all.
+                          This is what gives you one login for the whole day.
+  3. GitHub repo        — the only copy a GitHub Action can read. Optional, and
+                          the ONLY thing that makes the 3:35 PM EOD job work.
+                          Needs GH_PAT because writing to your repo requires a
+                          credential only you can issue.
+
+Browser storage covers YOUR logins completely on its own. The repo copy is a
+separate problem: an Action runs on GitHub's machines with no access to your
+browser, so it can only read a token that was written somewhere it can reach.
+"""
+
+_BROWSER_KEY = "premiumdecay_kite_token"
+
+
+def _browser_store(access_token: str) -> None:
+    """
+    Save the token in the browser's localStorage.
+
+    Survives container rebuilds, app restarts, tab closes and laptop reboots —
+    everything except clearing site data or the token expiring at midnight IST.
+    Needs no secrets and no setup.
+    """
+    try:
+        import streamlit.components.v1 as components
+        payload = json.dumps({"token": access_token.strip(), "date": _today_ist()})
+        components.html(
+            f"""<script>
+              try {{ window.parent.localStorage.setItem({json.dumps(_BROWSER_KEY)},
+                                                        {json.dumps(payload)}); }}
+              catch (e) {{ }}
+            </script>""",
+            height=0,
+        )
+    except Exception as e:
+        log.warning("Browser token store failed: %s", e)
+
+
+def _browser_restore() -> None:
+    """
+    Ask the browser for a stored token and reload with it.
+
+    Streamlit runs on the server and cannot read localStorage directly, so the
+    page hands the value back through a query parameter and we strip it from the
+    URL immediately. The reload happens once per rebuild, not per page view: the
+    token is written to the container's own file on arrival, so every later load
+    reads it locally without touching this path.
+    """
+    try:
+        import streamlit.components.v1 as components
+        components.html(
+            f"""<script>
+              try {{
+                const raw = window.parent.localStorage.getItem({json.dumps(_BROWSER_KEY)});
+                if (raw) {{
+                  const d = JSON.parse(raw);
+                  const u = new URL(window.parent.location.href);
+                  // Only bounce when we have not already tried this reload, so a
+                  // stale or rejected token cannot cause a refresh loop.
+                  if (d && d.token && !u.searchParams.has('kite_restore')) {{
+                    u.searchParams.set('kite_restore', d.token);
+                    u.searchParams.set('kite_restore_date', d.date || '');
+                    window.parent.location.replace(u.toString());
+                  }}
+                }}
+              }} catch (e) {{ }}
+            </script>""",
+            height=0,
+        )
+    except Exception as e:
+        log.warning("Browser token restore failed: %s", e)
+
+
+def _browser_clear() -> None:
+    """Drop the browser copy — used when Kite genuinely rejects the token."""
+    try:
+        import streamlit.components.v1 as components
+        components.html(
+            f"""<script>
+              try {{ window.parent.localStorage.removeItem({json.dumps(_BROWSER_KEY)}); }}
+              catch (e) {{ }}
+            </script>""",
+            height=0,
+        )
+    except Exception:
+        pass
+
+
+def _token_from_query() -> str | None:
+    """Pick up a token handed back by _browser_restore, then clean the URL."""
+    try:
+        params = st.query_params
+        tok = params.get("kite_restore")
+        if not tok:
+            return None
+        d = params.get("kite_restore_date")
+        # Reject anything not stamped today — the browser copy outlives the token.
+        if d and d != _today_ist():
+            log.info("Browser token is from %s, not today — ignoring", d)
+            _browser_clear()
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
+            return None
+        return tok
+    except Exception:
+        return None
+
+
 def session_health() -> dict:
     """
     Can this session survive a redeploy, and is today's data collection safe?
@@ -321,6 +446,7 @@ def get_kite():
             # Synchronous: the repo copy is what survives a redeploy, so we must know
             # whether it landed before moving on (see _push_token_to_github).
             ok, msg = _save_token(access_token)
+            _browser_store(access_token)     # survives every redeploy, no setup needed
             st.session_state["kite_authenticated"] = True
             st.session_state["token_repo_ok"] = ok
             st.session_state["token_repo_msg"] = msg
@@ -340,11 +466,18 @@ def get_kite():
     # The repo fallback is what survives a Streamlit Cloud redeploy: the container is
     # rebuilt on every push to main (seven scheduled pushes on a normal trading day),
     # and access_token.txt is not tracked in git, so the local file is simply gone.
-    saved_token = _load_token() or _load_token_from_github()
+    # Order matters: local file (fastest) → browser hand-back → repo copy.
+    saved_token = _load_token() or _token_from_query() or _load_token_from_github()
     if saved_token:
         state = _validate_token(kite, saved_token)
         if state == "valid":
+            _save_token_local(saved_token)   # cache on this container for later loads
+            _browser_store(saved_token)      # refresh the browser copy
             st.session_state["kite_authenticated"] = True
+            try:
+                st.query_params.clear()      # strip kite_restore from the URL
+            except Exception:
+                pass
             log.info("Valid token loaded")
             return kite
         if state == "unknown":
@@ -355,8 +488,14 @@ def get_kite():
             return kite
         log.warning("Token genuinely rejected by Kite — re-login needed")
         _clear_token()
+        _browser_clear()
 
-    # ④ No valid token — show login UI
+    # ④ Nothing worked. Before showing the login screen, give the browser one
+    # chance to hand back a token it is holding — this is the path that makes a
+    # redeploy invisible instead of a fresh login.
+    if not st.query_params.get("kite_restore"):
+        _browser_restore()
+
     st.session_state.pop("kite_authenticated", None)
     _clear_token()
     _show_login_ui(kite)
