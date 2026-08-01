@@ -21,7 +21,6 @@
 import os
 import json
 import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -111,72 +110,126 @@ def _clear_token() -> None:
         pass
 
 
-def _validate_token(kite, token: str) -> bool:
-    """Validate token by calling profile() — returns True if still valid."""
+def _validate_token(kite, token: str) -> str:
+    """
+    Check a token by calling profile(). Returns 'valid', 'invalid' or 'unknown'.
+
+    The tri-state matters. This used to return a plain bool, and the caller DELETED
+    the token whenever it was False — so a network blip, a timeout, or a Kite
+    rate-limit (429; several pages autorefresh every 60s) destroyed a perfectly good
+    token and forced a re-login. Only a genuine auth rejection should clear it;
+    anything else is 'unknown' and the token is kept.
+    """
     try:
         kite.set_access_token(token)
         kite.profile()
-        return True
-    except Exception:
-        return False
+        return "valid"
+    except Exception as e:
+        blob = f"{type(e).__name__} {e}".lower()
+        if any(s in blob for s in ("tokenexception", "invalid", "expired",
+                                   "forbidden", "unauthor", "access_token")):
+            return "invalid"
+        log.warning("Token check inconclusive (%s) — keeping token", type(e).__name__)
+        return "unknown"
 
 
 # ─── GitHub token push ────────────────────────────────────────────────────────
 
-def _push_token_to_github(access_token: str) -> None:
-    """
-    Push access_token.txt to GitHub repo so GitHub Actions can read it.
-    Runs in a background thread so login doesn't feel slow.
-    Requires GH_PAT and GITHUB_REPO in Streamlit secrets.
-    """
-    gh_pat  = _get_secret("GH_PAT")
-    gh_repo = _get_secret("GITHUB_REPO")   # e.g. "drdeeeeepak/rizz_the_market"
+_TOKEN_PATH = "access_token.txt"
 
+
+def _gh_creds() -> tuple:
+    return _get_secret("GH_PAT"), _get_secret("GITHUB_REPO")
+
+
+def _push_token_to_github(access_token: str) -> tuple[bool, str]:
+    """
+    Push access_token.txt to the GitHub repo. Returns (ok, message).
+
+    THIS IS WHAT KEEPS YOU LOGGED IN. Streamlit Cloud redeploys the app on every
+    push to main — and this repo pushes to main seven times on a normal trading day
+    (09:00, 11:00, 13:30, 15:15, 15:35, 16:05, 17:05 IST) plus any manual merge.
+    Each redeploy is a brand-new container: st.session_state is gone and the local
+    access_token.txt is gone with it. The repo copy is the only thing that survives,
+    so if this push does not land you are dropped back to the login screen several
+    times a day.
+
+    It used to run in a daemon thread fired immediately before st.rerun(), so a
+    failure was invisible AND the rerun could kill the thread before it finished.
+    It is synchronous now and reports its result, because the whole day's data
+    collection depends on it.
+    """
+    gh_pat, gh_repo = _gh_creds()
     if not gh_pat or not gh_repo:
-        log.info("GH_PAT or GITHUB_REPO not set — skipping GitHub push (Actions will use yesterday's token if any)")
-        return
+        return False, ("GH_PAT / GITHUB_REPO not set in Streamlit secrets — the token "
+                       "cannot be saved to the repo, so every redeploy will log you out.")
+    try:
+        import requests, base64
 
-    def _push():
-        try:
-            import requests, base64
+        payload = {"token": access_token.strip(), "date": _today_ist()}
+        b64     = base64.b64encode(json.dumps(payload).encode()).decode()
+        url     = f"https://api.github.com/repos/{gh_repo}/contents/{_TOKEN_PATH}"
+        headers = {"Authorization": f"token {gh_pat}",
+                   "Accept": "application/vnd.github+json"}
 
-            payload  = {"token": access_token.strip(), "date": _today_ist()}
-            content  = json.dumps(payload).encode()
-            b64      = base64.b64encode(content).decode()
+        resp = requests.get(url, headers=headers, timeout=10)
+        sha  = resp.json().get("sha") if resp.status_code == 200 else None
 
-            url      = f"https://api.github.com/repos/{gh_repo}/contents/access_token.txt"
-            headers  = {"Authorization": f"token {gh_pat}",
-                        "Accept":        "application/vnd.github+json"}
+        body = {"message": f"Token refresh {_today_ist()}", "content": b64, "branch": "main"}
+        if sha:
+            body["sha"] = sha
 
-            # Get current SHA (needed for update vs create)
-            resp = requests.get(url, headers=headers, timeout=10)
-            sha  = resp.json().get("sha") if resp.status_code == 200 else None
+        put = requests.put(url, headers=headers, json=body, timeout=15)
+        if put.status_code in (200, 201):
+            log.info("Token pushed to GitHub repo")
+            return True, "Token saved to the repo — you will stay logged in across redeploys."
+        return False, f"GitHub returned {put.status_code}: {put.text[:160]}"
+    except Exception as e:
+        return False, f"GitHub token push failed: {e}"
 
-            body = {"message": f"Token refresh {_today_ist()}",
-                    "content": b64,
-                    "branch":  "main"}
-            if sha:
-                body["sha"] = sha
 
-            put = requests.put(url, headers=headers, json=body, timeout=15)
-            if put.status_code in (200, 201):
-                log.info("✅ Token pushed to GitHub repo successfully")
-            else:
-                log.warning("GitHub push returned %s: %s", put.status_code, put.text[:200])
+def _load_token_from_github() -> str | None:
+    """
+    Read today's token back from the repo.
 
-        except Exception as e:
-            log.warning("GitHub token push failed (non-critical): %s", e)
+    The missing half of the design. The token was being PUSHED to GitHub but nothing
+    ever read it back, and access_token.txt is not tracked in git — so a redeployed
+    container started with no token file at all and went straight to the login
+    screen, even though a valid token for today existed in the repo.
+    """
+    gh_pat, gh_repo = _gh_creds()
+    if not gh_pat or not gh_repo:
+        return None
+    try:
+        import requests, base64
 
-    # Run in background — don't block the Streamlit login redirect
-    threading.Thread(target=_push, daemon=True).start()
+        url     = f"https://api.github.com/repos/{gh_repo}/contents/{_TOKEN_PATH}"
+        headers = {"Authorization": f"token {gh_pat}",
+                   "Accept": "application/vnd.github+json"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return None
+        raw     = base64.b64decode(resp.json().get("content", "")).decode()
+        payload = json.loads(raw)
+        if payload.get("date") != _today_ist():
+            log.info("Repo token is from %s, not today — ignoring", payload.get("date"))
+            return None
+        token = payload.get("token")
+        if token:
+            _save_token_local(token)      # cache locally so later loads skip the API
+            log.info("Token recovered from GitHub repo after restart")
+        return token
+    except Exception as e:
+        log.warning("Could not read token from GitHub: %s", e)
+        return None
 
 
 # ─── Full token save (local + GitHub) ────────────────────────────────────────
 
-def _save_token(access_token: str) -> None:
-    """Save token locally AND push to GitHub repo."""
+def _save_token(access_token: str) -> tuple[bool, str]:
+    """Save token locally AND to the repo. Returns the repo push result."""
     _save_token_local(access_token)
-    _push_token_to_github(access_token)
+    return _push_token_to_github(access_token)
 
 
 # ─── Main public function ────────────────────────────────────────────────────
@@ -212,10 +265,14 @@ def get_kite():
             session_data  = kite.generate_session(request_token, api_secret=api_secret)
             access_token  = session_data["access_token"]
             kite.set_access_token(access_token)
-            _save_token(access_token)          # saves locally + pushes to GitHub in background
+            # Synchronous: the repo copy is what survives a redeploy, so we must know
+            # whether it landed before moving on (see _push_token_to_github).
+            ok, msg = _save_token(access_token)
             st.session_state["kite_authenticated"] = True
+            st.session_state["token_repo_ok"] = ok
+            st.session_state["token_repo_msg"] = msg
             st.query_params.clear()
-            log.info("OAuth complete — token saved and GitHub push initiated")
+            log.info("OAuth complete — token saved (repo push ok=%s)", ok)
             st.rerun()
         except Exception as e:
             st.query_params.clear()
@@ -226,16 +283,25 @@ def get_kite():
             _show_login_ui(kite)
             st.stop()
 
-    # ② Try saved token from file
-    saved_token = _load_token()
+    # ② Try saved token — local file first, then the repo copy.
+    # The repo fallback is what survives a Streamlit Cloud redeploy: the container is
+    # rebuilt on every push to main (seven scheduled pushes on a normal trading day),
+    # and access_token.txt is not tracked in git, so the local file is simply gone.
+    saved_token = _load_token() or _load_token_from_github()
     if saved_token:
-        if _validate_token(kite, saved_token):
+        state = _validate_token(kite, saved_token)
+        if state == "valid":
             st.session_state["kite_authenticated"] = True
-            log.info("Valid token loaded from access_token.txt")
+            log.info("Valid token loaded")
             return kite
-        else:
-            log.warning("Token date matched today but profile() failed — re-login needed")
-            _clear_token()
+        if state == "unknown":
+            # Transient failure (network / rate limit). Keep the token and use it —
+            # clearing here is what used to force a needless re-login.
+            st.session_state["kite_authenticated"] = True
+            log.warning("Token check inconclusive — proceeding with saved token")
+            return kite
+        log.warning("Token genuinely rejected by Kite — re-login needed")
+        _clear_token()
 
     # ④ No valid token — show login UI
     st.session_state.pop("kite_authenticated", None)

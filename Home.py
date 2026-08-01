@@ -57,6 +57,20 @@ import ui.components as ui
 from data.kite_client import get_kite
 get_kite()
 
+# Whether the token reached the GitHub repo. This is the ONLY copy that survives a
+# Streamlit Cloud redeploy — and this repo pushes to main seven times on a normal
+# trading day, rebuilding the container each time. If the repo copy is missing you
+# get bounced to the login screen repeatedly, and any day you do not notice is a day
+# the EOD job cannot collect. Silent failure here used to be invisible.
+if st.session_state.get("token_repo_ok") is False:
+    st.warning(
+        "⚠️ **Logged in, but the token was NOT saved to the repo.** You will be asked "
+        "to log in again every time the app redeploys (roughly 7× a day), and the "
+        "3:35 PM EOD job may not be able to collect today's data.\n\n"
+        f"Reason: {st.session_state.get('token_repo_msg', 'unknown')}\n\n"
+        "Fix: set `GH_PAT` and `GITHUB_REPO` in Streamlit Cloud → Settings → Secrets."
+    )
+
 with st.spinner("Computing all signals…"):
     spot      = get_nifty_spot()
     nifty_df  = get_nifty_daily()
