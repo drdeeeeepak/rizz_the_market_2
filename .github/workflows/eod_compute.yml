@@ -42,6 +42,11 @@ jobs:
           KITE_API_KEY:   ${{ secrets.KITE_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT:  ${{ secrets.TELEGRAM_CHAT }}
+          ALERT_EMAIL:    ${{ secrets.ALERT_EMAIL }}
+          SMTP_USER:      ${{ secrets.SMTP_USER }}
+          SMTP_PASS:      ${{ secrets.SMTP_PASS }}
+          SMTP_HOST:      ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:      ${{ secrets.SMTP_PORT }}
         run: |
           python - <<'EOF'
           # Actually CALL Kite with the token — do not just look at the date on the
@@ -59,22 +64,29 @@ jobs:
           now   = datetime.now(IST).strftime("%H:%M")
 
           def alert(reason: str, detail: str = ""):
-              """Warn on Telegram — this is the only chance to save the day."""
-              tok, chat = os.environ.get("TELEGRAM_TOKEN"), os.environ.get("TELEGRAM_CHAT")
+              """Email and/or Telegram — this is the only chance to save the day."""
               print(f"{reason}: {detail}")
-              if not tok or not chat:
-                  return
               try:
-                  import requests
-                  msg = (f"⚠️ EOD data collection BLOCKED · {now} IST\n"
-                         f"Reason: {reason}\n{detail}\n\n"
-                         "Log in to premiumdecay now. Retries run at 4:05 PM and "
-                         "5:05 PM IST — after that today's OI is lost permanently "
-                         "(Kite serves no historical option OI).")
-                  requests.get(f"https://api.telegram.org/bot{tok}/sendMessage",
-                               params={"chat_id": chat, "text": msg}, timeout=10)
+                  sys.path.insert(0, ".")
+                  from data.notify import send_alert
+                  send_alert(
+                      f"EOD data collection BLOCKED — {reason}",
+                      (f"premiumdecay could not collect today's data.\n\n"
+                       f"Time:   {now} IST\n"
+                       f"Reason: {reason}\n"
+                       f"Detail: {detail}\n\n"
+                       "WHAT TO DO: open premiumdecay and log in to Kite now.\n"
+                       "Retries run at 4:05 PM and 5:05 PM IST. After the last one, "
+                       "today's option open interest is lost permanently — Kite "
+                       "serves no historical option OI, so it cannot be back-filled "
+                       "from anywhere."),
+                      telegram_text=(f"⚠️ EOD data collection BLOCKED · {now} IST\n"
+                                     f"Reason: {reason}\n{detail}\n\n"
+                                     "Log in to premiumdecay now. Retries at 4:05 and "
+                                     "5:05 PM IST — after that today's OI is lost "
+                                     "permanently."))
               except Exception as e:
-                  print(f"telegram warn failed: {e}")
+                  print(f"alert failed: {e}")
 
           api_key = os.environ.get("KITE_API_KEY", "").strip()
           if not api_key:
@@ -115,6 +127,11 @@ jobs:
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
           TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT:   ${{ secrets.TELEGRAM_CHAT }}
+          ALERT_EMAIL:     ${{ secrets.ALERT_EMAIL }}
+          SMTP_USER:       ${{ secrets.SMTP_USER }}
+          SMTP_PASS:       ${{ secrets.SMTP_PASS }}
+          SMTP_HOST:       ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:       ${{ secrets.SMTP_PORT }}
         run: python scripts/eod_compute.py
 
       - name: Build token map if missing

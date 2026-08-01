@@ -30,17 +30,13 @@ log = logging.getLogger("fii_dii")
 IST = pytz.timezone("Asia/Kolkata")
 
 
-def _telegram(msg: str) -> None:
-    import os
-    tok, chat = os.environ.get("TELEGRAM_TOKEN"), os.environ.get("TELEGRAM_CHAT")
-    if not tok or not chat:
-        return
+def _alert(subject: str, body: str) -> None:
+    """Email and/or Telegram — whichever is configured (see data/notify.py)."""
     try:
-        import requests
-        requests.get(f"https://api.telegram.org/bot{tok}/sendMessage",
-                     params={"chat_id": chat, "text": msg}, timeout=10)
+        from data.notify import send_alert
+        send_alert(subject, body)
     except Exception as e:
-        log.warning("telegram failed: %s", e)
+        log.warning("alert failed: %s", e)
 
 
 def main() -> int:
@@ -67,9 +63,17 @@ def main() -> int:
     # A public holiday looks the same as a genuine outage from here, so say what
     # was actually observed rather than guessing which one it was.
     log.error("FII/DII fetch failed for %s: %s", target, snap["error"])
-    _telegram(f"⚠️ FII/DII fetch failed for {target}\n{snap['error']}\n\n"
-              "If it was a trading day, NSE may have published late or changed the "
-              "file. Re-run: python scripts/fetch_fii_dii.py " + str(target))
+    _alert(
+        f"FII/DII fetch failed for {target}",
+        f"NSE participant-wise OI could not be fetched for {target}.\n\n"
+        f"Reason: {snap['error']}\n\n"
+        "If it was a trading day, NSE may have published late or changed the file "
+        "layout. There is an automatic retry at 9:30 PM IST.\n\n"
+        f"To re-run by hand:\n    python scripts/fetch_fii_dii.py {target}\n\n"
+        "This is a public NSE file with no guarantees — an occasional miss is "
+        "normal and is not lost forever, since the archive stays downloadable for "
+        "past dates."
+    )
     return 1
 
 

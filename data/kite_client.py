@@ -188,6 +188,59 @@ def _push_token_to_github(access_token: str) -> tuple[bool, str]:
         return False, f"GitHub token push failed: {e}"
 
 
+def session_health() -> dict:
+    """
+    Can this session survive a redeploy, and is today's data collection safe?
+
+    Streamlit Cloud rebuilds the container on every push to main — seven scheduled
+    pushes on a normal trading day, plus any merge — and the ONLY copy of the token
+    that survives is the one in the repo. If that copy is missing you get bounced to
+    the login screen repeatedly, and the 3:35 PM job cannot collect. That used to
+    fail silently, so this reports it plainly.
+    """
+    gh_pat, gh_repo = _gh_creds()
+    out = {
+        "today":          _today_ist(),
+        "local_token":    False,
+        "repo_token":     False,
+        "repo_token_date": None,
+        "gh_configured":  bool(gh_pat and gh_repo),
+        "repo":           gh_repo or "—",
+        "error":          None,
+    }
+
+    try:
+        if TOKEN_FILE.exists():
+            payload = json.loads(TOKEN_FILE.read_text())
+            out["local_token"] = payload.get("date") == out["today"]
+    except Exception:
+        pass
+
+    if out["gh_configured"]:
+        try:
+            import requests, base64
+            url = f"https://api.github.com/repos/{gh_repo}/contents/{_TOKEN_PATH}"
+            r = requests.get(url, headers={"Authorization": f"token {gh_pat}",
+                                           "Accept": "application/vnd.github+json"},
+                             timeout=10)
+            if r.status_code == 200:
+                payload = json.loads(base64.b64decode(r.json().get("content", "")).decode())
+                out["repo_token_date"] = payload.get("date")
+                out["repo_token"] = payload.get("date") == out["today"]
+            elif r.status_code == 404:
+                out["error"] = "access_token.txt has never been written to the repo"
+            else:
+                out["error"] = f"GitHub returned {r.status_code}"
+        except Exception as e:
+            out["error"] = f"{type(e).__name__}: {e}"
+    else:
+        out["error"] = "GH_PAT / GITHUB_REPO not set in Streamlit secrets"
+
+    # Survives a redeploy only if the repo copy is present and current.
+    out["survives_redeploy"] = bool(out["repo_token"])
+    return out
+
+
 def _load_token_from_github() -> str | None:
     """
     Read today's token back from the repo.

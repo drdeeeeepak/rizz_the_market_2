@@ -4,7 +4,7 @@ EOD Compute — runs at 3:35 PM IST Mon-Fri via GitHub Actions.
 Fetches Kite EOD data, runs all analytics, writes data/signals.json.
 Sends Telegram EOD summary with final strikes.
 """
-import sys, os, json, logging
+import sys, json, logging
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -127,9 +127,8 @@ def main():
 
 
 def _send_telegram_eod(sig: dict, spot: float, vix: float):
-    token = os.environ.get("TELEGRAM_TOKEN"); chat = os.environ.get("TELEGRAM_CHAT")
-    if not token or not chat: return
-    import requests
+    """Daily summary over every configured channel (email and/or Telegram).
+    Name kept so existing call sites are untouched."""
     canary = sig.get("canary_level", 0)
     canary_txt = f"🐤 Canary Day{canary} {sig.get('canary_direction','')}" if canary else "✅ No canary"
     msg = (
@@ -141,10 +140,12 @@ def _send_telegram_eod(sig: dict, spot: float, vix: float):
         f"Wings: PE {sig.get('final_put_wing',0):,} / CE {sig.get('final_call_wing',0):,}"
     )
     try:
-        requests.get(f"https://api.telegram.org/bot{token}/sendMessage",
-                     params={"chat_id": chat, "text": msg}, timeout=10)
+        from data.notify import send_alert
+        send_alert(f"EOD premiumdecay · Nifty {spot:,.0f} · "
+                   f"PE {sig.get('final_put_short',0):,} / CE {sig.get('final_call_short',0):,}",
+                   msg, telegram_text=msg)
     except Exception as e:
-        print(f"Telegram failed: {e}")
+        print(f"EOD alert failed: {e}")
 
 
 if __name__ == "__main__":

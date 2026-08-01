@@ -71,6 +71,45 @@ if st.session_state.get("token_repo_ok") is False:
         "Fix: set `GH_PAT` and `GITHUB_REPO` in Streamlit Cloud → Settings → Secrets."
     )
 
+with st.expander("🔒 Session health — will a redeploy log me out?", expanded=False):
+    try:
+        from data.kite_client import session_health
+        _h = session_health()
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            st.metric("Token on this container", "✅ yes" if _h["local_token"] else "— no")
+        with _c2:
+            st.metric("Token saved in repo",
+                      "✅ yes" if _h["repo_token"] else "❌ NO",
+                      help="The only copy that survives a redeploy.")
+        with _c3:
+            st.metric("Survives a redeploy",
+                      "✅ yes" if _h["survives_redeploy"] else "❌ NO")
+
+        if _h["survives_redeploy"]:
+            st.success(
+                "You will stay logged in when the app redeploys, and the EOD job can "
+                "read this token. Pushing changes to the repo will not interrupt data "
+                "collection."
+            )
+        else:
+            st.error(
+                f"**Redeploys will log you out, and today's data collection is at risk.**\n\n"
+                f"Reason: {_h.get('error') or 'the repo has no token for today'}\n\n"
+                "The app pushes to `main` about seven times on a trading day "
+                "(09:00, 11:00, 13:30, 15:15, 15:35, 16:05, 17:05 IST), and every push "
+                "rebuilds the container. Without a token in the repo, each rebuild "
+                "drops you back to the login screen.\n\n"
+                "**Fix:** Streamlit Cloud → Settings → Secrets, add:\n"
+                "```\nGH_PAT = \"ghp_your_token_here\"\nGITHUB_REPO = \"drdeeeeepak/rizz_the_market_2\"\n```\n"
+                "The PAT needs `Contents: read and write` on this repo. Then log in "
+                "again once — the token will be written to the repo and stay there."
+            )
+        _rd = _h.get("repo_token_date")
+        st.caption(f"Repo: `{_h['repo']}` · token in repo dated: {_rd or 'none'} · today (IST): {_h['today']}")
+    except Exception as _e_sh:
+        st.caption(f"Session health unavailable: {_e_sh}")
+
 with st.spinner("Computing all signals…"):
     spot      = get_nifty_spot()
     nifty_df  = get_nifty_daily()
