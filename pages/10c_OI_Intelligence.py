@@ -495,6 +495,124 @@ else:
             st.caption("Only strikes present on BOTH the first and last recorded day — a "
                        "strike that drifted into the window mid-period is not counted as growth.")
 
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 6 — Who is positioned where (NSE participant-wise OI)
+# ══════════════════════════════════════════════════════════════════════════════
+ui.section_header("Section 6 — Who is positioned where",
+                  "FII · DII · Pro · Client index-option books · published by NSE after 7 PM IST")
+
+ui.simple_technical(
+    "Everything above this point reads TOTAL open interest — how many contracts are "
+    "open at a strike. It cannot tell you WHO is on which side. A wall could be "
+    "foreign institutions selling calls, or it could be retail buying them, and those "
+    "mean opposite things.\n\n"
+    "NSE publishes the split once a day after the close. FII positioning is the one "
+    "usually worth following; Client (retail) is often on the other side of it. When "
+    "FIIs are net long puts and net short calls, they are positioned for a fall — and "
+    "that is the side of your condor under the most pressure.",
+    "Published ~7:00-7:30 PM IST, fetched by a separate 8:00 PM job\n"
+    "opt_bias = net calls − net puts (long calls and short puts are both bullish)\n"
+    "Every reading shows its date and age — nothing is presented as live"
+)
+st.markdown("")
+
+try:
+    from data.fii_dii import latest as _fii_latest, load_history as _fii_hist, read_bias, CATEGORIES
+    _fii = _fii_latest()
+except Exception as _e_fii:
+    _fii = {"available": False, "reason": f"Module unavailable: {_e_fii}"}
+
+if not _fii.get("available"):
+    ui.alert_box(
+        "No participant data collected yet",
+        f"{_fii.get('reason', 'Not available.')}\n\n"
+        "NSE publishes this around 7:00–7:30 PM IST and a job now fetches it at "
+        "8:00 PM (retry 9:30 PM). The first rows appear after the next weekday "
+        "evening run.\n\n"
+        "Unlike the option chain, this is a public web file with no guarantees — NSE "
+        "can publish late, skip a holiday, or change the layout. Every reading here "
+        "is stamped with its date and age so a stale number can never look live.",
+        level="info")
+else:
+    _age = _fii.get("age_days")
+    _stamp = (f"Data for **{_fii['date']}**"
+              + (f" · {_age} day(s) old" if _age is not None else "")
+              + f" · fetched {_fii.get('fetched_at', '—')}"
+              + f" · {_fii.get('days_stored', 0)} day(s) stored")
+    if _fii.get("stale"):
+        ui.alert_box("Participant data is stale",
+                     f"{_stamp}\n\nNSE has not published (or the fetch has failed) for "
+                     "several days. Treat this as historical, not current.",
+                     level="warning")
+    else:
+        st.caption("🏛️ " + _stamp)
+
+    _rows = _fii.get("rows", {})
+    _cols = st.columns(len(CATEGORIES))
+    for _c, _cat in zip(_cols, CATEGORIES):
+        _rec = _rows.get(_cat, {})
+        _lbl, _note = read_bias(_rec)
+        with _c:
+            ui.metric_card(
+                f"{_cat} — INDEX OPTIONS", _lbl, sub=_note,
+                color="green" if _lbl == "BULLISH" else "red" if _lbl == "BEARISH" else "default")
+
+    _fii_rec = _rows.get("FII", {})
+    _cli_rec = _rows.get("Client", {})
+    if _fii_rec and _cli_rec:
+        _fb, _cb = _fii_rec.get("opt_bias", 0), _cli_rec.get("opt_bias", 0)
+        if _fb * _cb < 0:
+            ui.alert_box(
+                "FIIs and retail are on opposite sides",
+                f"FII option bias {_fb:+,.0f} versus Client {_cb:+,.0f}. This is the "
+                "normal state — institutions take the other side of retail. The FII "
+                "side is the one that historically carries more information.",
+                level="info")
+
+    with st.expander("Full participant table and futures positioning"):
+        _tbl = []
+        for _cat in CATEGORIES:
+            _r = _rows.get(_cat, {})
+            if not _r:
+                continue
+            _tbl.append({
+                "Participant":  _cat,
+                "Fut net":      f"{_r.get('fut_net', 0):+,.0f}",
+                "Calls net":    f"{_r.get('ce_net', 0):+,.0f}",
+                "Puts net":     f"{_r.get('pe_net', 0):+,.0f}",
+                "Option bias":  f"{_r.get('opt_bias', 0):+,.0f}",
+                "Read":         read_bias(_r)[0],
+            })
+        if _tbl:
+            st.dataframe(pd.DataFrame(_tbl), width="stretch", hide_index=True)
+            st.caption("Net = long minus short. Positive calls / negative puts = bullish. "
+                       "Futures net is shown for context but is not part of the option bias.")
+
+    try:
+        _h = _fii_hist()
+        if len(_h) >= 2:
+            _fr = pd.DataFrame([{"date": r["date"],
+                                 "FII": (r.get("FII") or {}).get("opt_bias"),
+                                 "Client": (r.get("Client") or {}).get("opt_bias")}
+                                for r in _h]).dropna(how="all", subset=["FII", "Client"])
+            if not _fr.empty:
+                _fr["date"] = pd.to_datetime(_fr["date"])
+                _fr = _fr.set_index("date").sort_index()
+                figf = go.Figure()
+                for _c2, _col2 in (("FII", "#0ea5e9"), ("Client", "#f59e0b")):
+                    if _c2 in _fr.columns:
+                        figf.add_trace(go.Scatter(x=_fr.index, y=_fr[_c2], name=_c2,
+                                                  line=dict(color=_col2, width=2)))
+                figf.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+                figf.update_layout(height=300, margin=dict(l=10, r=10, t=30, b=10),
+                                   title="Index-option bias over time (above 0 = bullish)",
+                                   xaxis_title="date", yaxis_title="net calls − net puts")
+                st.plotly_chart(figf, width="stretch")
+    except Exception as _e_fh:
+        st.caption(f"History chart unavailable: {_e_fh}")
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("Your IC Strikes")

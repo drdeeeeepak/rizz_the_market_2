@@ -1,0 +1,66 @@
+name: FII/DII Participant OI
+
+# NSE publishes participant-wise derivative OI around 7:00-7:30 PM IST. Every other
+# job in this repo finishes by 5:05 PM, so this needs its own late slot.
+#   8:00 PM IST = 14:30 UTC  — first attempt, shortly after publication
+#   9:30 PM IST = 16:00 UTC  — retry, NSE is often late
+on:
+  schedule:
+    - cron: "30 14 * * 1-5"
+    - cron: "0 16 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to fetch (YYYY-MM-DD). Blank = today. Use to backfill."
+        required: false
+        default: ""
+
+# Two scheduled runs plus manual triggers can overlap; serialise so they cannot
+# both rewrite the history file and race on the push.
+concurrency:
+  group: fii-dii
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install requests pytz
+
+      - name: Fetch participant-wise OI
+        id: fetch
+        continue-on-error: true      # a holiday is not a build failure
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT:  ${{ secrets.TELEGRAM_CHAT }}
+        run: python scripts/fetch_fii_dii.py ${{ github.event.inputs.date }}
+
+      - name: Commit history
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/fii_dii_history.json
+          git diff --cached --quiet && echo "No new FII/DII data to commit" || {
+            git commit -m "chore: FII/DII participant OI $(date -u '+%Y-%m-%d')"
+            # main moves under us — other jobs and sessions push too. Rebase rather
+            # than force, so a concurrent push is never discarded.
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break
+              echo "push attempt $i failed, retrying"; sleep 5
+            done
+          }
