@@ -681,6 +681,17 @@ def get_options_chain(expiry: date, spot: float) -> pd.DataFrame:
                                   (df["ce_ltp"]-df["ce_prev_close"])/df["ce_prev_close"]*100, 0.0)
     df["pe_price_pct"] = np.where(df["pe_prev_close"]>0,
                                   (df["pe_ltp"]-df["pe_prev_close"])/df["pe_prev_close"]*100, 0.0)
+
+    # Kite's quote() has NO implied_volatility field — the key read above is always
+    # absent, so ce_iv/pe_iv arrive as 0 on every strike. Solve IV from the traded
+    # premium instead. Without this, ATM IV, IV skew, theta/IV, delta skew, the whole
+    # smile / RR25 / BF25 block and probability-of-touch all silently read zero or
+    # "unavailable", because each of them bails out on iv <= 0.
+    try:
+        from analytics.iv_solver import solve_chain_iv, fill_atm_gap
+        df = fill_atm_gap(solve_chain_iv(df, spot, get_dte(expiry)), spot)
+    except Exception as e:
+        log.error("IV solve failed for %s: %s — IV-dependent readings will be blank", expiry, e)
     log.info("Chain %s: %d strikes %s..%s (reach ±%d pts)",
              expiry, len(df), df.index.min(), df.index.max(), reach)
     return df
