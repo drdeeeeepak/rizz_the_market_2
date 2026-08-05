@@ -102,5 +102,57 @@
    "pe_net": -34252.0,
    "opt_bias": 16174.0
   }
+ },
+ {
+  "date": "2026-08-05",
+  "fetched_at": "2026-08-05 21:46",
+  "Client": {
+   "fut_long": 194961.0,
+   "fut_short": 58810.0,
+   "ce_long": 2555208.0,
+   "ce_short": 2479092.0,
+   "pe_long": 1987886.0,
+   "pe_short": 2545506.0,
+   "fut_net": 136151.0,
+   "ce_net": 76116.0,
+   "pe_net": -557620.0,
+   "opt_bias": 633736.0
+  },
+  "DII": {
+   "fut_long": 54768.0,
+   "fut_short": 19776.0,
+   "ce_long": 5340.0,
+   "ce_short": 80.0,
+   "pe_long": 49779.0,
+   "pe_short": 0.0,
+   "fut_net": 34992.0,
+   "ce_net": 5260.0,
+   "pe_net": 49779.0,
+   "opt_bias": -44519.0
+  },
+  "FII": {
+   "fut_long": 25437.0,
+   "fut_short": 184340.0,
+   "ce_long": 446265.0,
+   "ce_short": 674856.0,
+   "pe_long": 791017.0,
+   "pe_short": 329845.0,
+   "fut_net": -158903.0,
+   "ce_net": -228591.0,
+   "pe_net": 461172.0,
+   "opt_bias": -689763.0
+  },
+  "Pro": {
+   "fut_long": 32893.0,
+   "fut_short": 45133.0,
+   "ce_long": 919712.0,
+   "ce_short": 772498.0,
+   "pe_long": 724252.0,
+   "pe_short": 677583.0,
+   "fut_net": -12240.0,
+   "ce_net": 147214.0,
+   "pe_net": 46669.0,
+   "opt_bias": 100545.0
+  }
  }
 ]
