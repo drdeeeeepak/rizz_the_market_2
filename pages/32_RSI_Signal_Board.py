@@ -267,6 +267,20 @@ def _mini_rsi_chart(df_rsi, title, line_color="#3b82f6",
         mode="lines+markers", line=dict(color=line_color, width=2), name="RSI(14)"
     ))
 
+    # Day separators. The x-axis is CATEGORICAL (see the note above), so a
+    # date-valued vline means nothing here — on a category axis the coordinate
+    # is the slot index, so x = i - 0.5 lands the line cleanly BETWEEN the last
+    # candle of one session and the first of the next, rather than on top of a
+    # candle. Kept faint so it never competes with the RSI line or the OB/OS
+    # levels; the x tick labels already carry the dates, so no annotation.
+    prev_day = None
+    for _i, _ts in enumerate(chart_slice.index):
+        _d = _ts.date()
+        if prev_day is not None and _d != prev_day:
+            fig.add_vline(x=_i - 0.5, line_width=1, line_dash="dot",
+                          line_color="rgba(148,163,184,0.55)")
+        prev_day = _d          # advance every bar, not only on a change
+
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought 70")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold 30")
     fig.add_hline(y=75, line_dash="dot", line_color="darkred", annotation_text="Extreme 75")
